@@ -1,11 +1,15 @@
 extern crate nalgebra_glm as glm;
+extern crate ozy_engine as ozy;
 
 use ash::vk;
 use ash::vk::{Handle};
 use sdl2::event::Event;
 use std::ffi::CStr;
+use std::mem::size_of;
 use std::os::raw::c_void;
 use std::ptr;
+
+use ozy::structs::FrameTimer;
 
 //Entry point
 fn main() {
@@ -14,7 +18,20 @@ fn main() {
     let mut event_pump = sdl_ctxt.event_pump().unwrap();
     let video_subsystem = sdl_ctxt.video().unwrap();
     let window_size = glm::vec2(1024, 1024);
-    let window = video_subsystem.window("Trying to use Vulkan", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
+    let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
+
+    //WASAPI initialization
+    let wasapi_device = wasapi::get_default_device(&wasapi::Direction::Render).unwrap();
+    let mut audio_client = wasapi_device.get_iaudioclient().unwrap();
+    println!("Selected audio output device: {}", wasapi_device.get_friendlyname().unwrap());
+    let audio_render_client = {
+        let format = audio_client.get_mixformat().unwrap();
+        let default_period = audio_client.get_periods().unwrap().0;
+        println!("{:?}", format);
+        audio_client.initialize_client(&format, default_period, &wasapi::Direction::Render, &wasapi::ShareMode::Shared, false).unwrap();
+        println!("{}", audio_client.get_available_space_in_frames().unwrap());
+        audio_client.get_audiorenderclient().unwrap()
+    };
 
     //Initialize the Vulkan API
     let vk_entry = ash::Entry::linked();
@@ -126,7 +143,7 @@ fn main() {
         vk_ext_swapchain.create_swapchain(&create_info, None).unwrap()
     };
 
-    let vk_depth_buffer = unsafe {
+    let vk_depth_image = unsafe {
         let present_mode = vk_ext_surface.get_physical_device_surface_present_modes(vk_physical_device, vk_surface).unwrap()[0];
         let surf_format = vk_ext_surface.get_physical_device_surface_formats(vk_physical_device, vk_surface).unwrap()[0];
 
@@ -153,16 +170,95 @@ fn main() {
 
         let depth_image = vk_device.create_image(&create_info, None).unwrap();
         let mem_reqs = vk_device.get_image_memory_requirements(depth_image);
-        
+        let phys_device_mem_props = vk_instance.get_physical_device_memory_properties(vk_physical_device);
+
+        //Search for the largest DEVICE_LOCAL heap the device advertises
+        let mut i = 0;
+        let mut memory_type_index = 0;
+        let mut largest_heap = 0;
+        for mem_type in phys_device_mem_props.memory_types {
+            if mem_type.property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL) {
+                let heap_size = phys_device_mem_props.memory_heaps[mem_type.heap_index as usize].size;
+                if heap_size > largest_heap {
+                    memory_type_index = i;
+                    largest_heap = heap_size;
+                }
+            }
+            i += 1;
+        }
+
+        let allocate_info = vk::MemoryAllocateInfo {
+            allocation_size: mem_reqs.size,
+            memory_type_index,
+            ..Default::default()
+        };
+        let depth_memory = vk_device.allocate_memory(&allocate_info, None).unwrap();
+
+        //Bind the depth image to its memory
+        vk_device.bind_image_memory(depth_image, depth_memory, 0).unwrap();
+
+        depth_image
     };
+
+    let vk_depth_buffer_view = unsafe {
+        let image_subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::DEPTH,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1
+        };
+        let components = vk::ComponentMapping {
+            r: vk::ComponentSwizzle::R,
+            g: vk::ComponentSwizzle::G,
+            b: vk::ComponentSwizzle::B,
+            a: vk::ComponentSwizzle::A,
+        };
+        let view_info = vk::ImageViewCreateInfo {
+            image: vk_depth_image,
+            format: vk::Format::D16_UNORM,
+            view_type: vk::ImageViewType::TYPE_2D,
+            components,
+            subresource_range: image_subresource_range,
+            ..Default::default()
+        };
+
+        vk_device.create_image_view(&view_info, None).unwrap()
+    };
+
+    {
+        let framecount = audio_client.get_available_space_in_frames().unwrap() as usize;
+        let freq = 44100.0 * 1000.0; //44,100 kHz
+        let mut data = vec![0; framecount * size_of::<f32>()];
+        for i in 0..framecount {
+            let t = i as f32 * 1.0 / freq;
+            let pulse = f32::sin(t);
+            let bytes = pulse.to_le_bytes();
+            data[i * 4] = bytes[0];
+            data[i * 4 + 1] = bytes[1];
+            data[i * 4 + 2] = bytes[2];
+            data[i * 4 + 3] = bytes[3];
+        }
+
+        audio_render_client.write_to_device(framecount, size_of::<f32>(), &data).unwrap();
+        println!("{}", audio_client.get_available_space_in_frames().unwrap());
+        audio_client.start_stream().unwrap();
+    }
     
     //Main application loop
+    let mut timer = FrameTimer::new();
     'running: loop {
+        timer.update(); //Update frame timer
+
+        //Pump window's event loop
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit{..} => { break 'running; }
                 _ => {}
             }
         }
+
+        //Update
+
     }
 }
