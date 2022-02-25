@@ -277,7 +277,8 @@ fn main() {
             binding: 0,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
-            p_immutable_samplers: ptr::null()
+            p_immutable_samplers: ptr::null(),
+            ..Default::default()
         };
         
     }
@@ -286,7 +287,6 @@ fn main() {
     audio_client.start_stream().unwrap();
     //Main application loop
     let mut sin_t = 0.0;
-    let mut freq = 300.0;
     let mut timer = FrameTimer::new();
     'running: loop {
         timer.update(); //Update frame timer
@@ -305,16 +305,22 @@ fn main() {
         {
             let framecount = audio_client.get_available_space_in_frames().unwrap() as usize;
             let mut data = vec![0; framecount * blockalign];
-            //let freq = 2500.0;
             for frame in data.chunks_exact_mut(blockalign) {
-                let sample = 0.1 * f32::sin(glm::two_pi::<f32>() * freq * sin_t);
+                let freq = 700.0;
+                let sample = 0.2 * f32::sin(glm::two_pi::<f32>() * freq * sin_t);
+
                 let sample_bytes = sample.to_le_bytes();
                 for v in frame.chunks_exact_mut(blockalign / 2) {
                     for (bufbyte, sinbyte) in v.iter_mut().zip(sample_bytes.iter()) {
                         *bufbyte = *sinbyte;
                     }
                 }
+
                 sin_t += 1.0 / sample_rate as f32;
+                let max_t = 1.0 / freq;
+                if sin_t > max_t {
+                    sin_t -= max_t;
+                }
             }
 
             audio_render_client.write_to_device(framecount, blockalign, &data).unwrap();
