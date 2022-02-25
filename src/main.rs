@@ -11,6 +11,34 @@ use std::ptr;
 
 use ozy::structs::FrameTimer;
 
+unsafe fn get_memory_type_index(
+    vk_instance: &ash::Instance,
+    vk_physical_device: vk::PhysicalDevice,
+    memory_requirements: vk::MemoryRequirements,
+    flags: vk::MemoryPropertyFlags
+) -> u32 {
+    let mut i = 0;
+    let mut memory_type_index = 0;
+    let mut largest_heap = 0;
+    let phys_device_mem_props = vk_instance.get_physical_device_memory_properties(vk_physical_device);
+    for mem_type in phys_device_mem_props.memory_types {
+        if memory_requirements.memory_type_bits & (1 << i) == 0 {
+            continue;
+        }
+
+        if mem_type.property_flags.contains(flags) {
+            let heap_size = phys_device_mem_props.memory_heaps[mem_type.heap_index as usize].size;
+            if heap_size > largest_heap {
+                memory_type_index = i;
+                largest_heap = heap_size;
+            }
+        }
+        i += 1;
+    }
+
+    memory_type_index
+}
+
 //Entry point
 fn main() {
     //Create the window using SDL
@@ -24,12 +52,16 @@ fn main() {
     let wasapi_device = wasapi::get_default_device(&wasapi::Direction::Render).unwrap();
     let mut audio_client = wasapi_device.get_iaudioclient().unwrap();
     println!("Selected audio output device: {}", wasapi_device.get_friendlyname().unwrap());
+    let blockalign;
+    let sample_rate;
     let audio_render_client = {
         let format = audio_client.get_mixformat().unwrap();
+        sample_rate = format.get_samplespersec();
+        println!("Sample rate: {}", sample_rate);
+        blockalign = format.get_blockalign() as usize;
         let default_period = audio_client.get_periods().unwrap().0;
-        println!("{:?}", format);
-        audio_client.initialize_client(&format, default_period, &wasapi::Direction::Render, &wasapi::ShareMode::Shared, false).unwrap();
-        println!("{}", audio_client.get_available_space_in_frames().unwrap());
+        audio_client.initialize_client(&format, 0, &wasapi::Direction::Render, &wasapi::ShareMode::Shared, false).unwrap();
+        audio_client.set_get_eventhandle().unwrap();
         audio_client.get_audiorenderclient().unwrap()
     };
 
@@ -170,22 +202,9 @@ fn main() {
 
         let depth_image = vk_device.create_image(&create_info, None).unwrap();
         let mem_reqs = vk_device.get_image_memory_requirements(depth_image);
-        let phys_device_mem_props = vk_instance.get_physical_device_memory_properties(vk_physical_device);
 
         //Search for the largest DEVICE_LOCAL heap the device advertises
-        let mut i = 0;
-        let mut memory_type_index = 0;
-        let mut largest_heap = 0;
-        for mem_type in phys_device_mem_props.memory_types {
-            if mem_type.property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL) {
-                let heap_size = phys_device_mem_props.memory_heaps[mem_type.heap_index as usize].size;
-                if heap_size > largest_heap {
-                    memory_type_index = i;
-                    largest_heap = heap_size;
-                }
-            }
-            i += 1;
-        }
+        let memory_type_index = get_memory_type_index(&vk_instance, vk_physical_device, mem_reqs, vk::MemoryPropertyFlags::DEVICE_LOCAL);
 
         let allocate_info = vk::MemoryAllocateInfo {
             allocation_size: mem_reqs.size,
@@ -226,26 +245,48 @@ fn main() {
         vk_device.create_image_view(&view_info, None).unwrap()
     };
 
-    {
-        let framecount = audio_client.get_available_space_in_frames().unwrap() as usize;
-        let freq = 44100.0 * 1000.0; //44,100 kHz
-        let mut data = vec![0; framecount * size_of::<f32>()];
-        for i in 0..framecount {
-            let t = i as f32 * 1.0 / freq;
-            let pulse = f32::sin(t);
-            let bytes = pulse.to_le_bytes();
-            data[i * 4] = bytes[0];
-            data[i * 4 + 1] = bytes[1];
-            data[i * 4 + 2] = bytes[2];
-            data[i * 4 + 3] = bytes[3];
-        }
+    let vk_uniform_buffer = unsafe {
+        let buffer_create_info = vk::BufferCreateInfo {
+            usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+            size: 16,
+            queue_family_index_count: 0,
+            p_queue_family_indices: ptr::null(),
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            ..Default::default()
+        };
 
-        audio_render_client.write_to_device(framecount, size_of::<f32>(), &data).unwrap();
-        println!("{}", audio_client.get_available_space_in_frames().unwrap());
-        audio_client.start_stream().unwrap();
+        let vk_uniform_buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
+        
+        let mem_reqs = vk_device.get_buffer_memory_requirements(vk_uniform_buffer);
+        let memory_type_index = get_memory_type_index(&vk_instance, vk_physical_device, mem_reqs,vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT);
+
+        let alloc_info = vk::MemoryAllocateInfo {
+            allocation_size: mem_reqs.size,
+            memory_type_index,
+            ..Default::default()
+        };
+        let uniform_buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
+
+        vk_device.bind_buffer_memory(vk_uniform_buffer, uniform_buffer_memory, 0).unwrap();
+
+        vk_uniform_buffer
+    };
+
+    {
+        let layout_binding = vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            p_immutable_samplers: ptr::null()
+        };
+        
     }
     
+    
+    audio_client.start_stream().unwrap();
     //Main application loop
+    let mut sin_t = 0.0;
+    let mut freq = 300.0;
     let mut timer = FrameTimer::new();
     'running: loop {
         timer.update(); //Update frame timer
@@ -260,5 +301,23 @@ fn main() {
 
         //Update
 
+        //Fill available part of audio buffer with sine wave
+        {
+            let framecount = audio_client.get_available_space_in_frames().unwrap() as usize;
+            let mut data = vec![0; framecount * blockalign];
+            //let freq = 2500.0;
+            for frame in data.chunks_exact_mut(blockalign) {
+                let sample = 0.1 * f32::sin(glm::two_pi::<f32>() * freq * sin_t);
+                let sample_bytes = sample.to_le_bytes();
+                for v in frame.chunks_exact_mut(blockalign / 2) {
+                    for (bufbyte, sinbyte) in v.iter_mut().zip(sample_bytes.iter()) {
+                        *bufbyte = *sinbyte;
+                    }
+                }
+                sin_t += 1.0 / sample_rate as f32;
+            }
+
+            audio_render_client.write_to_device(framecount, blockalign, &data).unwrap();
+        }
     }
 }
