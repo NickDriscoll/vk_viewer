@@ -11,9 +11,9 @@ nalgebra-glm = "*"
 wasapi = "0.1.2"
 
 [dependencies.ash]
-version = "0.35.0+1.2.203"
+version = "*"
 features = ["linked"]
 
 [dependencies.sdl2]
-version = "0.35.1"
+version = "*"
 features = ["bundled", "raw-window-handle"]

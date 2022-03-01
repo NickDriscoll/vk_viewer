@@ -151,14 +151,17 @@ fn main() {
     let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);
 
     //Create the main swapchain for window present
+    let vk_swapchain_image_format;
+    let vk_swapchain_samples = vk::SampleCountFlags::TYPE_4;
     let vk_swapchain = unsafe {
         let present_mode = vk_ext_surface.get_physical_device_surface_present_modes(vk_physical_device, vk_surface).unwrap()[0];
         let surf_capabilities = vk_ext_surface.get_physical_device_surface_capabilities(vk_physical_device, vk_surface).unwrap();
         let surf_format = vk_ext_surface.get_physical_device_surface_formats(vk_physical_device, vk_surface).unwrap()[0];
+        vk_swapchain_image_format = surf_format.format;
         let create_info = vk::SwapchainCreateInfoKHR {
             surface: vk_surface,
             min_image_count: surf_capabilities.min_image_count,
-            image_format: surf_format.format,
+            image_format: vk_swapchain_image_format,
             image_color_space: surf_format.color_space,
             image_extent: surf_capabilities.current_extent,
             image_array_layers: 1,
@@ -175,26 +178,26 @@ fn main() {
         vk_ext_swapchain.create_swapchain(&create_info, None).unwrap()
     };
 
+    let vk_depth_format;
     let vk_depth_image = unsafe {
-        let present_mode = vk_ext_surface.get_physical_device_surface_present_modes(vk_physical_device, vk_surface).unwrap()[0];
-        let surf_format = vk_ext_surface.get_physical_device_surface_formats(vk_physical_device, vk_surface).unwrap()[0];
-
         let surf_capabilities = vk_ext_surface.get_physical_device_surface_capabilities(vk_physical_device, vk_surface).unwrap();
         let extent = vk::Extent3D {
             width: surf_capabilities.current_extent.width,
             height: surf_capabilities.current_extent.height,
             depth: 1
         };
+
+        vk_depth_format = vk::Format::D16_UNORM;
         let create_info = vk::ImageCreateInfo {
             queue_family_index_count: 1,
             p_queue_family_indices: [vk_queue_family_index].as_ptr(),
             flags: vk::ImageCreateFlags::empty(),
             image_type: vk::ImageType::TYPE_2D,
-            format: vk::Format::D16_UNORM,
+            format: vk_depth_format,
             extent,
             mip_levels: 1,
             array_layers: 1,
-            samples: vk::SampleCountFlags::TYPE_4,
+            samples: vk_swapchain_samples,
             usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
@@ -245,12 +248,13 @@ fn main() {
         vk_device.create_image_view(&view_info, None).unwrap()
     };
 
+    let triangle_tint_color = [0.5f32, 0.25, 0.25, 1.0];
+
+    let vk_descriptor_buffer_info;
     let vk_uniform_buffer = unsafe {
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-            size: 16,
-            queue_family_index_count: 0,
-            p_queue_family_indices: ptr::null(),
+            size: (triangle_tint_color.len() * size_of::<f32>()) as u64,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
@@ -258,7 +262,12 @@ fn main() {
         let vk_uniform_buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
         
         let mem_reqs = vk_device.get_buffer_memory_requirements(vk_uniform_buffer);
-        let memory_type_index = get_memory_type_index(&vk_instance, vk_physical_device, mem_reqs,vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT);
+        let memory_type_index = get_memory_type_index(
+            &vk_instance,
+            vk_physical_device,
+            mem_reqs,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+        );
 
         let alloc_info = vk::MemoryAllocateInfo {
             allocation_size: mem_reqs.size,
@@ -269,29 +278,157 @@ fn main() {
 
         vk_device.bind_buffer_memory(vk_uniform_buffer, uniform_buffer_memory, 0).unwrap();
 
+        vk_descriptor_buffer_info = vk::DescriptorBufferInfo {
+            buffer: vk_uniform_buffer,
+            offset: 0,
+            range: (triangle_tint_color.len() * size_of::<f32>()) as u64
+        };
+
         vk_uniform_buffer
     };
 
-    {
+    let vk_descriptor_set_layout;
+    let vk_pipeline_layout = unsafe {
         let layout_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             p_immutable_samplers: ptr::null(),
             ..Default::default()
         };
         
-    }
+        let descriptor_layout = vk::DescriptorSetLayoutCreateInfo {
+            binding_count: 1,
+            p_bindings: &layout_binding,
+            ..Default::default()
+        };
+
+        vk_descriptor_set_layout = vk_device.create_descriptor_set_layout(&descriptor_layout, None).unwrap();
+
+        let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
+            push_constant_range_count: 0,
+            p_push_constant_ranges: ptr::null(),
+            set_layout_count: 1,
+            p_set_layouts: &vk_descriptor_set_layout,
+            ..Default::default()
+        };
+        
+        vk_device.create_pipeline_layout(&pipeline_layout_createinfo, None).unwrap()
+    };
     
+    let vk_descriptor_sets;
+    unsafe {
+        let pool_size = vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_count: 1
+        };
+        let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
+            max_sets: 1,
+            pool_size_count: 1,
+            p_pool_sizes: &pool_size,
+            ..Default::default()
+        };
+        let descriptor_pool = vk_device.create_descriptor_pool(&descriptor_pool_info, None).unwrap();
+
+        let vk_alloc_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool,
+            descriptor_set_count: 1,
+            p_set_layouts: &vk_descriptor_set_layout,
+            ..Default::default()
+        };
+        vk_descriptor_sets = vk_device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
+
+        let write = vk::WriteDescriptorSet {
+            dst_set: vk_descriptor_sets[0],
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            p_buffer_info: &vk_descriptor_buffer_info,
+            dst_array_element: 0,
+            dst_binding: 0,
+            ..Default::default()
+        };
+
+        vk_device.update_descriptor_sets(&[write], &[]);
+    }
+
+    let vk_render_pass = unsafe {
+        let color_attachment_description = vk::AttachmentDescription {
+            format: vk_swapchain_image_format,
+            samples: vk_swapchain_samples,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::STORE,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+            ..Default::default()
+        };
+
+        let depth_attachment_description = vk::AttachmentDescription {
+            format: vk_depth_format,
+            samples: vk_swapchain_samples,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::DONT_CARE,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            ..Default::default()
+        };
+
+        let color_attachment_reference = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        };
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        };
+
+        let subpass = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+            color_attachment_count: 1,
+            p_color_attachments: &color_attachment_reference,
+            p_depth_stencil_attachment: &depth_attachment_reference,
+            ..Default::default()
+        };
+
+        let subpass_dependency = vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            dst_subpass: 0,
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            src_access_mask: vk::AccessFlags::NONE_KHR,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            ..Default::default()
+        };
+
+        let attachments = [color_attachment_description, depth_attachment_description];
+        let renderpass_info = vk::RenderPassCreateInfo {
+            attachment_count: attachments.len() as u32,
+            p_attachments: &attachments as *const _,
+            subpass_count: 1,
+            p_subpasses: &subpass,
+            dependency_count: 1,
+            p_dependencies: &subpass_dependency,
+            ..Default::default()
+        };
+        vk_device.create_render_pass(&renderpass_info, None).unwrap()
+    };
+
+
     
     audio_client.start_stream().unwrap();
+
     //Main application loop
     let mut sin_t = 0.0;
+    let mut sin_speed = 1.0;
     let mut timer = FrameTimer::new();
     'running: loop {
         timer.update(); //Update frame timer
 
-        //Pump window's event loop
+        //Pump event queue
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit{..} => { break 'running; }
@@ -301,13 +438,13 @@ fn main() {
 
         //Update
 
-        //Fill available part of audio buffer with sine wave
+        //Fill available part of audio buffer with samples from sine wave
         {
             let framecount = audio_client.get_available_space_in_frames().unwrap() as usize;
             let mut data = vec![0; framecount * blockalign];
             for frame in data.chunks_exact_mut(blockalign) {
-                let freq = 700.0;
-                let sample = 0.2 * f32::sin(glm::two_pi::<f32>() * freq * sin_t);
+                let freq = 200.0;
+                let sample = 0.1 * f32::sin(glm::two_pi::<f32>() * freq * sin_t);
 
                 let sample_bytes = sample.to_le_bytes();
                 for v in frame.chunks_exact_mut(blockalign / 2) {
@@ -316,10 +453,12 @@ fn main() {
                     }
                 }
 
-                sin_t += 1.0 / sample_rate as f32;
-                let max_t = 1.0 / freq;
+                sin_t += sin_speed * 1.0 / sample_rate as f32;
+                sin_speed = (sin_speed + 0.0001) % 1.75;
+
+                let max_t = 1.0;
                 if sin_t > max_t {
-                    sin_t -= max_t;
+                    sin_t = 0.0;
                 }
             }
 
