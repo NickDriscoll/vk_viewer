@@ -4,6 +4,7 @@ extern crate ozy_engine as ozy;
 use ash::vk;
 use ash::vk::{Handle};
 use sdl2::event::Event;
+use std::fs::File;
 use std::ffi::CStr;
 use std::mem::size_of;
 use std::os::raw::c_void;
@@ -417,6 +418,33 @@ fn main() {
         vk_device.create_render_pass(&renderpass_info, None).unwrap()
     };
 
+    unsafe {
+        let mut vert_file = File::open("./shaders/main_vert.spv").unwrap();
+        let mut frag_file = File::open("./shaders/main_frag.spv").unwrap();
+        let vert_spv = ash::util::read_spv(&mut vert_file).unwrap();
+        let frag_spv = ash::util::read_spv(&mut frag_file).unwrap();
+
+        let module_create_info = vk::ShaderModuleCreateInfo {
+            code_size: vert_spv.len() * size_of::<u32>(),
+            p_code: vert_spv.as_ptr(),
+            ..Default::default()
+        };
+        let vert_module = vk_device.create_shader_module(&module_create_info, None).unwrap();
+
+        let module_create_info = vk::ShaderModuleCreateInfo {
+            code_size: frag_spv.len() * size_of::<u32>(),
+            p_code: frag_spv.as_ptr(),
+            ..Default::default()
+        };
+        let frag_module = vk_device.create_shader_module(&module_create_info, None).unwrap();
+
+        let shader_stage_create_info = vk::PipelineShaderStageCreateInfo {
+            stage: vk::ShaderStageFlags::VERTEX,
+            p_name: "main".as_ptr() as *const i8,
+            ..Default::default()
+        };
+    }
+
 
     
     audio_client.start_stream().unwrap();
@@ -424,6 +452,7 @@ fn main() {
     //Main application loop
     let mut sin_t = 0.0;
     let mut sin_speed = 1.0;
+    let mut sin_delta = 0.0001;
     let mut timer = FrameTimer::new();
     'running: loop {
         timer.update(); //Update frame timer
@@ -453,8 +482,11 @@ fn main() {
                     }
                 }
 
-                sin_t += sin_speed * 1.0 / sample_rate as f32;
-                sin_speed = (sin_speed + 0.0001) % 1.75;
+                sin_t += sin_speed / sample_rate as f32;
+                sin_speed = sin_speed + sin_delta;
+                if sin_speed > 5.0 || sin_speed < 1.0 {
+                    sin_delta *= -1.0;
+                }
 
                 let max_t = 1.0;
                 if sin_t > max_t {
