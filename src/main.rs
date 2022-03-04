@@ -3,6 +3,7 @@ extern crate ozy_engine as ozy;
 
 use ash::vk;
 use ash::vk::{Handle};
+use claxon::FlacReader;
 use sdl2::event::Event;
 use std::fs::File;
 use std::ffi::CStr;
@@ -11,6 +12,13 @@ use std::os::raw::c_void;
 use std::ptr;
 
 use ozy::structs::FrameTimer;
+
+const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
+    r: vk::ComponentSwizzle::R,
+    g: vk::ComponentSwizzle::G,
+    b: vk::ComponentSwizzle::B,
+    a: vk::ComponentSwizzle::A,
+};
 
 unsafe fn get_memory_type_index(
     vk_instance: &ash::Instance,
@@ -53,14 +61,13 @@ fn main() {
     let wasapi_device = wasapi::get_default_device(&wasapi::Direction::Render).unwrap();
     let mut audio_client = wasapi_device.get_iaudioclient().unwrap();
     println!("Selected audio output device: {}", wasapi_device.get_friendlyname().unwrap());
-    let blockalign;
-    let sample_rate;
+    let pcm_blockalign;
+    let mix_sample_rate;
     let audio_render_client = {
         let format = audio_client.get_mixformat().unwrap();
-        sample_rate = format.get_samplespersec();
-        println!("Sample rate: {}", sample_rate);
-        blockalign = format.get_blockalign() as usize;
-        let default_period = audio_client.get_periods().unwrap().0;
+        pcm_blockalign = format.get_blockalign() as usize;
+        mix_sample_rate = format.get_samplespersec();
+        println!("Default sample rate: {}", mix_sample_rate);
         audio_client.initialize_client(&format, 0, &wasapi::Direction::Render, &wasapi::ShareMode::Shared, false).unwrap();
         audio_client.set_get_eventhandle().unwrap();
         audio_client.get_audiorenderclient().unwrap()
@@ -148,17 +155,36 @@ fn main() {
         }
     };
 
+    //Create command buffer
+    let vk_command_buffer = unsafe {
+        let pool_create_info = vk::CommandPoolCreateInfo {
+            queue_family_index: vk_queue_family_index,
+            ..Default::default()
+        };
+
+        let command_pool = vk_device.create_command_pool(&pool_create_info, None).unwrap();
+
+        let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
+            command_pool,
+            command_buffer_count: 1,
+            level: vk::CommandBufferLevel::PRIMARY,
+            ..Default::default()
+        };
+        vk_device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()[0]
+    };
+
     //Create swapchain extension object
     let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);
 
     //Create the main swapchain for window present
     let vk_swapchain_image_format;
-    let vk_swapchain_samples = vk::SampleCountFlags::TYPE_4;
-    let vk_swapchain = unsafe {
+    let vk_swapchain_extent;
+    let vk_swapchain_image_views = unsafe {
         let present_mode = vk_ext_surface.get_physical_device_surface_present_modes(vk_physical_device, vk_surface).unwrap()[0];
         let surf_capabilities = vk_ext_surface.get_physical_device_surface_capabilities(vk_physical_device, vk_surface).unwrap();
         let surf_format = vk_ext_surface.get_physical_device_surface_formats(vk_physical_device, vk_surface).unwrap()[0];
         vk_swapchain_image_format = surf_format.format;
+        vk_swapchain_extent = surf_capabilities.current_extent;
         let create_info = vk::SwapchainCreateInfoKHR {
             surface: vk_surface,
             min_image_count: surf_capabilities.min_image_count,
@@ -176,7 +202,31 @@ fn main() {
             ..Default::default()
         };
 
-        vk_ext_swapchain.create_swapchain(&create_info, None).unwrap()
+        let sc = vk_ext_swapchain.create_swapchain(&create_info, None).unwrap();
+        let vk_swapchain_images = vk_ext_swapchain.get_swapchain_images(sc).unwrap();
+
+        let mut image_views = Vec::with_capacity(vk_swapchain_images.len());
+        for i in 0..vk_swapchain_images.len() {
+            let image_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let view_info = vk::ImageViewCreateInfo {
+                image: vk_swapchain_images[i],
+                format: vk_swapchain_image_format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: COMPONENT_MAPPING_DEFAULT,
+                subresource_range: image_subresource_range,
+                ..Default::default()
+            };
+
+            image_views.push(vk_device.create_image_view(&view_info, None).unwrap());
+        }
+
+        image_views
     };
 
     let vk_depth_format;
@@ -198,7 +248,7 @@ fn main() {
             extent,
             mip_levels: 1,
             array_layers: 1,
-            samples: vk_swapchain_samples,
+            samples: vk::SampleCountFlags::TYPE_1,
             usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
@@ -223,7 +273,7 @@ fn main() {
         depth_image
     };
 
-    let vk_depth_buffer_view = unsafe {
+    let vk_depth_image_view = unsafe {
         let image_subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::DEPTH,
             base_mip_level: 0,
@@ -231,17 +281,11 @@ fn main() {
             base_array_layer: 0,
             layer_count: 1
         };
-        let components = vk::ComponentMapping {
-            r: vk::ComponentSwizzle::R,
-            g: vk::ComponentSwizzle::G,
-            b: vk::ComponentSwizzle::B,
-            a: vk::ComponentSwizzle::A,
-        };
         let view_info = vk::ImageViewCreateInfo {
             image: vk_depth_image,
-            format: vk::Format::D16_UNORM,
+            format: vk_depth_format,
             view_type: vk::ImageViewType::TYPE_2D,
-            components,
+            components: COMPONENT_MAPPING_DEFAULT,
             subresource_range: image_subresource_range,
             ..Default::default()
         };
@@ -356,7 +400,7 @@ fn main() {
     let vk_render_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
             format: vk_swapchain_image_format,
-            samples: vk_swapchain_samples,
+            samples: vk::SampleCountFlags::TYPE_1,
             load_op: vk::AttachmentLoadOp::CLEAR,
             store_op: vk::AttachmentStoreOp::STORE,
             stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
@@ -368,7 +412,7 @@ fn main() {
 
         let depth_attachment_description = vk::AttachmentDescription {
             format: vk_depth_format,
-            samples: vk_swapchain_samples,
+            samples: vk::SampleCountFlags::TYPE_1,
             load_op: vk::AttachmentLoadOp::CLEAR,
             store_op: vk::AttachmentStoreOp::DONT_CARE,
             stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
@@ -418,6 +462,7 @@ fn main() {
         vk_device.create_render_pass(&renderpass_info, None).unwrap()
     };
 
+    //Load shaders
     unsafe {
         let mut vert_file = File::open("./shaders/main_vert.spv").unwrap();
         let mut frag_file = File::open("./shaders/main_frag.spv").unwrap();
@@ -445,7 +490,70 @@ fn main() {
         };
     }
 
+    //Create framebuffers
+    let vk_framebuffers = unsafe {
+        let mut attachments = [vk::ImageView::default(), vk_depth_image_view];
+        let fb_info = vk::FramebufferCreateInfo {
+            render_pass: vk_render_pass,
+            attachment_count: attachments.len() as u32,
+            p_attachments: attachments.as_ptr(),
+            width: vk_swapchain_extent.width,
+            height: vk_swapchain_extent.height,
+            layers: 1,
+            ..Default::default()
+        };
 
+        let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
+        for view in vk_swapchain_image_views {
+            attachments[0] = view;
+            fbs.push(vk_device.create_framebuffer(&fb_info, None).unwrap())
+        }
+
+        fbs
+    };
+
+    //Create vertex buffer
+    unsafe {
+        let triangle_vertex_data = [
+            0.5f32, 0.25, 0.0, 0.0, 1.0,
+            0.25, 0.75, 1.0, 0.0, 0.0,
+            0.75, 0.75, 0.0, 1.0, 0.0
+        ];
+
+        let buffer_create_info = vk::BufferCreateInfo {
+            usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+            size: (triangle_vertex_data.len() * size_of::<f32>()) as u64,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            ..Default::default()
+        };
+        let vertex_buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
+
+        let mem_reqs = vk_device.get_buffer_memory_requirements(vertex_buffer);
+        let memory_type_index = get_memory_type_index(
+            &vk_instance,
+            vk_physical_device,
+            mem_reqs,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+        );
+        let alloc_info = vk::MemoryAllocateInfo {
+            allocation_size: mem_reqs.size,
+            memory_type_index,
+            ..Default::default()
+        };
+        let vertex_buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
+
+        vk_device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).unwrap();
+    }
+
+    let mut music_reader = FlacReader::open("./music/nmwi.flac").unwrap();
+    
+    let music_info = music_reader.streaminfo();
+    println!("{:?}", music_info);
+    let mut raw_music_samples = Vec::with_capacity((music_info.samples.unwrap() as u32 * music_info.channels) as usize);
+    for sample in music_reader.samples() {
+        let sample = sample.unwrap();
+        raw_music_samples.push(sample as f32 / i16::MAX as f32);
+    }
     
     audio_client.start_stream().unwrap();
 
@@ -467,34 +575,49 @@ fn main() {
 
         //Update
 
-        //Fill available part of audio buffer with samples from sine wave
+        //Fill available part of audio buffer with samples
         {
             let framecount = audio_client.get_available_space_in_frames().unwrap() as usize;
-            let mut data = vec![0; framecount * blockalign];
-            for frame in data.chunks_exact_mut(blockalign) {
+            let mut data = vec![0; framecount * pcm_blockalign];
+
+            //FLAC file
+            for frame in data.chunks_exact_mut(pcm_blockalign) {
+                
+            }
+
+            //Sine wave
+            /*
+            for frame in data.chunks_exact_mut(pcm_blockalign) {
                 let freq = 200.0;
                 let sample = 0.1 * f32::sin(glm::two_pi::<f32>() * freq * sin_t);
 
                 let sample_bytes = sample.to_le_bytes();
-                for v in frame.chunks_exact_mut(blockalign / 2) {
+                for v in frame.chunks_exact_mut(pcm_blockalign / 2) {
                     for (bufbyte, sinbyte) in v.iter_mut().zip(sample_bytes.iter()) {
                         *bufbyte = *sinbyte;
                     }
                 }
 
                 sin_t += sin_speed / sample_rate as f32;
+
+                /*
                 sin_speed = sin_speed + sin_delta;
-                if sin_speed > 5.0 || sin_speed < 1.0 {
+                let min = 1.0;
+                let max = 2.0;
+                if sin_speed > max || sin_speed < min {
                     sin_delta *= -1.0;
+                    sin_speed = f32::clamp(sin_speed, min, max);
                 }
+                */
 
                 let max_t = 1.0;
                 if sin_t > max_t {
                     sin_t = 0.0;
                 }
             }
+            */
 
-            audio_render_client.write_to_device(framecount, blockalign, &data).unwrap();
+            audio_render_client.write_to_device(framecount, pcm_blockalign, &data).unwrap();
         }
     }
 }
