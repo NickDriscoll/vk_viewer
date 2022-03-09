@@ -6,10 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-claxon = "0.4.3"
 ozy_engine = { path = "../ozy_engine" }
 nalgebra-glm = "*"
-wasapi = "0.1.2"
 
 [dependencies.ash]
 version = "*"
@@ -17,4 +15,4 @@ features = ["linked"]
 
 [dependencies.sdl2]
 version = "*"
-features = ["bundled", "raw-window-handle"]
+features = ["bundled", "mixer", "raw-window-handle"]

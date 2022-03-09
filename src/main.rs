@@ -3,8 +3,9 @@ extern crate ozy_engine as ozy;
 
 use ash::vk;
 use ash::vk::{Handle};
-use claxon::FlacReader;
 use sdl2::event::Event;
+use sdl2::mixer;
+use sdl2::mixer::Music;
 use std::fs::File;
 use std::ffi::CStr;
 use std::mem::size_of;
@@ -57,21 +58,14 @@ fn main() {
     let window_size = glm::vec2(1024, 1024);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
-    //WASAPI initialization
-    let wasapi_device = wasapi::get_default_device(&wasapi::Direction::Render).unwrap();
-    let mut audio_client = wasapi_device.get_iaudioclient().unwrap();
-    println!("Selected audio output device: {}", wasapi_device.get_friendlyname().unwrap());
-    let pcm_blockalign;
-    let mix_sample_rate;
-    let audio_render_client = {
-        let format = audio_client.get_mixformat().unwrap();
-        pcm_blockalign = format.get_blockalign() as usize;
-        mix_sample_rate = format.get_samplespersec();
-        println!("Default sample rate: {}", mix_sample_rate);
-        audio_client.initialize_client(&format, 0, &wasapi::Direction::Render, &wasapi::ShareMode::Shared, false).unwrap();
-        audio_client.set_get_eventhandle().unwrap();
-        audio_client.get_audiorenderclient().unwrap()
-    };
+    //Initialize the SDL mixer
+    let sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
+    mixer::open_audio(mixer::DEFAULT_FREQUENCY, mixer::DEFAULT_FORMAT, 2, 256).unwrap();
+    Music::set_volume(16);
+
+    //Load and play bgm
+    let bgm = Music::from_file("./music/bald.mp3").unwrap();
+    bgm.play(-1).unwrap();
 
     //Initialize the Vulkan API
     let vk_entry = ash::Entry::linked();
@@ -545,22 +539,93 @@ fn main() {
         vk_device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).unwrap();
     }
 
-    let mut music_reader = FlacReader::open("./music/nmwi.flac").unwrap();
-    
-    let music_info = music_reader.streaminfo();
-    println!("{:?}", music_info);
-    let mut raw_music_samples = Vec::with_capacity((music_info.samples.unwrap() as u32 * music_info.channels) as usize);
-    for sample in music_reader.samples() {
-        let sample = sample.unwrap();
-        raw_music_samples.push(sample as f32 / i16::MAX as f32);
+    //Configure pipeline state
+    {
+        let mut dynamic_state_enables = [vk::DynamicState::default(); 2];
+        let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+            p_dynamic_states: dynamic_state_enables.as_ptr(),
+            dynamic_state_count: 0,
+            ..Default::default()
+        };
+
+        let vertex_binding = vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: 5 * size_of::<f32>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX
+        };
+
+        let position_attribute = vk::VertexInputAttributeDescription {
+            location: 0,
+            binding: 0,
+            format: vk::Format::R32G32_SFLOAT,
+            offset: 0
+        };
+
+        let color_attribute = vk::VertexInputAttributeDescription {
+            location: 1,
+            binding: 1,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 2 * size_of::<f32>() as u32
+        };
+
+        let attrs = [position_attribute, color_attribute];
+        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
+            vertex_binding_description_count: 1,
+            p_vertex_binding_descriptions: &vertex_binding,
+            vertex_attribute_description_count: attrs.len() as u32,
+            p_vertex_attribute_descriptions: attrs.as_ptr(),
+            ..Default::default()
+        };
+
+        let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo {
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+            ..Default::default()
+        };
+
+        let rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+            polygon_mode: vk::PolygonMode::FILL,
+            cull_mode: vk::CullModeFlags::BACK,
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            depth_clamp_enable: vk::TRUE,
+            rasterizer_discard_enable: vk::FALSE,
+            depth_bias_enable: vk::FALSE,
+            line_width: 1.0,
+            ..Default::default()
+        };
+
+        let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
+            color_write_mask: vk::ColorComponentFlags::from_raw(0xF),   //All components
+            blend_enable: vk::FALSE,
+            alpha_blend_op: vk::BlendOp::ADD,
+            color_blend_op: vk::BlendOp::ADD,
+            src_color_blend_factor: vk::BlendFactor::ZERO,
+            dst_color_blend_factor: vk::BlendFactor::ZERO,
+            src_alpha_blend_factor: vk::BlendFactor::ZERO,
+            dst_alpha_blend_factor: vk::BlendFactor::ZERO
+        };
+
+        let color_blend_pipeline_state = vk::PipelineColorBlendStateCreateInfo {
+            attachment_count: 1,
+            p_attachments: &color_blend_attachment_state,
+            logic_op_enable: vk::FALSE,
+            logic_op: vk::LogicOp::NO_OP,
+            blend_constants: [0.0; 4],
+            ..Default::default()
+        };
+
+        dynamic_state_enables[0] = vk::DynamicState::VIEWPORT;
+        dynamic_state_enables[1] = vk::DynamicState::SCISSOR;
+        let viewport_state = vk::PipelineViewportStateCreateInfo {
+            viewport_count: 1,
+            p_scissors: ptr::null(),
+            p_viewports: ptr::null(),
+            ..Default::default()
+        };
+
+
     }
-    
-    audio_client.start_stream().unwrap();
 
     //Main application loop
-    let mut sin_t = 0.0;
-    let mut sin_speed = 1.0;
-    let mut sin_delta = 0.0001;
     let mut timer = FrameTimer::new();
     'running: loop {
         timer.update(); //Update frame timer
@@ -575,49 +640,6 @@ fn main() {
 
         //Update
 
-        //Fill available part of audio buffer with samples
-        {
-            let framecount = audio_client.get_available_space_in_frames().unwrap() as usize;
-            let mut data = vec![0; framecount * pcm_blockalign];
-
-            //FLAC file
-            for frame in data.chunks_exact_mut(pcm_blockalign) {
-                
-            }
-
-            //Sine wave
-            /*
-            for frame in data.chunks_exact_mut(pcm_blockalign) {
-                let freq = 200.0;
-                let sample = 0.1 * f32::sin(glm::two_pi::<f32>() * freq * sin_t);
-
-                let sample_bytes = sample.to_le_bytes();
-                for v in frame.chunks_exact_mut(pcm_blockalign / 2) {
-                    for (bufbyte, sinbyte) in v.iter_mut().zip(sample_bytes.iter()) {
-                        *bufbyte = *sinbyte;
-                    }
-                }
-
-                sin_t += sin_speed / sample_rate as f32;
-
-                /*
-                sin_speed = sin_speed + sin_delta;
-                let min = 1.0;
-                let max = 2.0;
-                if sin_speed > max || sin_speed < min {
-                    sin_delta *= -1.0;
-                    sin_speed = f32::clamp(sin_speed, min, max);
-                }
-                */
-
-                let max_t = 1.0;
-                if sin_t > max_t {
-                    sin_t = 0.0;
-                }
-            }
-            */
-
-            audio_render_client.write_to_device(framecount, pcm_blockalign, &data).unwrap();
-        }
+        
     }
 }
