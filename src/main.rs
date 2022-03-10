@@ -457,7 +457,7 @@ fn main() {
     };
 
     //Load shaders
-    unsafe {
+    let vk_shader_stages = unsafe {
         let mut vert_file = File::open("./shaders/main_vert.spv").unwrap();
         let mut frag_file = File::open("./shaders/main_frag.spv").unwrap();
         let vert_spv = ash::util::read_spv(&mut vert_file).unwrap();
@@ -477,12 +477,22 @@ fn main() {
         };
         let frag_module = vk_device.create_shader_module(&module_create_info, None).unwrap();
 
-        let shader_stage_create_info = vk::PipelineShaderStageCreateInfo {
+        let vertex_stage_create_info = vk::PipelineShaderStageCreateInfo {
             stage: vk::ShaderStageFlags::VERTEX,
             p_name: "main".as_ptr() as *const i8,
+            module: vert_module,
             ..Default::default()
         };
-    }
+        
+        let fragment_stage_create_info = vk::PipelineShaderStageCreateInfo {
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            p_name: "main".as_ptr() as *const i8,
+            module: frag_module,
+            ..Default::default()
+        };
+
+        [vertex_stage_create_info, fragment_stage_create_info]
+    };
 
     //Create framebuffers
     let vk_framebuffers = unsafe {
@@ -539,8 +549,8 @@ fn main() {
         vk_device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).unwrap();
     }
 
-    //Configure pipeline state
-    {
+    //Configure graphics pipeline state
+    let vk_graphics_pipeline = unsafe {
         let mut dynamic_state_enables = [vk::DynamicState::default(); 2];
         let dynamic_state = vk::PipelineDynamicStateCreateInfo {
             p_dynamic_states: dynamic_state_enables.as_ptr(),
@@ -622,8 +632,38 @@ fn main() {
             ..Default::default()
         };
 
+        let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: vk::TRUE,
+            depth_write_enable: vk::TRUE,
+            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+            depth_bounds_test_enable: vk::FALSE,
+            stencil_test_enable: vk::FALSE,
+            ..Default::default()
+        };
 
-    }
+        let multisample_state = vk::PipelineMultisampleStateCreateInfo {
+            rasterization_samples: vk::SampleCountFlags::TYPE_1,
+            ..Default::default()
+        };
+
+        let graphics_pipeline_info = vk::GraphicsPipelineCreateInfo {
+            layout: vk_pipeline_layout,
+            p_vertex_input_state: &vertex_input_state,
+            p_input_assembly_state: &input_assembly_state,
+            p_rasterization_state: &rasterization_state,
+            p_color_blend_state: &color_blend_pipeline_state,
+            p_multisample_state: &multisample_state,
+            p_dynamic_state: &dynamic_state,
+            p_viewport_state: &viewport_state,
+            p_depth_stencil_state: &depth_stencil_state,
+            p_stages: vk_shader_stages.as_ptr(),
+            stage_count: vk_shader_stages.len() as u32,
+            render_pass: vk_render_pass,
+            ..Default::default()
+        };
+
+        vk_device.create_graphics_pipelines(vk::PipelineCache::null(), &[graphics_pipeline_info], None).unwrap()[0]
+    };
 
     //Main application loop
     let mut timer = FrameTimer::new();
