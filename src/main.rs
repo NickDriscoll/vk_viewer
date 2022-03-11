@@ -173,7 +173,8 @@ fn main() {
     //Create the main swapchain for window present
     let vk_swapchain_image_format;
     let vk_swapchain_extent;
-    let vk_swapchain_image_views = unsafe {
+
+    let vk_swapchain = unsafe {
         let present_mode = vk_ext_surface.get_physical_device_surface_present_modes(vk_physical_device, vk_surface).unwrap()[0];
         let surf_capabilities = vk_ext_surface.get_physical_device_surface_capabilities(vk_physical_device, vk_surface).unwrap();
         let surf_format = vk_ext_surface.get_physical_device_surface_formats(vk_physical_device, vk_surface).unwrap()[0];
@@ -197,7 +198,11 @@ fn main() {
         };
 
         let sc = vk_ext_swapchain.create_swapchain(&create_info, None).unwrap();
-        let vk_swapchain_images = vk_ext_swapchain.get_swapchain_images(sc).unwrap();
+        sc
+    };
+    
+    let vk_swapchain_image_views = unsafe {
+        let vk_swapchain_images = vk_ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
 
         let mut image_views = Vec::with_capacity(vk_swapchain_images.len());
         for i in 0..vk_swapchain_images.len() {
@@ -517,7 +522,7 @@ fn main() {
     };
 
     //Create vertex buffer
-    unsafe {
+    let vk_vertex_buffer = unsafe {
         let triangle_vertex_data = [
             0.5f32, 0.25, 0.0, 0.0, 1.0,
             0.25, 0.75, 1.0, 0.0, 0.0,
@@ -547,20 +552,22 @@ fn main() {
         let vertex_buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
 
         vk_device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).unwrap();
-    }
+
+        vertex_buffer
+    };
 
     //Configure graphics pipeline state
     let vk_graphics_pipeline = unsafe {
         let mut dynamic_state_enables = [vk::DynamicState::default(); 2];
         let dynamic_state = vk::PipelineDynamicStateCreateInfo {
             p_dynamic_states: dynamic_state_enables.as_ptr(),
-            dynamic_state_count: 0,
+            dynamic_state_count: dynamic_state_enables.len() as u32,
             ..Default::default()
         };
 
-        let vertex_binding = vk::VertexInputBindingDescription {
+        let vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
-            stride: 5 * size_of::<f32>() as u32,
+            stride: 2 * size_of::<f32>() as u32,
             input_rate: vk::VertexInputRate::VERTEX
         };
 
@@ -573,15 +580,16 @@ fn main() {
 
         let color_attribute = vk::VertexInputAttributeDescription {
             location: 1,
-            binding: 1,
+            binding: 0,
             format: vk::Format::R32G32B32_SFLOAT,
             offset: 2 * size_of::<f32>() as u32
         };
 
+        let bindings = [vert_binding];
         let attrs = [position_attribute, color_attribute];
         let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
-            vertex_binding_description_count: 1,
-            p_vertex_binding_descriptions: &vertex_binding,
+            vertex_binding_description_count: bindings.len() as u32,
+            p_vertex_binding_descriptions: bindings.as_ptr(),
             vertex_attribute_description_count: attrs.len() as u32,
             p_vertex_attribute_descriptions: attrs.as_ptr(),
             ..Default::default()
@@ -596,7 +604,7 @@ fn main() {
             polygon_mode: vk::PolygonMode::FILL,
             cull_mode: vk::CullModeFlags::BACK,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-            depth_clamp_enable: vk::TRUE,
+            depth_clamp_enable: vk::FALSE,
             rasterizer_discard_enable: vk::FALSE,
             depth_bias_enable: vk::FALSE,
             line_width: 1.0,
@@ -627,6 +635,7 @@ fn main() {
         dynamic_state_enables[1] = vk::DynamicState::SCISSOR;
         let viewport_state = vk::PipelineViewportStateCreateInfo {
             viewport_count: 1,
+            scissor_count: 1,
             p_scissors: ptr::null(),
             p_viewports: ptr::null(),
             ..Default::default()
@@ -665,6 +674,43 @@ fn main() {
         vk_device.create_graphics_pipelines(vk::PipelineCache::null(), &[graphics_pipeline_info], None).unwrap()[0]
     };
 
+    let vk_render_area = {        
+        let offset = vk::Offset2D {
+            x: 0,
+            y: 0
+        };
+        vk::Rect2D {
+            offset,
+            extent: vk_swapchain_extent
+        }
+    };
+
+    let vk_color_clear = {
+        let color = vk::ClearColorValue {
+            float32: [0.0, 0.0, 0.0, 1.0]
+        };
+        vk::ClearValue {
+            color
+        }
+    };
+
+    let vk_depth_stencil_clear = {
+        let value = vk::ClearDepthStencilValue {
+            depth: 1.0,
+            stencil: 0
+        };
+        vk::ClearValue {
+            depth_stencil: value
+        }
+    };
+
+    let vk_clear_values = [vk_color_clear, vk_depth_stencil_clear];
+
+    //Create semaphore used to wait on swapchain image
+    let vk_swapchain_semaphore = unsafe {
+        vk_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap()
+    };
+
     //Main application loop
     let mut timer = FrameTimer::new();
     'running: loop {
@@ -680,6 +726,45 @@ fn main() {
 
         //Update
 
-        
+        //Draw
+        unsafe {
+            let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_swapchain, u64::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+
+            let begin_info = vk::CommandBufferBeginInfo {
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                p_inheritance_info: ptr::null(),
+                ..Default::default()
+            };
+            vk_device.begin_command_buffer(vk_command_buffer, &begin_info).unwrap();
+
+            let rp_begin_info = vk::RenderPassBeginInfo {
+                render_pass: vk_render_pass,
+                framebuffer: vk_framebuffers[current_framebuffer_index],
+                render_area: vk_render_area,
+                clear_value_count: vk_clear_values.len() as u32,
+                p_clear_values: vk_clear_values.as_ptr(),
+                ..Default::default()
+            };
+            vk_device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+
+            vk_device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_graphics_pipeline);
+
+            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
+
+            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[vk_vertex_buffer], &[0]);
+
+            let viewport = vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: vk_swapchain_extent.width as f32,
+                height: vk_swapchain_extent.height as f32,
+                min_depth: 0.0,
+                max_depth: 1.0
+            };
+            vk_device.cmd_set_viewport(vk_command_buffer, 0, &[viewport]);
+
+            vk_device.cmd_draw(vk_command_buffer, 3, 1, 0, 0);
+            vk_device.cmd_end_render_pass(vk_command_buffer);
+        }
     }
 }
