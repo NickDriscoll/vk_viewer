@@ -59,7 +59,7 @@ fn main() {
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
-    let sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
+    let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
     mixer::open_audio(mixer::DEFAULT_FREQUENCY, mixer::DEFAULT_FORMAT, 2, 256).unwrap();
     Music::set_volume(16);
 
@@ -153,6 +153,7 @@ fn main() {
     let vk_command_buffer = unsafe {
         let pool_create_info = vk::CommandPoolCreateInfo {
             queue_family_index: vk_queue_family_index,
+            flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
             ..Default::default()
         };
 
@@ -524,14 +525,15 @@ fn main() {
     //Create vertex buffer
     let vk_vertex_buffer = unsafe {
         let triangle_vertex_data = [
-            0.5f32, 0.25, 0.0, 0.0, 1.0,
-            0.25, 0.75, 1.0, 0.0, 0.0,
+            0.0f32, -0.75, 0.0, 0.0, 1.0,
+            -0.75, 0.75, 1.0, 0.0, 0.0,
             0.75, 0.75, 0.0, 1.0, 0.0
         ];
+        let size_in_bytes = (triangle_vertex_data.len() * size_of::<f32>()) as u64;
 
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::VERTEX_BUFFER,
-            size: (triangle_vertex_data.len() * size_of::<f32>()) as u64,
+            size: size_in_bytes,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
@@ -553,6 +555,11 @@ fn main() {
 
         vk_device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).unwrap();
 
+        //Actually write the vertex buffer to device memory
+        let vertex_ptr = vk_device.map_memory(vertex_buffer_memory, 0, size_in_bytes, vk::MemoryMapFlags::empty()).unwrap();
+        ptr::copy_nonoverlapping(triangle_vertex_data.as_ptr(), vertex_ptr as *mut _, size_in_bytes as usize);
+        vk_device.unmap_memory(vertex_buffer_memory);
+
         vertex_buffer
     };
 
@@ -567,7 +574,7 @@ fn main() {
 
         let vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
-            stride: 2 * size_of::<f32>() as u32,
+            stride: 5 * size_of::<f32>() as u32,
             input_rate: vk::VertexInputRate::VERTEX
         };
 
@@ -763,8 +770,41 @@ fn main() {
             };
             vk_device.cmd_set_viewport(vk_command_buffer, 0, &[viewport]);
 
+            //Set scissor rect to be same as render area
+            vk_device.cmd_set_scissor(vk_command_buffer, 0, &[vk_render_area]);
+
             vk_device.cmd_draw(vk_command_buffer, 3, 1, 0, 0);
             vk_device.cmd_end_render_pass(vk_command_buffer);
+
+            vk_device.end_command_buffer(vk_command_buffer).unwrap();
+
+            let fence_info = vk::FenceCreateInfo {
+                ..Default::default()
+            };
+            let fence = vk_device.create_fence(&fence_info, None).unwrap();
+
+            let pipeline_stage_flags = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
+            let submit_info = vk::SubmitInfo {
+                wait_semaphore_count: 1,
+                p_wait_semaphores: [vk_swapchain_semaphore].as_ptr(),
+                p_wait_dst_stage_mask: &pipeline_stage_flags,
+                command_buffer_count: 1,
+                p_command_buffers: &vk_command_buffer,
+                ..Default::default()
+            };
+
+            let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
+            vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
+
+            vk_device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+
+            let present_info = vk::PresentInfoKHR {
+                swapchain_count: 1,
+                p_swapchains: &vk_swapchain,
+                p_image_indices: &(current_framebuffer_index as u32),                
+                ..Default::default()
+            };
+            vk_ext_swapchain.queue_present(queue, &present_info).unwrap();
         }
     }
 }

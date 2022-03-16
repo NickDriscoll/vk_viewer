@@ -9,5 +9,6 @@ layout (binding = 0) uniform ColorBlock {
 };
 
 void main() {
-    frag_color = tint * f_color;
+    //frag_color = tint * f_color;
+    frag_color = f_color;
 }
