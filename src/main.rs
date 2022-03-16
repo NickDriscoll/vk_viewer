@@ -9,7 +9,6 @@ use sdl2::mixer::Music;
 use std::fs::File;
 use std::ffi::CStr;
 use std::mem::size_of;
-use std::os::raw::c_void;
 use std::ptr;
 
 use ozy::structs::FrameTimer;
@@ -64,7 +63,7 @@ fn main() {
     Music::set_volume(16);
 
     //Load and play bgm
-    let bgm = Music::from_file("./music/bald.mp3").unwrap();
+    let bgm = Music::from_file("./music/nmwi.flac").unwrap();
     bgm.play(-1).unwrap();
 
     //Initialize the Vulkan API
@@ -293,13 +292,16 @@ fn main() {
         vk_device.create_image_view(&view_info, None).unwrap()
     };
 
-    let triangle_tint_color = [0.5f32, 0.25, 0.25, 1.0];
+    //let triangle_tint_color = [0.5f32, 0.75, 0.25, 1.0];
+    let mut rotation_mat = glm::rotation(0.0, &glm::vec3(0.0, 0.0, 1.0));
 
     let vk_descriptor_buffer_info;
-    let vk_uniform_buffer = unsafe {
+    let vk_uniform_size;
+    let (vk_uniform_buffer, vk_uniform_buffer_ptr) = unsafe {
+        vk_uniform_size = (size_of::<glm::TMat4<f32>>()) as u64;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-            size: (triangle_tint_color.len() * size_of::<f32>()) as u64,
+            size: vk_uniform_size,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
@@ -323,13 +325,16 @@ fn main() {
 
         vk_device.bind_buffer_memory(vk_uniform_buffer, uniform_buffer_memory, 0).unwrap();
 
+        let uniform_ptr = vk_device.map_memory(uniform_buffer_memory, 0, vk_uniform_size, vk::MemoryMapFlags::empty()).unwrap();
+        ptr::copy_nonoverlapping(rotation_mat.as_ptr(), uniform_ptr as *mut _, vk_uniform_size as usize);
+
         vk_descriptor_buffer_info = vk::DescriptorBufferInfo {
             buffer: vk_uniform_buffer,
             offset: 0,
-            range: (triangle_tint_color.len() * size_of::<f32>()) as u64
+            range: vk_uniform_size
         };
 
-        vk_uniform_buffer
+        (vk_uniform_buffer, uniform_ptr)
     };
 
     let vk_descriptor_set_layout;
@@ -338,7 +343,7 @@ fn main() {
             binding: 0,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            stage_flags: vk::ShaderStageFlags::VERTEX,
             p_immutable_samplers: ptr::null(),
             ..Default::default()
         };
@@ -525,9 +530,9 @@ fn main() {
     //Create vertex buffer
     let vk_vertex_buffer = unsafe {
         let triangle_vertex_data = [
-            0.0f32, -0.75, 0.0, 0.0, 1.0,
-            -0.75, 0.75, 1.0, 0.0, 0.0,
-            0.75, 0.75, 0.0, 1.0, 0.0
+            0.0f32, -0.5, 0.0, 0.0, 1.0,
+            -0.5, 0.5, 1.0, 0.0, 0.0,
+            0.5, 0.5, 0.0, 1.0, 0.0
         ];
         let size_in_bytes = (triangle_vertex_data.len() * size_of::<f32>()) as u64;
 
@@ -732,9 +737,13 @@ fn main() {
         }
 
         //Update
+        rotation_mat = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
         //Draw
         unsafe {
+            //Update uniform buffer
+            ptr::copy_nonoverlapping(rotation_mat.as_ptr(), vk_uniform_buffer_ptr as *mut _, vk_uniform_size as usize);
+
             let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_swapchain, u64::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
 
             let begin_info = vk::CommandBufferBeginInfo {

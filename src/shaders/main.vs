@@ -11,5 +11,5 @@ layout (binding = 0) uniform TransformBlock {
 
 void main() {
     f_color = vec4(color, 1.0);
-    gl_Position = vec4(position, 0.0, 1.0);
+    gl_Position = mvp * vec4(vec3(position, 0.0), 1.0);
 }
