@@ -54,7 +54,7 @@ fn main() {
     let sdl_ctxt = sdl2::init().unwrap();
     let mut event_pump = sdl_ctxt.event_pump().unwrap();
     let video_subsystem = sdl_ctxt.video().unwrap();
-    let window_size = glm::vec2(1024, 1024);
+    let window_size = glm::vec2(1280, 1280);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
@@ -292,12 +292,9 @@ fn main() {
         vk_device.create_image_view(&view_info, None).unwrap()
     };
 
-    //let triangle_tint_color = [0.5f32, 0.75, 0.25, 1.0];
-    let mut rotation_mat = glm::rotation(0.0, &glm::vec3(0.0, 0.0, 1.0));
-
     let vk_descriptor_buffer_info;
     let vk_uniform_size;
-    let (vk_uniform_buffer, vk_uniform_buffer_ptr) = unsafe {
+    let vk_uniform_buffer_ptr = unsafe {
         vk_uniform_size = (size_of::<glm::TMat4<f32>>()) as u64;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
@@ -326,7 +323,6 @@ fn main() {
         vk_device.bind_buffer_memory(vk_uniform_buffer, uniform_buffer_memory, 0).unwrap();
 
         let uniform_ptr = vk_device.map_memory(uniform_buffer_memory, 0, vk_uniform_size, vk::MemoryMapFlags::empty()).unwrap();
-        ptr::copy_nonoverlapping(rotation_mat.as_ptr(), uniform_ptr as *mut _, vk_uniform_size as usize);
 
         vk_descriptor_buffer_info = vk::DescriptorBufferInfo {
             buffer: vk_uniform_buffer,
@@ -334,7 +330,7 @@ fn main() {
             range: vk_uniform_size
         };
 
-        (vk_uniform_buffer, uniform_ptr)
+        uniform_ptr
     };
 
     let vk_descriptor_set_layout;
@@ -344,7 +340,6 @@ fn main() {
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::VERTEX,
-            p_immutable_samplers: ptr::null(),
             ..Default::default()
         };
         
@@ -367,8 +362,8 @@ fn main() {
         vk_device.create_pipeline_layout(&pipeline_layout_createinfo, None).unwrap()
     };
     
-    let vk_descriptor_sets;
-    unsafe {
+    //Set up descriptors
+    let vk_descriptor_sets = unsafe {
         let pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: 1
@@ -387,7 +382,7 @@ fn main() {
             p_set_layouts: &vk_descriptor_set_layout,
             ..Default::default()
         };
-        vk_descriptor_sets = vk_device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
+        let vk_descriptor_sets = vk_device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
 
         let write = vk::WriteDescriptorSet {
             dst_set: vk_descriptor_sets[0],
@@ -400,7 +395,9 @@ fn main() {
         };
 
         vk_device.update_descriptor_sets(&[write], &[]);
-    }
+
+        vk_descriptor_sets
+    };
 
     let vk_render_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
@@ -457,7 +454,7 @@ fn main() {
         let attachments = [color_attachment_description, depth_attachment_description];
         let renderpass_info = vk::RenderPassCreateInfo {
             attachment_count: attachments.len() as u32,
-            p_attachments: &attachments as *const _,
+            p_attachments: attachments.as_ptr(),
             subpass_count: 1,
             p_subpasses: &subpass,
             dependency_count: 1,
@@ -527,15 +524,16 @@ fn main() {
         fbs
     };
 
-    //Create vertex buffer
-    let vk_vertex_buffer = unsafe {
-        let triangle_vertex_data = [
-            0.0f32, -0.5, 0.0, 0.0, 1.0,
-            -0.5, 0.5, 1.0, 0.0, 0.0,
-            0.5, 0.5, 0.0, 1.0, 0.0
-        ];
-        let size_in_bytes = (triangle_vertex_data.len() * size_of::<f32>()) as u64;
+    //Create plane's vertex buffer
+    let plane_vertex_buffer = unsafe {
+        let vertex_data = [
+            0.0f32, -0.5, 0.0, 1.0, 0.0, 0.0,
+            -0.5, 0.5, 0.0, 0.0, 1.0, 0.0,
+            0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
 
+        ];
+
+        let size_in_bytes = (vertex_data.len() * size_of::<f32>()) as u64;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::VERTEX_BUFFER,
             size: size_in_bytes,
@@ -562,7 +560,7 @@ fn main() {
 
         //Actually write the vertex buffer to device memory
         let vertex_ptr = vk_device.map_memory(vertex_buffer_memory, 0, size_in_bytes, vk::MemoryMapFlags::empty()).unwrap();
-        ptr::copy_nonoverlapping(triangle_vertex_data.as_ptr(), vertex_ptr as *mut _, size_in_bytes as usize);
+        ptr::copy_nonoverlapping(vertex_data.as_ptr(), vertex_ptr as *mut _, size_in_bytes as usize);
         vk_device.unmap_memory(vertex_buffer_memory);
 
         vertex_buffer
@@ -579,7 +577,7 @@ fn main() {
 
         let vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
-            stride: 5 * size_of::<f32>() as u32,
+            stride: 6 * size_of::<f32>() as u32,
             input_rate: vk::VertexInputRate::VERTEX
         };
 
@@ -594,7 +592,7 @@ fn main() {
             location: 1,
             binding: 0,
             format: vk::Format::R32G32B32_SFLOAT,
-            offset: 2 * size_of::<f32>() as u32
+            offset: 3 * size_of::<f32>() as u32
         };
 
         let bindings = [vert_binding];
@@ -618,7 +616,7 @@ fn main() {
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             depth_clamp_enable: vk::FALSE,
             rasterizer_discard_enable: vk::FALSE,
-            depth_bias_enable: vk::FALSE,
+            depth_bias_enable: vk::TRUE,
             line_width: 1.0,
             ..Default::default()
         };
@@ -723,6 +721,9 @@ fn main() {
         vk_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap()
     };
 
+    let view_matrix = glm::look_at(&glm::vec3(0.0f32, 1.0, -2.0), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+    let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.1, 100.0);
+
     //Main application loop
     let mut timer = FrameTimer::new();
     'running: loop {
@@ -737,7 +738,8 @@ fn main() {
         }
 
         //Update
-        rotation_mat = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+        let rotation_mat = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+        //let rotation_mat = glm::identity::<f32, 4>();
 
         //Draw
         unsafe {
@@ -767,7 +769,7 @@ fn main() {
 
             vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
-            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[vk_vertex_buffer], &[0]);
+            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[plane_vertex_buffer], &[0]);
 
             let viewport = vk::Viewport {
                 x: 0.0,
