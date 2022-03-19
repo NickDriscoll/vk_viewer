@@ -7,12 +7,13 @@ edition = "2021"
 
 [dependencies]
 ozy_engine = { path = "../ozy_engine" }
-nalgebra-glm = "*"
+nalgebra-glm = "0.16.0"
+tinyfiledialogs = "3.9.0"
 
 [dependencies.ash]
-version = "*"
+version = "0.36.0"
 features = ["linked"]
 
 [dependencies.sdl2]
-version = "*"
+version = "0.35.2"
 features = ["bundled", "mixer", "raw-window-handle"]
