@@ -2,6 +2,9 @@ extern crate nalgebra_glm as glm;
 extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
+mod dlr;
+mod structs;
+
 use ash::vk;
 use ash::vk::Handle;
 use sdl2::event::Event;
@@ -55,7 +58,7 @@ fn main() {
     let sdl_ctxt = sdl2::init().unwrap();
     let mut event_pump = sdl_ctxt.event_pump().unwrap();
     let video_subsystem = sdl_ctxt.video().unwrap();
-    let window_size = glm::vec2(1280, 720);
+    let window_size = glm::vec2(1280, 1280);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
@@ -302,7 +305,7 @@ fn main() {
     let vk_descriptor_buffer_info;
     let vk_uniform_size;
     let vk_uniform_buffer_ptr = unsafe {
-        vk_uniform_size = (size_of::<glm::TMat4<f32>>()) as u64;
+        vk_uniform_size = (size_of::<glm::TMat4<f32>>()) as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
             size: vk_uniform_size,
@@ -311,6 +314,12 @@ fn main() {
         };
 
         let vk_uniform_buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
+
+        vk_descriptor_buffer_info = vk::DescriptorBufferInfo {
+            buffer: vk_uniform_buffer,
+            offset: 0,
+            range: vk_uniform_size
+        };
         
         let mem_reqs = vk_device.get_buffer_memory_requirements(vk_uniform_buffer);
         let memory_type_index = get_memory_type_index(
@@ -336,13 +345,6 @@ fn main() {
         vk_device.bind_buffer_memory(vk_uniform_buffer, uniform_buffer_memory, 0).unwrap();
 
         let uniform_ptr = vk_device.map_memory(uniform_buffer_memory, 0, vk_uniform_size, vk::MemoryMapFlags::empty()).unwrap();
-
-        vk_descriptor_buffer_info = vk::DescriptorBufferInfo {
-            buffer: vk_uniform_buffer,
-            offset: 0,
-            range: vk_uniform_size
-        };
-
         uniform_ptr
     };
 
@@ -537,114 +539,6 @@ fn main() {
         fbs
     };
 
-    //Create plane's vertex and index buffers
-    let (plane_vertex_buffer, plane_index_buffer) = unsafe {
-        /*
-        let vertex_data = [
-            0.0f32, -0.5, 0.0, 1.0, 0.0, 0.0,
-            -0.5, 0.5, 0.0, 0.0, 1.0, 0.0,
-            0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
-
-        ];
-        */
-
-        let vertex_data = [
-            -10.0f32, -10.0, 0.0, 1.0, 0.0, 0.0,
-            10.0, -10.0, 0.0, 0.0, 1.0, 0.0,
-            -10.0, 10.0, 0.0, 0.0, 0.0, 1.0,
-            10.0, 10.0, 0.0, 0.0, 1.0, 1.0
-        ];
-        let index_data = [
-            0, 1, 2,
-            3, 2, 1
-        ];
-
-        //Vertex buffer creation
-        let size_in_bytes = (vertex_data.len() * size_of::<f32>()) as u64;
-        let vb = {
-            let buffer_create_info = vk::BufferCreateInfo {
-                usage: vk::BufferUsageFlags::VERTEX_BUFFER,
-                size: size_in_bytes,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            let vertex_buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
-
-            let mem_reqs = vk_device.get_buffer_memory_requirements(vertex_buffer);
-            let memory_type_index = get_memory_type_index(
-                &vk_instance,
-                vk_physical_device,
-                mem_reqs,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-            );
-            if let None = memory_type_index {
-                let error = "Vertex buffer memory allocation failed.";
-                tfd::message_box_ok("Oops...", error, tfd::MessageBoxIcon::Error);
-                panic!("{}", error);
-            }
-            let memory_type_index = memory_type_index.unwrap();
-
-
-            let alloc_info = vk::MemoryAllocateInfo {
-                allocation_size: mem_reqs.size,
-                memory_type_index,
-                ..Default::default()
-            };
-            let vertex_buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
-
-            vk_device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).unwrap();
-
-            //Actually write the vertex buffer to device memory
-            let vertex_ptr = vk_device.map_memory(vertex_buffer_memory, 0, size_in_bytes, vk::MemoryMapFlags::empty()).unwrap();
-            ptr::copy_nonoverlapping(vertex_data.as_ptr(), vertex_ptr as *mut _, size_in_bytes as usize);
-            vk_device.unmap_memory(vertex_buffer_memory);
-            vertex_buffer
-        };
-
-        //Index buffer creation
-        let size_in_bytes = (index_data.len() * size_of::<u32>()) as u64;
-        let ib = {
-            let buffer_create_info = vk::BufferCreateInfo {
-                usage: vk::BufferUsageFlags::INDEX_BUFFER,
-                size: size_in_bytes,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            let index_buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
-
-            let mem_reqs = vk_device.get_buffer_memory_requirements(index_buffer);
-            let memory_type_index = get_memory_type_index(
-                &vk_instance,
-                vk_physical_device,
-                mem_reqs,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-            );            
-            if let None = memory_type_index {
-                let error = "Index buffer memory allocation failed.";
-                tfd::message_box_ok("Oops...", error, tfd::MessageBoxIcon::Error);
-                panic!("{}", error);
-            }
-            let memory_type_index = memory_type_index.unwrap();
-
-            let alloc_info = vk::MemoryAllocateInfo {
-                allocation_size: mem_reqs.size,
-                memory_type_index,
-                ..Default::default()
-            };
-            let buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
-
-            vk_device.bind_buffer_memory(index_buffer, buffer_memory, 0).unwrap();
-
-            //Actually write the buffer to device memory
-            let index_ptr = vk_device.map_memory(buffer_memory, 0, size_in_bytes, vk::MemoryMapFlags::empty()).unwrap();
-            ptr::copy_nonoverlapping(index_data.as_ptr(), index_ptr as *mut _, size_in_bytes as usize);
-            vk_device.unmap_memory(buffer_memory);
-            index_buffer
-        };
-
-        (vb, ib)
-    };
-
     //Configure graphics pipeline state
     let vk_graphics_pipeline = unsafe {
         let dynamic_state_enables = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
@@ -761,6 +655,72 @@ fn main() {
         vk_device.create_graphics_pipelines(vk::PipelineCache::null(), &[graphics_pipeline_info], None).unwrap()[0]
     };
 
+    //Plane's mesh data
+    let plane_vertex_data = [
+        -10.0f32, -10.0, 0.0, 1.0, 0.0, 0.0,
+        10.0, -10.0, 0.0, 0.0, 1.0, 0.0,
+        -10.0, 10.0, 0.0, 0.0, 0.0, 1.0,
+        10.0, 10.0, 0.0, 0.0, 1.0, 1.0
+    ];
+    let plane_index_data = [
+        0u32, 1, 2,
+        3, 2, 1
+    ];
+
+    //Create plane's vertex and index buffer objects
+    let plane_buffer = unsafe {
+        //Buffer creation
+        let size_in_bytes = (
+            plane_vertex_data.len() * size_of::<f32>() + 
+            plane_index_data.len() * size_of::<u32>()
+        ) as vk::DeviceSize;
+        let buffer_create_info = vk::BufferCreateInfo {
+            usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
+            size: size_in_bytes,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            ..Default::default()
+        };
+        let buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
+        buffer
+    };
+
+    //Allocate and distribute memory to buffer objects
+    unsafe {
+        let mem_reqs = vk_device.get_buffer_memory_requirements(plane_buffer);
+        let memory_type_index = get_memory_type_index(
+            &vk_instance,
+            vk_physical_device,
+            mem_reqs,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+        );
+        if let None = memory_type_index {
+            let error = "Couldn't find suitable heap for allocation.";
+            tfd::message_box_ok("Oops...", error, tfd::MessageBoxIcon::Error);
+            panic!("{}", error);
+        }
+        let memory_type_index = memory_type_index.unwrap();
+        let alloc_info = vk::MemoryAllocateInfo {
+            allocation_size: mem_reqs.size,
+            memory_type_index,
+            ..Default::default()
+        };
+        let buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
+
+        //Bind buffer
+        vk_device.bind_buffer_memory(plane_buffer, buffer_memory, 0).unwrap();
+        
+        //Fill buffer
+        let buffer_ptr = vk_device.map_memory(
+            buffer_memory,
+            0,
+            (plane_vertex_data.len() * size_of::<f32>()) as vk::DeviceSize,
+            vk::MemoryMapFlags::empty()
+        ).unwrap();
+        ptr::copy_nonoverlapping::<f32>(plane_vertex_data.as_ptr(), buffer_ptr as *mut _, plane_vertex_data.len());
+        ptr::copy_nonoverlapping::<u32>(plane_index_data.as_ptr(), buffer_ptr.offset((plane_vertex_data.len() * size_of::<f32>()) as isize) as *mut _, plane_index_data.len());
+        vk_device.unmap_memory(buffer_memory);
+    }
+
     let vk_render_area = {        
         let offset = vk::Offset2D {
             x: 0,
@@ -807,30 +767,38 @@ fn main() {
 
     //Main application loop
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
+    let mut multiplier = 2.0;
     'running: loop {
         timer.update(); //Update frame timer
 
         //Pump event queue
         for event in event_pump.poll_iter() {
+            use sdl2::keyboard::Keycode;
             match event {
                 Event::Quit{..} => { break 'running; }
+                Event::KeyDown { keycode: Some(keycode),.. } => {
+                    match keycode {
+                        Keycode::P => {
+                            multiplier += 0.2;
+                        }
+                        Keycode::O => {
+                            multiplier -= 0.2;
+                        }
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }
 
         //Update
-        let scale = 0.25 * f32::sin(timer.elapsed_time * 5.0) + 0.5;
-        let scale_mat = glm::scaling(&glm::vec3(scale, scale, 1.0));
-        let rotation_mat = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
-        //let rotation_mat = glm::identity::<f32, 4>();
-        
+        let rotation_mat = glm::rotation(timer.elapsed_time * multiplier, &glm::vec3(0.0, 0.0, 1.0));        
         let mvp = projection_matrix * view_matrix * rotation_mat;
         unsafe { ptr::copy_nonoverlapping(mvp.as_ptr(), vk_uniform_buffer_ptr as *mut _, vk_uniform_size as usize); }
-        //let mvp = rotation_mat * scale_mat;
 
         //Draw
         unsafe {
-            let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_swapchain, u64::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
 
             let begin_info = vk::CommandBufferBeginInfo {
                 flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
@@ -853,8 +821,9 @@ fn main() {
 
             vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
-            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[plane_vertex_buffer], &[0]);
-            vk_device.cmd_bind_index_buffer(vk_command_buffer, plane_index_buffer, 0, vk::IndexType::UINT32);
+            //Bind plane's vertex and index buffers
+            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[plane_buffer], &[0]);
+            vk_device.cmd_bind_index_buffer(vk_command_buffer, plane_buffer, (plane_vertex_data.len() * size_of::<f32>()) as vk::DeviceSize, vk::IndexType::UINT32);
 
             let viewport = vk::Viewport {
                 x: 0.0,
@@ -892,7 +861,7 @@ fn main() {
             let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
             vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
 
-            vk_device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+            vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
