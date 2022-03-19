@@ -14,7 +14,7 @@ impl FreeCam {
     }
 
     pub fn make_view_matrix(&self) -> glm::TMat4<f32> {
-        glm::rotation(glm::half_pi::<f32>(), &glm::vec3(1.0, 0.0, 0.0)) *
+        glm::rotation(-glm::half_pi::<f32>(), &glm::vec3(1.0, 0.0, 0.0)) *
         glm::rotation(self.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
         glm::rotation(self.orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
         glm::translation(&-self.position)

@@ -774,40 +774,67 @@ fn main() {
     'running: loop {
         timer.update(); //Update frame timer
 
-        //Pump event queue
-        for event in event_pump.poll_iter() {
-            use sdl2::keyboard::Keycode;
-            use sdl2::mouse::MouseButton;
-            match event {
-                Event::Quit{..} => { break 'running; }
-                Event::MouseButtonUp { mouse_btn, ..} => {
-                    match mouse_btn {
-                        MouseButton::Right => {
-                            camera.cursor_captured = !camera.cursor_captured;
-                            mouse_util.set_relative_mouse_mode(camera.cursor_captured);
-                            if !camera.cursor_captured {
-                                mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Event::MouseMotion { xrel, yrel, .. } => {
-                    if camera.cursor_captured {
-                        let dampening = 0.001;
-                        camera.orientation.x += dampening * xrel as f32;
-                        camera.orientation.y += dampening * yrel as f32;
-                    }
-                }
-                Event::KeyDown { keycode: Some(keycode),.. } => {
+        //Abstracted input variables
+        let mut movement_vector: glm::TVec3<f32> = glm::zero();
+        let mut movement_multiplier = 1.0f32;
+        let mut orientation_vector: glm::TVec2<f32> = glm::zero();
 
+        //Pump event queue
+        {
+            use sdl2::keyboard::{Keycode, Scancode};
+            use sdl2::mouse::MouseButton;
+            for event in event_pump.poll_iter() {
+                match event {
+                    Event::Quit{..} => { break 'running; }
+                    Event::MouseButtonUp { mouse_btn, ..} => {
+                        match mouse_btn {
+                            MouseButton::Right => {
+                                camera.cursor_captured = !camera.cursor_captured;
+                                mouse_util.set_relative_mouse_mode(camera.cursor_captured);
+                                if !camera.cursor_captured {
+                                    mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Event::MouseMotion { xrel, yrel, .. } => {
+                        if camera.cursor_captured {
+                            const DAMPENING: f32 = 0.5 / 720.0;
+                            orientation_vector += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+            let keyboard_state = event_pump.keyboard_state();
+
+            if keyboard_state.is_scancode_pressed(Scancode::LShift) {
+                movement_multiplier = 5.0;
+            }
+            if keyboard_state.is_scancode_pressed(Scancode::W) {
+                movement_vector += movement_multiplier * glm::vec3(0.0, 0.0, -1.0);
+            }
+            if keyboard_state.is_scancode_pressed(Scancode::A) {
+                movement_vector += movement_multiplier * glm::vec3(-1.0, 0.0, 0.0);
+            }
+            if keyboard_state.is_scancode_pressed(Scancode::S) {
+                movement_vector += movement_multiplier * glm::vec3(0.0, 0.0, 1.0);
+            }
+            if keyboard_state.is_scancode_pressed(Scancode::D) {
+                movement_vector += movement_multiplier * glm::vec3(1.0, 0.0, 0.0);
             }
         }
 
         //Update
+        //Camera orientation based on user input
+        camera.orientation += orientation_vector;
+        camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
         let view_matrix = camera.make_view_matrix();
+        const CAMERA_SPEED: f32 = 3.0;
+        let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&movement_vector) * timer.delta_time;
+        camera.position += glm::vec4_to_vec3(&delta_pos);
+        
         let mvp = projection_matrix * view_matrix;
         unsafe { ptr::copy_nonoverlapping(mvp.as_ptr(), vk_uniform_buffer_ptr as *mut _, vk_uniform_size as usize); }
 
