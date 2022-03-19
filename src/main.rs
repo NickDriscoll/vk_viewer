@@ -10,6 +10,7 @@ use ash::vk::Handle;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
+use structs::FreeCam;
 use std::fs::File;
 use std::ffi::CStr;
 use std::mem::size_of;
@@ -57,9 +58,10 @@ fn main() {
     //Create the window using SDL
     let sdl_ctxt = sdl2::init().unwrap();
     let mut event_pump = sdl_ctxt.event_pump().unwrap();
+    let mouse_util = sdl_ctxt.mouse();
     let video_subsystem = sdl_ctxt.video().unwrap();
-    let window_size = glm::vec2(1280, 1280);
-    let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
+    let window_size = glm::vec2(1920, 1080);
+    let mut window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
@@ -68,7 +70,7 @@ fn main() {
 
     //Load and play bgm
     let bgm = Music::from_file("./music/bald.mp3").unwrap();
-    bgm.play(-1).unwrap();
+    //bgm.play(-1).unwrap();
 
     //Initialize the Vulkan API
     let vk_entry = ash::Entry::linked();
@@ -756,7 +758,9 @@ fn main() {
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap() };
 
-    let view_matrix = glm::look_at(&glm::vec3(0.0f32, -2.0, 4.0), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+    //State for freecam controls
+    let mut camera = FreeCam::new(glm::vec3(0.0f32, -2.0, 4.0));
+
     let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.1, 100.0);
     let projection_matrix = glm::mat4(
         1.0, 0.0, 0.0, 0.0,
@@ -767,33 +771,44 @@ fn main() {
 
     //Main application loop
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
-    let mut multiplier = 2.0;
     'running: loop {
         timer.update(); //Update frame timer
 
         //Pump event queue
         for event in event_pump.poll_iter() {
             use sdl2::keyboard::Keycode;
+            use sdl2::mouse::MouseButton;
             match event {
                 Event::Quit{..} => { break 'running; }
-                Event::KeyDown { keycode: Some(keycode),.. } => {
-                    match keycode {
-                        Keycode::P => {
-                            multiplier += 0.2;
-                        }
-                        Keycode::O => {
-                            multiplier -= 0.2;
+                Event::MouseButtonUp { mouse_btn, ..} => {
+                    match mouse_btn {
+                        MouseButton::Right => {
+                            camera.cursor_captured = !camera.cursor_captured;
+                            mouse_util.set_relative_mouse_mode(camera.cursor_captured);
+                            if !camera.cursor_captured {
+                                mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
+                            }
                         }
                         _ => {}
                     }
+                }
+                Event::MouseMotion { xrel, yrel, .. } => {
+                    if camera.cursor_captured {
+                        let dampening = 0.001;
+                        camera.orientation.x += dampening * xrel as f32;
+                        camera.orientation.y += dampening * yrel as f32;
+                    }
+                }
+                Event::KeyDown { keycode: Some(keycode),.. } => {
+
                 }
                 _ => {}
             }
         }
 
         //Update
-        let rotation_mat = glm::rotation(timer.elapsed_time * multiplier, &glm::vec3(0.0, 0.0, 1.0));        
-        let mvp = projection_matrix * view_matrix * rotation_mat;
+        let view_matrix = camera.make_view_matrix();
+        let mvp = projection_matrix * view_matrix;
         unsafe { ptr::copy_nonoverlapping(mvp.as_ptr(), vk_uniform_buffer_ptr as *mut _, vk_uniform_size as usize); }
 
         //Draw
