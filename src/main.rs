@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 extern crate nalgebra_glm as glm;
 extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
@@ -7,6 +8,7 @@ mod structs;
 
 use ash::vk;
 use ash::vk::Handle;
+use imgui::{DrawCmd, FontAtlasRefMut};
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
@@ -24,6 +26,11 @@ const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
     b: vk::ComponentSwizzle::B,
     a: vk::ComponentSwizzle::A,
 };
+
+fn unrecoverable_error(message: &str) -> ! {
+    tfd::message_box_ok("Oops...", message, tfd::MessageBoxIcon::Error);
+    panic!("{}", message);
+}
 
 unsafe fn get_memory_type_index(
     vk_instance: &ash::Instance,
@@ -61,7 +68,7 @@ fn main() {
     let mouse_util = sdl_ctxt.mouse();
     let video_subsystem = sdl_ctxt.video().unwrap();
     let window_size = glm::vec2(1920, 1080);
-    let mut window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
+    let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
@@ -265,9 +272,7 @@ fn main() {
         //Search for the largest DEVICE_LOCAL heap the device advertises
         let memory_type_index = get_memory_type_index(&vk_instance, vk_physical_device, mem_reqs, vk::MemoryPropertyFlags::DEVICE_LOCAL);
         if let None = memory_type_index {
-            let error = "Depth buffer memory allocation failed.";
-            tfd::message_box_ok("Oops...", error, tfd::MessageBoxIcon::Error);
-            panic!("{}", error);
+            unrecoverable_error("Depth buffer memory allocation failed.");
         }
         let memory_type_index = memory_type_index.unwrap();
 
@@ -331,9 +336,7 @@ fn main() {
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         );
         if let None = memory_type_index {
-            let error = "Uniform buffer memory allocation failed.";
-            tfd::message_box_ok("Oops...", error, tfd::MessageBoxIcon::Error);
-            panic!("{}", error);
+            unrecoverable_error("Uniform buffer memory allocation failed.");
         }
         let memory_type_index = memory_type_index.unwrap();
 
@@ -541,8 +544,8 @@ fn main() {
         fbs
     };
 
-    //Configure graphics pipeline state
-    let vk_graphics_pipeline = unsafe {
+    //Configure 3D graphics pipeline state
+    let vk_3D_graphics_pipeline = unsafe {
         let dynamic_state_enables = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic_state = vk::PipelineDynamicStateCreateInfo {
             p_dynamic_states: dynamic_state_enables.as_ptr(),
@@ -657,6 +660,47 @@ fn main() {
         vk_device.create_graphics_pipelines(vk::PipelineCache::null(), &[graphics_pipeline_info], None).unwrap()[0]
     };
 
+    //Initialize Dear ImGUI
+    let mut imgui_context = imgui::Context::create();
+    {
+        let io = imgui_context.io_mut();
+        io.display_size[0] = window_size.x as f32;
+        io.display_size[1] = window_size.y as f32;
+        
+    }
+    
+    //Create and upload Dear IMGUI font atlas
+    match imgui_context.fonts() {
+        FontAtlasRefMut::Owned(atlas) => unsafe {
+            let font_atlas = atlas.build_alpha8_texture();      //We need an RGBA texture in order for the images themselves to be rendered with color
+            
+            let image_extent = vk::Extent3D {
+                width: font_atlas.width,
+                height: font_atlas.height,
+                depth: 1
+            };
+            let font_create_info = vk::ImageCreateInfo {
+                image_type: vk::ImageType::TYPE_2D,
+                format: vk::Format::R8G8B8A8_SRGB,
+                extent: image_extent,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                usage: vk::ImageUsageFlags::SAMPLED,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: &vk_queue_family_index,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                ..Default::default()
+            };
+            let vk_font_image = vk_device.create_image(&font_create_info, None).unwrap();
+        }
+        FontAtlasRefMut::Shared(_) => {
+            panic!("Not dealing with this case.");
+        }
+    }
+
     //Plane's mesh data
     let plane_vertex_data = [
         -10.0f32, -10.0, 0.0, 1.0, 0.0, 0.0,
@@ -669,12 +713,30 @@ fn main() {
         3, 2, 1
     ];
 
+    //Sphere mesh data
+    let sphere_vertex_data;
+    let sphere_index_data: Vec<u32>;
+    let sphere_index_count;
+    {
+        let radius = 2.0;
+        let segments = 32;
+        let rings = 32;
+        sphere_vertex_data = ozy::prims::sphere_vertex_buffer(radius, segments, rings);
+        sphere_index_data = ozy::prims::sphere_index_array(segments, rings).into_iter().map(|n|{n as u32}).collect();        
+        sphere_index_count = ozy::prims::sphere_index_count(segments, rings);
+    }
+
+    let scene_vertex_buffers = [&plane_vertex_data, sphere_vertex_data.as_slice()];
+    let scene_index_buffers = [&plane_index_data, sphere_index_data.as_slice()];
+
     //Create plane's vertex and index buffer objects
-    let plane_buffer = unsafe {
+    let scene_geo_buffer = unsafe {
         //Buffer creation
         let size_in_bytes = (
             plane_vertex_data.len() * size_of::<f32>() + 
-            plane_index_data.len() * size_of::<u32>()
+            plane_index_data.len() * size_of::<u32>() +
+            sphere_vertex_data.len() * size_of::<f32>() +
+            sphere_index_data.len() * size_of::<u32>()
         ) as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
@@ -687,8 +749,12 @@ fn main() {
     };
 
     //Allocate and distribute memory to buffer objects
+    let vk_plane_vertex_offset;
+    let vk_plane_index_offset;
+    let vk_sphere_vertex_offset;
+    let vk_sphere_index_offset;
     unsafe {
-        let mem_reqs = vk_device.get_buffer_memory_requirements(plane_buffer);
+        let mem_reqs = vk_device.get_buffer_memory_requirements(scene_geo_buffer);
         let memory_type_index = get_memory_type_index(
             &vk_instance,
             vk_physical_device,
@@ -696,9 +762,7 @@ fn main() {
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         );
         if let None = memory_type_index {
-            let error = "Couldn't find suitable heap for allocation.";
-            tfd::message_box_ok("Oops...", error, tfd::MessageBoxIcon::Error);
-            panic!("{}", error);
+            unrecoverable_error("Couldn't find suitable heap for allocation.");
         }
         let memory_type_index = memory_type_index.unwrap();
         let alloc_info = vk::MemoryAllocateInfo {
@@ -709,7 +773,7 @@ fn main() {
         let buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
 
         //Bind buffer
-        vk_device.bind_buffer_memory(plane_buffer, buffer_memory, 0).unwrap();
+        vk_device.bind_buffer_memory(scene_geo_buffer, buffer_memory, 0).unwrap();
         
         //Fill buffer
         let buffer_ptr = vk_device.map_memory(
@@ -718,8 +782,26 @@ fn main() {
             (plane_vertex_data.len() * size_of::<f32>()) as vk::DeviceSize,
             vk::MemoryMapFlags::empty()
         ).unwrap();
-        ptr::copy_nonoverlapping::<f32>(plane_vertex_data.as_ptr(), buffer_ptr as *mut _, plane_vertex_data.len());
-        ptr::copy_nonoverlapping::<u32>(plane_index_data.as_ptr(), buffer_ptr.offset((plane_vertex_data.len() * size_of::<f32>()) as isize) as *mut _, plane_index_data.len());
+        let offset = 0;
+        vk_plane_vertex_offset = offset;
+        let ptr = buffer_ptr.offset(offset) as *mut _;
+        ptr::copy_nonoverlapping::<f32>(plane_vertex_data.as_ptr(), ptr, plane_vertex_data.len());
+
+        let offset = offset + (plane_vertex_data.len() * size_of::<f32>()) as isize;
+        vk_plane_index_offset = offset;
+        let ptr = buffer_ptr.offset(offset) as *mut _;
+        ptr::copy_nonoverlapping::<u32>(plane_index_data.as_ptr(), ptr, plane_index_data.len());
+        
+        let offset = offset + (plane_index_data.len() * size_of::<u32>()) as isize;
+        vk_sphere_vertex_offset = offset;
+        let ptr = buffer_ptr.offset(offset) as *mut _;
+        ptr::copy_nonoverlapping::<f32>(sphere_vertex_data.as_ptr(), ptr, sphere_vertex_data.len());
+
+        let offset = offset + (sphere_vertex_data.len() * size_of::<u32>()) as isize;
+        vk_sphere_index_offset = offset;
+        let ptr = buffer_ptr.offset(offset) as *mut _;
+        ptr::copy_nonoverlapping::<u32>(sphere_index_data.as_ptr(), ptr, sphere_index_data.len());
+
         vk_device.unmap_memory(buffer_memory);
     }
 
@@ -762,6 +844,8 @@ fn main() {
     let mut camera = FreeCam::new(glm::vec3(0.0f32, -2.0, 4.0));
 
     let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.1, 100.0);
+
+    //Relative to GL clip space, Vulkan has negative Y and half Z.
     let projection_matrix = glm::mat4(
         1.0, 0.0, 0.0, 0.0,
         0.0, -1.0, 0.0, 0.0,
@@ -776,7 +860,6 @@ fn main() {
 
         //Abstracted input variables
         let mut movement_vector: glm::TVec3<f32> = glm::zero();
-        let mut movement_multiplier = 1.0f32;
         let mut orientation_vector: glm::TVec2<f32> = glm::zero();
 
         //Pump event queue
@@ -809,6 +892,7 @@ fn main() {
             }
             let keyboard_state = event_pump.keyboard_state();
 
+            let mut movement_multiplier = 1.0f32;
             if keyboard_state.is_scancode_pressed(Scancode::LShift) {
                 movement_multiplier = 5.0;
             }
@@ -824,9 +908,17 @@ fn main() {
             if keyboard_state.is_scancode_pressed(Scancode::D) {
                 movement_vector += movement_multiplier * glm::vec3(1.0, 0.0, 0.0);
             }
+            if keyboard_state.is_scancode_pressed(Scancode::Q) {
+                movement_vector += movement_multiplier * glm::vec3(0.0, -1.0, 0.0);
+            }
+            if keyboard_state.is_scancode_pressed(Scancode::E) {
+                movement_vector += movement_multiplier * glm::vec3(0.0, 1.0, 0.0);
+            }
         }
 
         //Update
+        let imgui_ui = imgui_context.frame();
+        
         //Camera orientation based on user input
         camera.orientation += orientation_vector;
         camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
@@ -835,8 +927,8 @@ fn main() {
         let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&movement_vector) * timer.delta_time;
         camera.position += glm::vec4_to_vec3(&delta_pos);
         
-        let mvp = projection_matrix * view_matrix;
-        unsafe { ptr::copy_nonoverlapping(mvp.as_ptr(), vk_uniform_buffer_ptr as *mut _, vk_uniform_size as usize); }
+        let view_projection = projection_matrix * view_matrix;
+        unsafe { ptr::copy_nonoverlapping(view_projection.as_ptr(), vk_uniform_buffer_ptr as *mut _, vk_uniform_size as usize); }
 
         //Draw
         unsafe {
@@ -848,25 +940,8 @@ fn main() {
                 ..Default::default()
             };
             vk_device.begin_command_buffer(vk_command_buffer, &begin_info).unwrap();
-
-            let rp_begin_info = vk::RenderPassBeginInfo {
-                render_pass: vk_render_pass,
-                framebuffer: vk_framebuffers[current_framebuffer_index],
-                render_area: vk_render_area,
-                clear_value_count: vk_clear_values.len() as u32,
-                p_clear_values: vk_clear_values.as_ptr(),
-                ..Default::default()
-            };
-            vk_device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-
-            vk_device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_graphics_pipeline);
-
-            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
-
-            //Bind plane's vertex and index buffers
-            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[plane_buffer], &[0]);
-            vk_device.cmd_bind_index_buffer(vk_command_buffer, plane_buffer, (plane_vertex_data.len() * size_of::<f32>()) as vk::DeviceSize, vk::IndexType::UINT32);
-
+            
+            //Set the viewport for this frame
             let viewport = vk::Viewport {
                 x: 0.0,
                 y: 0.0,
@@ -880,7 +955,31 @@ fn main() {
             //Set scissor rect to be same as render area
             vk_device.cmd_set_scissor(vk_command_buffer, 0, &[vk_render_area]);
 
+            let rp_begin_info = vk::RenderPassBeginInfo {
+                render_pass: vk_render_pass,
+                framebuffer: vk_framebuffers[current_framebuffer_index],
+                render_area: vk_render_area,
+                clear_value_count: vk_clear_values.len() as u32,
+                p_clear_values: vk_clear_values.as_ptr(),
+                ..Default::default()
+            };
+            vk_device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+
+            vk_device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_3D_graphics_pipeline);
+
+            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
+
+            //Bind plane's vertex and index buffers
+            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[scene_geo_buffer], &[vk_plane_vertex_offset as u64]);
+            vk_device.cmd_bind_index_buffer(vk_command_buffer, scene_geo_buffer, (vk_plane_index_offset) as vk::DeviceSize, vk::IndexType::UINT32);
             vk_device.cmd_draw_indexed(vk_command_buffer, 6, 1, 0, 0, 0);
+
+            //Bind sphere's vertex and index buffers
+            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[scene_geo_buffer], &[vk_sphere_vertex_offset as u64]);
+            vk_device.cmd_bind_index_buffer(vk_command_buffer, scene_geo_buffer, (vk_sphere_index_offset) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk_device.cmd_draw_indexed(vk_command_buffer, sphere_index_count as u32, 1, 0, 0, 0);
+
+            
             vk_device.cmd_end_render_pass(vk_command_buffer);
 
             vk_device.end_command_buffer(vk_command_buffer).unwrap();
@@ -902,6 +1001,44 @@ fn main() {
 
             let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
             vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
+
+            //Build and submit queue for Dear ImGUI rendering
+            {
+                let draw_data = imgui_ui.render();
+                if draw_data.total_vtx_count > 0 {
+                    for list in draw_data.draw_lists() {
+                        let vert_size = 8;
+                        let mut verts = vec![0.0; list.vtx_buffer().len() * vert_size];
+
+                        let mut current_vertex = 0;
+                        let vtx_buffer = list.vtx_buffer();
+                        for vtx in vtx_buffer.iter() {
+                            let idx = current_vertex * vert_size;
+                            verts[idx] = vtx.pos[0];
+                            verts[idx + 1] = vtx.pos[1];
+                            verts[idx + 2] = vtx.uv[0];
+                            verts[idx + 3] = vtx.uv[1];    
+                            verts[idx + 4] = vtx.col[0] as f32 / 255.0;
+                            verts[idx + 5] = vtx.col[1] as f32 / 255.0;
+                            verts[idx + 6] = vtx.col[2] as f32 / 255.0;
+                            verts[idx + 7] = vtx.col[3] as f32 / 255.0;
+    
+                            current_vertex += 1;
+                        }
+                        
+
+                        for command in list.commands() {
+                            match command {
+                                DrawCmd::Elements {count, cmd_params} => {
+                                    
+                                }
+                                DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
+                                DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
+                            }
+                        }
+                    }
+                }
+            }
 
             vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
 
