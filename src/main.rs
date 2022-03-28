@@ -44,11 +44,7 @@ unsafe fn get_memory_type_index(
     let mut largest_heap = 0;
     let phys_device_mem_props = vk_instance.get_physical_device_memory_properties(vk_physical_device);
     for mem_type in phys_device_mem_props.memory_types {
-        if memory_requirements.memory_type_bits & (1 << i) == 0 {
-            continue;
-        }
-
-        if mem_type.property_flags.contains(flags) {
+        if memory_requirements.memory_type_bits & (1 << i) != 0 && mem_type.property_flags.contains(flags) {
             let heap_size = phys_device_mem_props.memory_heaps[mem_type.heap_index as usize].size;
             if heap_size > largest_heap {
                 memory_type_index = Some(i);
@@ -90,10 +86,18 @@ fn main() {
             ..Default::default()
         };
 
+        #[cfg(target_os = "windows")]
         let extension_names = [
             ash::extensions::khr::Surface::name().as_ptr(),
             ash::extensions::khr::Win32Surface::name().as_ptr()
         ];
+
+        #[cfg(target_os = "linux")]
+        let extension_names = [
+            ash::extensions::khr::Surface::name().as_ptr(),
+            ash::extensions::khr::XlibSurface::name().as_ptr()
+        ];
+
         let layer_names = unsafe  {[
             CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr()
         ]};
@@ -121,12 +125,14 @@ fn main() {
     //Create the Vulkan device
     let vk_physical_device;
     let vk_physical_device_properties;
+    let vk_physical_device_features;
     let mut vk_queue_family_index = 0;
     let vk_device = unsafe {
         match vk_instance.enumerate_physical_devices() {
             Ok(phys_devices) => {
                 vk_physical_device = phys_devices[0];
                 vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
+                vk_physical_device_features = vk_instance.get_physical_device_features(vk_physical_device);
 
                 let mut i = 0;
                 for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
@@ -168,8 +174,9 @@ fn main() {
 
     //Write device properties to debug file
     {
-        let mut info_file = OpenOptions::new().create(true).write(true).open("./device_info.txt").unwrap();
-        write!(info_file, "{:#?}", vk_physical_device_properties).unwrap();
+        let mut info_file = OpenOptions::new().create(true).write(true).open("./vulkan_physical_device_info.txt").unwrap();
+        write!(info_file, "{:#?}\n", vk_physical_device_properties).unwrap();
+        write!(info_file, "{:#?}\n", vk_physical_device_features).unwrap();
     }
 
     //Create command buffer
@@ -525,14 +532,14 @@ fn main() {
 
         let vertex_stage_create_info = vk::PipelineShaderStageCreateInfo {
             stage: vk::ShaderStageFlags::VERTEX,
-            p_name: "main".as_ptr() as *const i8,
+            p_name: "main\0".as_ptr() as *const i8,
             module: vert_module,
             ..Default::default()
         };
         
         let fragment_stage_create_info = vk::PipelineShaderStageCreateInfo {
             stage: vk::ShaderStageFlags::FRAGMENT,
-            p_name: "main".as_ptr() as *const i8,
+            p_name: "main\0".as_ptr() as *const i8,
             module: frag_module,
             ..Default::default()
         };
@@ -954,6 +961,44 @@ fn main() {
             ptr::copy_nonoverlapping(mvp.as_ptr(), uniform_ptr, size_of::<glm::TMat4<f32>>());
         }
 
+        //Dear ImGUI stuff copy-pasted out of one of the OpenGL projects
+        {
+            let draw_data = imgui_ui.render();
+            if draw_data.total_vtx_count > 0 {
+                for list in draw_data.draw_lists() {
+                    let vert_size = 8;  //Size in floats
+                    let mut verts = vec![0.0; list.vtx_buffer().len() * vert_size];
+
+                    let mut current_vertex = 0;
+                    let vtx_buffer = list.vtx_buffer();
+                    for vtx in vtx_buffer.iter() {
+                        let idx = current_vertex * vert_size;
+                        verts[idx] = vtx.pos[0];
+                        verts[idx + 1] = vtx.pos[1];
+                        verts[idx + 2] = vtx.uv[0];
+                        verts[idx + 3] = vtx.uv[1];
+                        verts[idx + 4] = vtx.col[0] as f32 / 255.0;
+                        verts[idx + 5] = vtx.col[1] as f32 / 255.0;
+                        verts[idx + 6] = vtx.col[2] as f32 / 255.0;
+                        verts[idx + 7] = vtx.col[3] as f32 / 255.0;
+
+                        current_vertex += 1;
+                    }
+                    
+
+                    for command in list.commands() {
+                        match command {
+                            DrawCmd::Elements {count, cmd_params} => {
+                                
+                            }
+                            DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
+                            DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
+                        }
+                    }
+                }
+            }
+        }
+
         //Draw
         unsafe {
             let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
@@ -1029,44 +1074,6 @@ fn main() {
 
             let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
             vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
-
-            //Build and submit queue for Dear ImGUI rendering
-            {
-                let draw_data = imgui_ui.render();
-                if draw_data.total_vtx_count > 0 {
-                    for list in draw_data.draw_lists() {
-                        let vert_size = 8;
-                        let mut verts = vec![0.0; list.vtx_buffer().len() * vert_size];
-
-                        let mut current_vertex = 0;
-                        let vtx_buffer = list.vtx_buffer();
-                        for vtx in vtx_buffer.iter() {
-                            let idx = current_vertex * vert_size;
-                            verts[idx] = vtx.pos[0];
-                            verts[idx + 1] = vtx.pos[1];
-                            verts[idx + 2] = vtx.uv[0];
-                            verts[idx + 3] = vtx.uv[1];    
-                            verts[idx + 4] = vtx.col[0] as f32 / 255.0;
-                            verts[idx + 5] = vtx.col[1] as f32 / 255.0;
-                            verts[idx + 6] = vtx.col[2] as f32 / 255.0;
-                            verts[idx + 7] = vtx.col[3] as f32 / 255.0;
-    
-                            current_vertex += 1;
-                        }
-                        
-
-                        for command in list.commands() {
-                            match command {
-                                DrawCmd::Elements {count, cmd_params} => {
-                                    
-                                }
-                                DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
-                                DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
-                            }
-                        }
-                    }
-                }
-            }
 
             vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
 
