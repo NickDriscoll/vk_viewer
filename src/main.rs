@@ -13,8 +13,9 @@ use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
 use structs::FreeCam;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::ffi::CStr;
+use std::io::Write;
 use std::mem::size_of;
 use std::ptr;
 
@@ -27,7 +28,7 @@ const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
     a: vk::ComponentSwizzle::A,
 };
 
-fn unrecoverable_error(message: &str) -> ! {
+fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", message, tfd::MessageBoxIcon::Error);
     panic!("{}", message);
 }
@@ -62,12 +63,14 @@ unsafe fn get_memory_type_index(
 
 //Entry point
 fn main() {
+    let vulkan_memory_allocator = None;
+
     //Create the window using SDL
     let sdl_ctxt = sdl2::init().unwrap();
     let mut event_pump = sdl_ctxt.event_pump().unwrap();
     let mouse_util = sdl_ctxt.mouse();
     let video_subsystem = sdl_ctxt.video().unwrap();
-    let window_size = glm::vec2(1920, 1080);
+    let window_size = glm::vec2(1200, 1200);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
@@ -76,8 +79,8 @@ fn main() {
     Music::set_volume(16);
 
     //Load and play bgm
-    let bgm = Music::from_file("./music/bald.mp3").unwrap();
-    //bgm.play(-1).unwrap();
+    let bgm = Music::from_file("./music/nmwi.flac").unwrap();
+    bgm.play(-1).unwrap();
 
     //Initialize the Vulkan API
     let vk_entry = ash::Entry::linked();
@@ -103,7 +106,7 @@ fn main() {
             ..Default::default()
         };
 
-        unsafe { vk_entry.create_instance(&vk_create_info, None).unwrap() }
+        unsafe { vk_entry.create_instance(&vk_create_info, vulkan_memory_allocator).unwrap() }
     };
 
     //Use SDL to create the Vulkan surface
@@ -117,11 +120,13 @@ fn main() {
 
     //Create the Vulkan device
     let vk_physical_device;
+    let vk_physical_device_properties;
     let mut vk_queue_family_index = 0;
     let vk_device = unsafe {
         match vk_instance.enumerate_physical_devices() {
             Ok(phys_devices) => {
                 vk_physical_device = phys_devices[0];
+                vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
 
                 let mut i = 0;
                 for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
@@ -153,13 +158,19 @@ fn main() {
                     ..Default::default()
                 };
 
-                vk_instance.create_device(vk_physical_device, &create_info, None).unwrap()
+                vk_instance.create_device(vk_physical_device, &create_info, vulkan_memory_allocator).unwrap()
             }
             Err(e) => {
-                panic!("Unable to enumerate physical devices: {}", e);
+                crash_with_error_dialog(&format!("Unable to enumerate physical devices: {}", e));
             }
         }
     };
+
+    //Write device properties to debug file
+    {
+        let mut info_file = OpenOptions::new().create(true).write(true).open("./device_info.txt").unwrap();
+        write!(info_file, "{:#?}", vk_physical_device_properties).unwrap();
+    }
 
     //Create command buffer
     let vk_command_buffer = unsafe {
@@ -169,7 +180,7 @@ fn main() {
             ..Default::default()
         };
 
-        let command_pool = vk_device.create_command_pool(&pool_create_info, None).unwrap();
+        let command_pool = vk_device.create_command_pool(&pool_create_info, vulkan_memory_allocator).unwrap();
 
         let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
             command_pool,
@@ -210,7 +221,7 @@ fn main() {
             ..Default::default()
         };
 
-        let sc = vk_ext_swapchain.create_swapchain(&create_info, None).unwrap();
+        let sc = vk_ext_swapchain.create_swapchain(&create_info, vulkan_memory_allocator).unwrap();
         sc
     };
     
@@ -235,7 +246,7 @@ fn main() {
                 ..Default::default()
             };
 
-            image_views.push(vk_device.create_image_view(&view_info, None).unwrap());
+            image_views.push(vk_device.create_image_view(&view_info, vulkan_memory_allocator).unwrap());
         }
 
         image_views
@@ -266,13 +277,13 @@ fn main() {
             ..Default::default()
         };
 
-        let depth_image = vk_device.create_image(&create_info, None).unwrap();
+        let depth_image = vk_device.create_image(&create_info, vulkan_memory_allocator).unwrap();
         let mem_reqs = vk_device.get_image_memory_requirements(depth_image);
 
         //Search for the largest DEVICE_LOCAL heap the device advertises
         let memory_type_index = get_memory_type_index(&vk_instance, vk_physical_device, mem_reqs, vk::MemoryPropertyFlags::DEVICE_LOCAL);
         if let None = memory_type_index {
-            unrecoverable_error("Depth buffer memory allocation failed.");
+            crash_with_error_dialog("Depth buffer memory allocation failed.");
         }
         let memory_type_index = memory_type_index.unwrap();
 
@@ -281,7 +292,7 @@ fn main() {
             memory_type_index,
             ..Default::default()
         };
-        let depth_memory = vk_device.allocate_memory(&allocate_info, None).unwrap();
+        let depth_memory = vk_device.allocate_memory(&allocate_info, vulkan_memory_allocator).unwrap();
 
         //Bind the depth image to its memory
         vk_device.bind_image_memory(depth_image, depth_memory, 0).unwrap();
@@ -306,26 +317,33 @@ fn main() {
             ..Default::default()
         };
 
-        vk_device.create_image_view(&view_info, None).unwrap()
+        vk_device.create_image_view(&view_info, vulkan_memory_allocator).unwrap()
     };
 
     let vk_descriptor_buffer_info;
-    let vk_uniform_size;
+    let vk_uniform_buffer_size;
     let vk_uniform_buffer_ptr = unsafe {
-        vk_uniform_size = (size_of::<glm::TMat4<f32>>()) as vk::DeviceSize;
+        let mut buffer_size = (size_of::<glm::TMat4<f32>>() * 2) as vk::DeviceSize;
+        let alignment = vk_physical_device_properties.limits.min_uniform_buffer_offset_alignment;
+        if alignment > 0 {
+            buffer_size = (buffer_size + (alignment - 1)) & !(alignment - 1);   //Alignment is 2^N where N is a whole number
+        }
+        vk_uniform_buffer_size = buffer_size;
+        println!("Uniform buffer is {} bytes", vk_uniform_buffer_size);
+
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-            size: vk_uniform_size,
+            size: vk_uniform_buffer_size,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
 
-        let vk_uniform_buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
+        let vk_uniform_buffer = vk_device.create_buffer(&buffer_create_info, vulkan_memory_allocator).unwrap();
 
         vk_descriptor_buffer_info = vk::DescriptorBufferInfo {
             buffer: vk_uniform_buffer,
             offset: 0,
-            range: vk_uniform_size
+            range: size_of::<glm::TMat4<f32>>() as vk::DeviceSize
         };
         
         let mem_reqs = vk_device.get_buffer_memory_requirements(vk_uniform_buffer);
@@ -336,7 +354,7 @@ fn main() {
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         );
         if let None = memory_type_index {
-            unrecoverable_error("Uniform buffer memory allocation failed.");
+            crash_with_error_dialog("Uniform buffer memory allocation failed.");
         }
         let memory_type_index = memory_type_index.unwrap();
 
@@ -345,11 +363,11 @@ fn main() {
             memory_type_index,
             ..Default::default()
         };
-        let uniform_buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
+        let uniform_buffer_memory = vk_device.allocate_memory(&alloc_info, vulkan_memory_allocator).unwrap();
 
         vk_device.bind_buffer_memory(vk_uniform_buffer, uniform_buffer_memory, 0).unwrap();
 
-        let uniform_ptr = vk_device.map_memory(uniform_buffer_memory, 0, vk_uniform_size, vk::MemoryMapFlags::empty()).unwrap();
+        let uniform_ptr = vk_device.map_memory(uniform_buffer_memory, 0, vk_uniform_buffer_size, vk::MemoryMapFlags::empty()).unwrap();
         uniform_ptr
     };
 
@@ -357,7 +375,7 @@ fn main() {
     let vk_pipeline_layout = unsafe {
         let layout_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::VERTEX,
             ..Default::default()
@@ -369,7 +387,7 @@ fn main() {
             ..Default::default()
         };
 
-        vk_descriptor_set_layout = vk_device.create_descriptor_set_layout(&descriptor_layout, None).unwrap();
+        vk_descriptor_set_layout = vk_device.create_descriptor_set_layout(&descriptor_layout, vulkan_memory_allocator).unwrap();
 
         let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
             push_constant_range_count: 0,
@@ -379,13 +397,13 @@ fn main() {
             ..Default::default()
         };
         
-        vk_device.create_pipeline_layout(&pipeline_layout_createinfo, None).unwrap()
+        vk_device.create_pipeline_layout(&pipeline_layout_createinfo, vulkan_memory_allocator).unwrap()
     };
     
     //Set up descriptors
     let vk_descriptor_sets = unsafe {
         let pool_size = vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::UNIFORM_BUFFER,
+            ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             descriptor_count: 1
         };
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
@@ -394,7 +412,7 @@ fn main() {
             p_pool_sizes: &pool_size,
             ..Default::default()
         };
-        let descriptor_pool = vk_device.create_descriptor_pool(&descriptor_pool_info, None).unwrap();
+        let descriptor_pool = vk_device.create_descriptor_pool(&descriptor_pool_info, vulkan_memory_allocator).unwrap();
 
         let vk_alloc_info = vk::DescriptorSetAllocateInfo {
             descriptor_pool,
@@ -407,7 +425,7 @@ fn main() {
         let write = vk::WriteDescriptorSet {
             dst_set: vk_descriptor_sets[0],
             descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             p_buffer_info: &vk_descriptor_buffer_info,
             dst_array_element: 0,
             dst_binding: 0,
@@ -481,7 +499,7 @@ fn main() {
             p_dependencies: &subpass_dependency,
             ..Default::default()
         };
-        vk_device.create_render_pass(&renderpass_info, None).unwrap()
+        vk_device.create_render_pass(&renderpass_info, vulkan_memory_allocator).unwrap()
     };
 
     //Load shaders
@@ -496,14 +514,14 @@ fn main() {
             p_code: vert_spv.as_ptr(),
             ..Default::default()
         };
-        let vert_module = vk_device.create_shader_module(&module_create_info, None).unwrap();
+        let vert_module = vk_device.create_shader_module(&module_create_info, vulkan_memory_allocator).unwrap();
 
         let module_create_info = vk::ShaderModuleCreateInfo {
             code_size: frag_spv.len() * size_of::<u32>(),
             p_code: frag_spv.as_ptr(),
             ..Default::default()
         };
-        let frag_module = vk_device.create_shader_module(&module_create_info, None).unwrap();
+        let frag_module = vk_device.create_shader_module(&module_create_info, vulkan_memory_allocator).unwrap();
 
         let vertex_stage_create_info = vk::PipelineShaderStageCreateInfo {
             stage: vk::ShaderStageFlags::VERTEX,
@@ -538,7 +556,7 @@ fn main() {
         let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
         for view in vk_swapchain_image_views {
             attachments[0] = view;
-            fbs.push(vk_device.create_framebuffer(&fb_info, None).unwrap())
+            fbs.push(vk_device.create_framebuffer(&fb_info, vulkan_memory_allocator).unwrap())
         }
 
         fbs
@@ -657,7 +675,7 @@ fn main() {
             ..Default::default()
         };
 
-        vk_device.create_graphics_pipelines(vk::PipelineCache::null(), &[graphics_pipeline_info], None).unwrap()[0]
+        vk_device.create_graphics_pipelines(vk::PipelineCache::null(), &[graphics_pipeline_info], vulkan_memory_allocator).unwrap()[0]
     };
 
     //Initialize Dear ImGUI
@@ -666,7 +684,6 @@ fn main() {
         let io = imgui_context.io_mut();
         io.display_size[0] = window_size.x as f32;
         io.display_size[1] = window_size.y as f32;
-        
     }
     
     //Create and upload Dear IMGUI font atlas
@@ -694,7 +711,7 @@ fn main() {
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 ..Default::default()
             };
-            let vk_font_image = vk_device.create_image(&font_create_info, None).unwrap();
+            let vk_font_image = vk_device.create_image(&font_create_info, vulkan_memory_allocator).unwrap();
         }
         FontAtlasRefMut::Shared(_) => {
             panic!("Not dealing with this case.");
@@ -719,8 +736,8 @@ fn main() {
     let sphere_index_count;
     {
         let radius = 2.0;
-        let segments = 32;
-        let rings = 32;
+        let segments = 256;
+        let rings = 256;
         sphere_vertex_data = ozy::prims::sphere_vertex_buffer(radius, segments, rings);
         sphere_index_data = ozy::prims::sphere_index_array(segments, rings).into_iter().map(|n|{n as u32}).collect();        
         sphere_index_count = ozy::prims::sphere_index_count(segments, rings);
@@ -732,19 +749,19 @@ fn main() {
     //Create plane's vertex and index buffer objects
     let scene_geo_buffer = unsafe {
         //Buffer creation
-        let size_in_bytes = (
-            plane_vertex_data.len() * size_of::<f32>() + 
-            plane_index_data.len() * size_of::<u32>() +
-            sphere_vertex_data.len() * size_of::<f32>() +
-            sphere_index_data.len() * size_of::<u32>()
-        ) as vk::DeviceSize;
+        let mut size_in_bytes = 0;
+        for (&v_buffer, &i_buffer) in scene_vertex_buffers.iter().zip(scene_index_buffers.iter()) {
+            size_in_bytes += v_buffer.len() * size_of::<f32>();
+            size_in_bytes += i_buffer.len() * size_of::<u32>();
+        }
+        
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
-            size: size_in_bytes,
+            size: size_in_bytes as vk::DeviceSize,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
-        let buffer = vk_device.create_buffer(&buffer_create_info, None).unwrap();
+        let buffer = vk_device.create_buffer(&buffer_create_info, vulkan_memory_allocator).unwrap();
         buffer
     };
 
@@ -762,7 +779,7 @@ fn main() {
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         );
         if let None = memory_type_index {
-            unrecoverable_error("Couldn't find suitable heap for allocation.");
+            crash_with_error_dialog("Couldn't find suitable heap for allocation.");
         }
         let memory_type_index = memory_type_index.unwrap();
         let alloc_info = vk::MemoryAllocateInfo {
@@ -770,7 +787,7 @@ fn main() {
             memory_type_index,
             ..Default::default()
         };
-        let buffer_memory = vk_device.allocate_memory(&alloc_info, None).unwrap();
+        let buffer_memory = vk_device.allocate_memory(&alloc_info, vulkan_memory_allocator).unwrap();
 
         //Bind buffer
         vk_device.bind_buffer_memory(scene_geo_buffer, buffer_memory, 0).unwrap();
@@ -838,7 +855,7 @@ fn main() {
     let vk_clear_values = [vk_color_clear, vk_depth_stencil_clear];
 
     //Create semaphore used to wait on swapchain image
-    let vk_swapchain_semaphore = unsafe { vk_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap() };
+    let vk_swapchain_semaphore = unsafe { vk_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vulkan_memory_allocator).unwrap() };
 
     //State for freecam controls
     let mut camera = FreeCam::new(glm::vec3(0.0f32, -2.0, 4.0));
@@ -928,7 +945,14 @@ fn main() {
         camera.position += glm::vec4_to_vec3(&delta_pos);
         
         let view_projection = projection_matrix * view_matrix;
-        unsafe { ptr::copy_nonoverlapping(view_projection.as_ptr(), vk_uniform_buffer_ptr as *mut _, vk_uniform_size as usize); }
+        let sphere_matrix = glm::translation(&glm::vec3(0.0, 0.0, f32::sin(timer.elapsed_time) + 1.0)) * glm::rotation(3.0 * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+        unsafe {
+            let uniform_ptr = vk_uniform_buffer_ptr as *mut _;
+            ptr::copy_nonoverlapping(view_projection.as_ptr(), uniform_ptr, size_of::<glm::TMat4<f32>>());
+            let uniform_ptr = uniform_ptr.offset(16);
+            let mvp = view_projection * sphere_matrix;
+            ptr::copy_nonoverlapping(mvp.as_ptr(), uniform_ptr, size_of::<glm::TMat4<f32>>());
+        }
 
         //Draw
         unsafe {
@@ -965,18 +989,22 @@ fn main() {
             };
             vk_device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
+            //Bind main rendering pipeline to GRAPHICS pipeline bind point
             vk_device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_3D_graphics_pipeline);
 
-            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Bind plane's vertex and index buffers
             vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[scene_geo_buffer], &[vk_plane_vertex_offset as u64]);
             vk_device.cmd_bind_index_buffer(vk_command_buffer, scene_geo_buffer, (vk_plane_index_offset) as vk::DeviceSize, vk::IndexType::UINT32);
+            
+            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[0]);
             vk_device.cmd_draw_indexed(vk_command_buffer, 6, 1, 0, 0, 0);
 
             //Bind sphere's vertex and index buffers
             vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[scene_geo_buffer], &[vk_sphere_vertex_offset as u64]);
             vk_device.cmd_bind_index_buffer(vk_command_buffer, scene_geo_buffer, (vk_sphere_index_offset) as vk::DeviceSize, vk::IndexType::UINT32);
+            
+            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[size_of::<glm::TMat4<f32>>() as u32]);
             vk_device.cmd_draw_indexed(vk_command_buffer, sphere_index_count as u32, 1, 0, 0, 0);
 
             
@@ -987,7 +1015,7 @@ fn main() {
             let fence_info = vk::FenceCreateInfo {
                 ..Default::default()
             };
-            let fence = vk_device.create_fence(&fence_info, None).unwrap();
+            let fence = vk_device.create_fence(&fence_info, vulkan_memory_allocator).unwrap();
 
             let pipeline_stage_flags = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
             let submit_info = vk::SubmitInfo {
