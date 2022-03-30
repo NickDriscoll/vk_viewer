@@ -3,7 +3,7 @@ extern crate nalgebra_glm as glm;
 extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
-mod dlr;
+mod dllr;
 mod structs;
 
 use ash::vk;
@@ -125,14 +125,12 @@ fn main() {
     //Create the Vulkan device
     let vk_physical_device;
     let vk_physical_device_properties;
-    let vk_physical_device_features;
     let mut vk_queue_family_index = 0;
     let vk_device = unsafe {
         match vk_instance.enumerate_physical_devices() {
             Ok(phys_devices) => {
                 vk_physical_device = phys_devices[0];
                 vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
-                vk_physical_device_features = vk_instance.get_physical_device_features(vk_physical_device);
 
                 let mut i = 0;
                 for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
@@ -171,13 +169,6 @@ fn main() {
             }
         }
     };
-
-    //Write device properties to debug file
-    {
-        let mut info_file = OpenOptions::new().create(true).write(true).open("./vulkan_physical_device_info.txt").unwrap();
-        write!(info_file, "{:#?}\n", vk_physical_device_properties).unwrap();
-        write!(info_file, "{:#?}\n", vk_physical_device_features).unwrap();
-    }
 
     //Create command buffer
     let vk_command_buffer = unsafe {
@@ -327,10 +318,11 @@ fn main() {
         vk_device.create_image_view(&view_info, vulkan_memory_allocator).unwrap()
     };
 
-    let vk_descriptor_buffer_info;
+    let global_mvp_slots = 1024;
     let vk_uniform_buffer_size;
+    let vk_uniform_buffer;
     let vk_uniform_buffer_ptr = unsafe {
-        let mut buffer_size = (size_of::<glm::TMat4<f32>>() * 2) as vk::DeviceSize;
+        let mut buffer_size = (size_of::<glm::TMat4<f32>>() * global_mvp_slots) as vk::DeviceSize;
         let alignment = vk_physical_device_properties.limits.min_uniform_buffer_offset_alignment;
         if alignment > 0 {
             buffer_size = (buffer_size + (alignment - 1)) & !(alignment - 1);   //Alignment is 2^N where N is a whole number
@@ -345,13 +337,7 @@ fn main() {
             ..Default::default()
         };
 
-        let vk_uniform_buffer = vk_device.create_buffer(&buffer_create_info, vulkan_memory_allocator).unwrap();
-
-        vk_descriptor_buffer_info = vk::DescriptorBufferInfo {
-            buffer: vk_uniform_buffer,
-            offset: 0,
-            range: size_of::<glm::TMat4<f32>>() as vk::DeviceSize
-        };
+        vk_uniform_buffer = vk_device.create_buffer(&buffer_create_info, vulkan_memory_allocator).unwrap();
         
         let mem_reqs = vk_device.get_buffer_memory_requirements(vk_uniform_buffer);
         let memory_type_index = get_memory_type_index(
@@ -382,7 +368,7 @@ fn main() {
     let vk_pipeline_layout = unsafe {
         let layout_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::VERTEX,
             ..Default::default()
@@ -410,7 +396,7 @@ fn main() {
     //Set up descriptors
     let vk_descriptor_sets = unsafe {
         let pool_size = vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: 1
         };
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
@@ -429,11 +415,19 @@ fn main() {
         };
         let vk_descriptor_sets = vk_device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
 
+        let buffer_infos = [
+            vk::DescriptorBufferInfo {
+                buffer: vk_uniform_buffer,
+                offset: 0,
+                range: (global_mvp_slots * size_of::<glm::TMat4<f32>>()) as vk::DeviceSize
+            }
+        ];
+
         let write = vk::WriteDescriptorSet {
             dst_set: vk_descriptor_sets[0],
             descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-            p_buffer_info: &vk_descriptor_buffer_info,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            p_buffer_info: buffer_infos.as_ptr(),
             dst_array_element: 0,
             dst_binding: 0,
             ..Default::default()
@@ -803,7 +797,7 @@ fn main() {
         let buffer_ptr = vk_device.map_memory(
             buffer_memory,
             0,
-            (plane_vertex_data.len() * size_of::<f32>()) as vk::DeviceSize,
+            vk::WHOLE_SIZE,
             vk::MemoryMapFlags::empty()
         ).unwrap();
         let offset = 0;
@@ -954,7 +948,7 @@ fn main() {
         let view_projection = projection_matrix * view_matrix;
         let sphere_matrix = glm::translation(&glm::vec3(0.0, 0.0, f32::sin(timer.elapsed_time) + 1.0)) * glm::rotation(3.0 * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
         unsafe {
-            let uniform_ptr = vk_uniform_buffer_ptr as *mut _;
+            let uniform_ptr = vk_uniform_buffer_ptr as *mut f32;
             ptr::copy_nonoverlapping(view_projection.as_ptr(), uniform_ptr, size_of::<glm::TMat4<f32>>());
             let uniform_ptr = uniform_ptr.offset(16);
             let mvp = view_projection * sphere_matrix;
@@ -1042,14 +1036,14 @@ fn main() {
             vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[scene_geo_buffer], &[vk_plane_vertex_offset as u64]);
             vk_device.cmd_bind_index_buffer(vk_command_buffer, scene_geo_buffer, (vk_plane_index_offset) as vk::DeviceSize, vk::IndexType::UINT32);
             
-            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[0]);
+            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
             vk_device.cmd_draw_indexed(vk_command_buffer, 6, 1, 0, 0, 0);
 
             //Bind sphere's vertex and index buffers
             vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[scene_geo_buffer], &[vk_sphere_vertex_offset as u64]);
             vk_device.cmd_bind_index_buffer(vk_command_buffer, scene_geo_buffer, (vk_sphere_index_offset) as vk::DeviceSize, vk::IndexType::UINT32);
             
-            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[size_of::<glm::TMat4<f32>>() as u32]);
+            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
             vk_device.cmd_draw_indexed(vk_command_buffer, sphere_index_count as u32, 1, 0, 0, 0);
 
             
