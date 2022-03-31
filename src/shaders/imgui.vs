@@ -8,11 +8,11 @@ layout (location = 0) out vec2 f_uv;
 layout (location = 1) out vec4 f_color;
 
 layout (binding = 0) uniform SceneData {
-    mat4 projection;
+    mat4 screen_to_clip;
 };
 
 void main() {
     f_uv = uv;
     f_color = color;
-    gl_Position = projection * vec4(position, 0.0, 1.0);
+    gl_Position = screen_to_clip * vec4(position, 0.0, 1.0);
 }

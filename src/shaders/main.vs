@@ -9,12 +9,7 @@ layout (std140, set = 0, binding = 0) buffer TransformBlock {
     mat4 mvp_matrices[];
 };
 
-layout(push_constant) uniform Constants {
-    uint model_index;
-
-};
-
 void main() {
     f_color = vec4(color, 1.0);
-    gl_Position = mvp_matrices[model_index] * vec4(position, 1.0);
+    gl_Position = mvp_matrices[gl_InstanceIndex] * vec4(position, 1.0);
 }
