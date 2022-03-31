@@ -876,8 +876,9 @@ fn main() {
         0.0, 0.0, 0.5, 1.0,
     ) * projection_matrix;
 
-    //Main application loop
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
+    
+    //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
 
@@ -957,15 +958,18 @@ fn main() {
             transform_ptr = transform_ptr.offset(16);
         };
 
-        let sphere_count = 100;
+        let sphere_count = 50;
+        let mut sphere_transforms = vec![0.0; 16 * sphere_count];
         for i in 0..sphere_count {
-            let sphere_matrix = glm::translation(&glm::vec3(5.0 * i as f32, 0.0, 2.0 + 3.0 * f32::sin(timer.elapsed_time * i as f32) + 1.0)) * glm::rotation(3.0 * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));            
-            unsafe {
-                let transform_ptr = transform_ptr.offset(16 * i);
-                let mvp = view_projection * sphere_matrix;
-                ptr::copy_nonoverlapping(mvp.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
+            let sphere_matrix = glm::translation(&glm::vec3(5.0 * (i as f32 - sphere_count as f32 / 2.0), 0.0, 2.0 + 3.0 * f32::sin(timer.elapsed_time * i as f32) + 1.0)) * glm::rotation(3.0 * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));                        
+            let mvp = view_projection * sphere_matrix;
+
+            let trans_offset = i * 16;
+            for j in 0..16 {
+                sphere_transforms[trans_offset + j] = mvp[j];
             }
         }
+        unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, sphere_count * 16)}; 
 
         //Dear ImGUI stuff copy-pasted out of one of the OpenGL projects
         {
