@@ -1,4 +1,5 @@
 #version 430 core
+#extension GL_EXT_nonuniform_qualifier: enable
 
 layout (location = 0) in vec4 f_color;
 
