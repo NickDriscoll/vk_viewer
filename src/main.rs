@@ -16,6 +16,7 @@ use structs::FreeCam;
 use std::fs::{File};
 use std::ffi::CStr;
 use std::mem::size_of;
+use std::os::raw::c_void;
 use std::ptr;
 
 use ozy::structs::FrameTimer;
@@ -43,6 +44,13 @@ fn main() {
     let video_subsystem = sdl_ctxt.video().unwrap();
     let window_size = glm::vec2(1920, 1200);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
+
+    let clip_from_screen = glm::mat4(
+        1.0 / window_size.x as f32, 0.0, 0.0, 0.0,
+        0.0, 1.0 / window_size.y as f32, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
 
     //Initialize the SDL mixer
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
@@ -106,6 +114,13 @@ fn main() {
             Ok(phys_devices) => {
                 vk_physical_device = phys_devices[0];
                 vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
+                
+                let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
+                let mut physical_device_features = vk::PhysicalDeviceFeatures2 {
+                    p_next: &mut indexing_features as *mut _ as *mut c_void,
+                    ..Default::default()
+                };
+                vk_instance.get_physical_device_features2(vk_physical_device, &mut physical_device_features);
 
                 let mut i = 0;
                 for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
@@ -134,6 +149,8 @@ fn main() {
                     p_queue_create_infos: [queue_create_info].as_ptr(),
                     enabled_extension_count: extension_names.len() as u32,
                     pp_enabled_extension_names: extension_names.as_ptr(),
+                    p_enabled_features: &physical_device_features.features,
+                    p_next: &mut indexing_features as *mut _ as *mut c_void,
                     ..Default::default()
                 };
 
@@ -281,7 +298,7 @@ fn main() {
     let global_transform_slots = 1024;
     let vk_uniform_buffer_size;
     let vk_transform_storage_buffer;
-    let vk_transform_storage_buffer_ptr = unsafe {
+    let vk_scene_storage_buffer_ptr = unsafe {
         let mut buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
         let alignment = vk_physical_device_properties.limits.min_uniform_buffer_offset_alignment;
         if alignment > 0 {
@@ -843,8 +860,8 @@ fn main() {
     let sphere_index_count;
     {
         let radius = 2.0;
-        let segments = 16;
-        let rings = 16;
+        let segments = 32;
+        let rings = 32;
         sphere_vertex_data = ozy::prims::sphere_vertex_buffer(radius, segments, rings);
         sphere_index_data = ozy::prims::sphere_index_array(segments, rings).into_iter().map(|n|{n as u32}).collect();        
         sphere_index_count = ozy::prims::sphere_index_count(segments, rings);
@@ -1035,10 +1052,16 @@ fn main() {
         let view_matrix = camera.make_view_matrix();
         const CAMERA_SPEED: f32 = 3.0;
         let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&movement_vector) * timer.delta_time;
-        camera.position += glm::vec4_to_vec3(&delta_pos);        
+        camera.position += glm::vec4_to_vec3(&delta_pos);
         let view_projection = projection_matrix * view_matrix;
 
-        let mut transform_ptr = vk_transform_storage_buffer_ptr as *mut f32;
+        let mut transform_ptr = vk_scene_storage_buffer_ptr as *mut f32;
+        
+        unsafe {
+            ptr::copy_nonoverlapping(clip_from_screen.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
+            transform_ptr = transform_ptr.offset(16);
+        };
+
         unsafe {
             let mvp = view_projection * glm::scaling(&glm::vec3(10.0, 10.0, 0.0));
             ptr::copy_nonoverlapping(mvp.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
