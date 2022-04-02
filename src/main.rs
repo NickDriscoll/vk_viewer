@@ -1189,11 +1189,12 @@ fn main() {
             vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
 
             vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+            vk_device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
                 p_swapchains: &vk_swapchain,
-                p_image_indices: &(current_framebuffer_index as u32),                
+                p_image_indices: &(current_framebuffer_index as u32),
                 ..Default::default()
             };
             vk_ext_swapchain.queue_present(queue, &present_info).unwrap();
