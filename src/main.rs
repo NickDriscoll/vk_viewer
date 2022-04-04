@@ -45,20 +45,14 @@ fn main() {
     let window_size = glm::vec2(1920, 1200);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
-    let clip_from_screen = glm::mat4(
-        1.0 / window_size.x as f32, 0.0, 0.0, 0.0,
-        0.0, 1.0 / window_size.y as f32, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        0.0, 0.0, 0.0, 1.0
-    );
-
     //Initialize the SDL mixer
+    let mut music_volume = 16;
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
     mixer::open_audio(mixer::DEFAULT_FREQUENCY, mixer::DEFAULT_FORMAT, 2, 256).unwrap();
-    Music::set_volume(16);
+    Music::set_volume(music_volume);
 
     //Load and play bgm
-    let bgm = Music::from_file("./music/bald.mp3").unwrap();
+    let bgm = Music::from_file("./music/nmwi.flac").unwrap();
     bgm.play(-1).unwrap();
 
     //Initialize the Vulkan API
@@ -190,7 +184,18 @@ fn main() {
     let vk_swapchain = unsafe {
         let present_mode = vk_ext_surface.get_physical_device_surface_present_modes(vk_physical_device, vk_surface).unwrap()[0];
         let surf_capabilities = vk_ext_surface.get_physical_device_surface_capabilities(vk_physical_device, vk_surface).unwrap();
-        let surf_format = vk_ext_surface.get_physical_device_surface_formats(vk_physical_device, vk_surface).unwrap()[0];
+        let surf_formats = vk_ext_surface.get_physical_device_surface_formats(vk_physical_device, vk_surface).unwrap();
+
+        //Search for an SRGB swapchain format
+        let mut surf_format = vk::SurfaceFormatKHR::default();
+        for sformat in surf_formats.iter() {
+            if sformat.format == vk::Format::B8G8R8A8_SRGB {
+                surf_format = *sformat;
+                break;
+            }
+            surf_format = vk::SurfaceFormatKHR::default();
+        }
+
         vk_swapchain_image_format = surf_format.format;
         vk_swapchain_extent = surf_capabilities.current_extent;
         let create_info = vk::SwapchainCreateInfoKHR {
@@ -295,7 +300,7 @@ fn main() {
         vk_device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap()
     };
 
-    let global_transform_slots = 1024;
+    let global_transform_slots = 1024 * 1024;
     let vk_uniform_buffer_size;
     let vk_transform_storage_buffer;
     let vk_scene_storage_buffer_ptr = unsafe {
@@ -370,6 +375,7 @@ fn main() {
 
     //Initialize Dear ImGUI
     let mut imgui_context = imgui::Context::create();
+    imgui_context.style_mut().use_dark_colors();
     {
         let io = imgui_context.io_mut();
         io.display_size[0] = window_size.x as f32;
@@ -379,9 +385,9 @@ fn main() {
     //Create and upload Dear IMGUI font atlas
     let imgui_font_image = match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
-            let font_atlas = atlas.build_alpha8_texture();
+            let atlas_texture = atlas.build_alpha8_texture();
 
-            let size = (font_atlas.width * font_atlas.height) as vk::DeviceSize;
+            let size = (atlas_texture.width * atlas_texture.height) as vk::DeviceSize;
             let buffer_create_info = vk::BufferCreateInfo {
                 usage: vk::BufferUsageFlags::TRANSFER_SRC,
                 size,
@@ -394,17 +400,17 @@ fn main() {
 
 
             let staging_ptr = vk_device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
-            ptr::copy_nonoverlapping(font_atlas.data.as_ptr(), staging_ptr as *mut _, size as usize);
+            ptr::copy_nonoverlapping(atlas_texture.data.as_ptr(), staging_ptr as *mut _, size as usize);
             vk_device.unmap_memory(staging_buffer_memory);
             
             let image_extent = vk::Extent3D {
-                width: font_atlas.width,
-                height: font_atlas.height,
+                width: atlas_texture.width,
+                height: atlas_texture.height,
                 depth: 1
             };
             let font_create_info = vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,
-                format: vk::Format::R8_SRGB,
+                format: vk::Format::R8_UNORM,
                 extent: image_extent,
                 mip_levels: 1,
                 array_layers: 1,
@@ -492,8 +498,11 @@ fn main() {
             let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
             vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
             vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-
+            vk_device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
             vk_device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
+
+            atlas.tex_id = imgui::TextureId::new(0);    //Giving Dear Imgui a reference to the font atlas GPU texture
+            atlas.clear_tex_data();                         //Free atlas memory CPU-side
 
             vk_font_image
         }
@@ -557,7 +566,7 @@ fn main() {
         };
         let sampler_view_info = vk::ImageViewCreateInfo {
             image: imgui_font_image,
-            format: vk::Format::R8_SRGB,
+            format: vk::Format::R8_UNORM,
             view_type: vk::ImageViewType::TYPE_2D,
             components: COMPONENT_MAPPING_DEFAULT,
             subresource_range: sampler_subresource_range,
@@ -565,9 +574,9 @@ fn main() {
         };
         let sampler_view = vk_device.create_image_view(&sampler_view_info, VK_MEMORY_ALLOCATOR).unwrap();
         let sampler_info = vk::SamplerCreateInfo {
-            min_filter: vk::Filter::LINEAR,
-            mag_filter: vk::Filter::LINEAR,
-            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            min_filter: vk::Filter::NEAREST,
+            mag_filter: vk::Filter::NEAREST,
+            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
             address_mode_u: vk::SamplerAddressMode::MIRRORED_REPEAT,
             address_mode_v: vk::SamplerAddressMode::MIRRORED_REPEAT,
             address_mode_w: vk::SamplerAddressMode::MIRRORED_REPEAT,
@@ -576,7 +585,7 @@ fn main() {
             compare_enable: vk::FALSE,
             min_lod: 0.0,
             max_lod: vk::LOD_CLAMP_NONE,
-            border_color: vk::BorderColor::FLOAT_TRANSPARENT_BLACK,
+            border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
             unnormalized_coordinates: vk::FALSE,
             ..Default::default()
         };
@@ -681,7 +690,7 @@ fn main() {
     };
 
     //Create framebuffers
-    let vk_framebuffers = unsafe {
+    let vk_swapchain_framebuffers = unsafe {
         let mut attachments = [vk::ImageView::default(), vk_depth_image_view];
         let fb_info = vk::FramebufferCreateInfo {
             render_pass: vk_render_pass,
@@ -729,13 +738,13 @@ fn main() {
 
         let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
             color_write_mask: vk::ColorComponentFlags::from_raw(0xF),   //All components
-            blend_enable: vk::FALSE,
+            blend_enable: vk::TRUE,
             alpha_blend_op: vk::BlendOp::ADD,
             color_blend_op: vk::BlendOp::ADD,
-            src_color_blend_factor: vk::BlendFactor::ZERO,
-            dst_color_blend_factor: vk::BlendFactor::ZERO,
-            src_alpha_blend_factor: vk::BlendFactor::ZERO,
-            dst_alpha_blend_factor: vk::BlendFactor::ZERO
+            src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            src_alpha_blend_factor: vk::BlendFactor::SRC_ALPHA,
+            dst_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA
         };
 
         let color_blend_pipeline_state = vk::PipelineColorBlendStateCreateInfo {
@@ -888,14 +897,12 @@ fn main() {
     //Sphere mesh data
     let sphere_vertex_data;
     let sphere_index_data: Vec<u32>;
-    let sphere_index_count;
     {
         let radius = 2.0;
         let segments = 32;
         let rings = 32;
         sphere_vertex_data = ozy::prims::sphere_vertex_buffer(radius, segments, rings);
-        sphere_index_data = ozy::prims::sphere_index_array(segments, rings).into_iter().map(|n|{n as u32}).collect();        
-        sphere_index_count = ozy::prims::sphere_index_count(segments, rings);
+        sphere_index_data = ozy::prims::sphere_index_array(segments, rings).into_iter().map(|n|{n as u32}).collect();
     }
 
     let scene_vertex_buffers = [&plane_vertex_data, sphere_vertex_data.as_slice()];
@@ -921,11 +928,8 @@ fn main() {
     };
 
     //Allocate and distribute memory to buffer objects
-    let plane_vertex_buffer;
-    let plane_index_buffer;
-    let sphere_vertex_buffer;
-    let sphere_index_buffer;
-    let mut scene_geo_bump_allocator;
+    let plane_geometry;
+    let sphere_geometry;
     unsafe {
         let buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, scene_geo_buffer);
 
@@ -941,26 +945,30 @@ fn main() {
         ).unwrap();
 
         //Create virtual bump allocator
-        scene_geo_bump_allocator = dllr::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
+        let mut scene_geo_allocator = dllr::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
-        let size = plane_vertex_data.len() * size_of::<f32>();
-        plane_vertex_buffer = scene_geo_bump_allocator.allocate(size as u64).unwrap();
-        plane_vertex_buffer.upload_buffer(&plane_vertex_data);
-
-        let size = plane_index_data.len() * size_of::<u32>();
-        plane_index_buffer = scene_geo_bump_allocator.allocate(size as u64).unwrap();
-        plane_index_buffer.upload_buffer(&plane_index_data);
-
-        let size = sphere_vertex_data.len() * size_of::<f32>();
-        sphere_vertex_buffer = scene_geo_bump_allocator.allocate(size as u64).unwrap();
-        sphere_vertex_buffer.upload_buffer(&sphere_vertex_data);
-
-        let size = sphere_index_data.len() * size_of::<u32>();
-        sphere_index_buffer = scene_geo_bump_allocator.allocate(size as u64).unwrap();
-        sphere_index_buffer.upload_buffer(&sphere_index_data);
+        plane_geometry = scene_geo_allocator.allocate_geometry(&plane_vertex_data, &plane_index_data).unwrap();
+        sphere_geometry = scene_geo_allocator.allocate_geometry(&sphere_vertex_data, &sphere_index_data).unwrap();
 
         vk_device.unmap_memory(buffer_memory);
     }
+
+    let mut imgui_geo_allocator = unsafe {
+        let imgui_buffer_size = 1024 * 64;
+        let buffer_create_info = vk::BufferCreateInfo {
+            usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
+            size: imgui_buffer_size as vk::DeviceSize,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            ..Default::default()
+        };
+        let buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, buffer);
+        vk_device.bind_buffer_memory(buffer, buffer_memory, 0).unwrap();
+
+        let ptr = vk_device.map_memory(buffer_memory, 0, imgui_buffer_size, vk::MemoryMapFlags::empty()).unwrap();
+
+        dllr::VirtualBumpAllocator::new(buffer, ptr, imgui_buffer_size)
+    };
 
     let vk_render_area = {        
         let offset = vk::Offset2D {
@@ -1000,7 +1008,7 @@ fn main() {
     //State for freecam controls
     let mut camera = FreeCam::new(glm::vec3(0.0f32, -10.0, 5.0));
 
-    let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.1, 100.0);
+    let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.5, 50.0);
 
     //Relative to GL clip space, Vulkan has negative Y and half Z.
     let projection_matrix = glm::mat4(
@@ -1011,7 +1019,15 @@ fn main() {
     ) * projection_matrix;
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
+
+    let vk_submission_fence = unsafe { vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap() };
     
+    let mut sphere_width = 100 as u32;
+    let mut sphere_height = 8 as u32;
+    let mut sphere_spacing = 5.0;
+    let mut sphere_amplitude = 3.0;
+    let mut sphere_z_offset = 2.0;
+
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
@@ -1021,15 +1037,28 @@ fn main() {
         let mut orientation_vector: glm::TVec2<f32> = glm::zero();
 
         //Pump event queue
+        let framerate;
         {
             use sdl2::keyboard::{Scancode};
             use sdl2::mouse::MouseButton;
+
+            let imgui_io = imgui_context.io_mut();
+            imgui_io.delta_time = timer.delta_time;
             for event in event_pump.poll_iter() {
                 match event {
                     Event::Quit{..} => { break 'running; }
+                    Event::MouseButtonDown { mouse_btn, .. } => {
+                        match mouse_btn {
+                            MouseButton::Left => { imgui_io.mouse_down[0] = true; }
+                            MouseButton::Right => { imgui_io.mouse_down[1] = true; }
+                            _ => {}
+                        }
+                    }
                     Event::MouseButtonUp { mouse_btn, ..} => {
                         match mouse_btn {
+                            MouseButton::Left => { imgui_io.mouse_down[0] = false; }
                             MouseButton::Right => {
+                                imgui_io.mouse_down[1] = false;
                                 camera.cursor_captured = !camera.cursor_captured;
                                 mouse_util.set_relative_mouse_mode(camera.cursor_captured);
                                 if !camera.cursor_captured {
@@ -1045,10 +1074,16 @@ fn main() {
                             orientation_vector += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
                         }
                     }
+                    Event::MouseWheel { y, .. } => {
+                        imgui_io.mouse_wheel = y as f32;
+                    }
                     _ => {}
                 }
             }
             let keyboard_state = event_pump.keyboard_state();
+            let mouse_state = event_pump.mouse_state();
+            imgui_io.mouse_pos[0] = mouse_state.x() as f32;
+            imgui_io.mouse_pos[1] = mouse_state.y() as f32;
 
             let mut movement_multiplier = 1.0f32;
             if keyboard_state.is_scancode_pressed(Scancode::LShift) {
@@ -1072,10 +1107,19 @@ fn main() {
             if keyboard_state.is_scancode_pressed(Scancode::E) {
                 movement_vector += movement_multiplier * glm::vec3(0.0, 1.0, 0.0);
             }
+
+            framerate = imgui_io.framerate;
         }
 
         //Update
         let imgui_ui = imgui_context.frame();
+        imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
+        if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
+            break 'running;
+        }
+        if imgui_ui.button_with_size("Really long button with really long text", [0.0, 32.0]) {
+            tfd::message_box_yes_no("The question", "What do you think?", tfd::MessageBoxIcon::Info, tfd::YesNo::Yes);
+        }
         
         //Camera orientation based on user input
         camera.orientation += orientation_vector;
@@ -1088,44 +1132,65 @@ fn main() {
 
         let mut transform_ptr = vk_scene_storage_buffer_ptr as *mut f32;
         
+        //Update static scene data
         unsafe {
+            let clip_from_screen = glm::mat4(
+                2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
+                0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            );
             ptr::copy_nonoverlapping(clip_from_screen.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
             transform_ptr = transform_ptr.offset(16);
-        };
 
-        unsafe {
             let mvp = view_projection * glm::scaling(&glm::vec3(10.0, 10.0, 0.0));
             ptr::copy_nonoverlapping(mvp.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
             transform_ptr = transform_ptr.offset(16);
         };
 
-        let sphere_width = 200;
-        let sphere_height = 5;
-        let sphere_count = sphere_height * sphere_width;
+        imgui::Slider::new("Sphere width", 1, 150).build(&imgui_ui, &mut sphere_width);
+        imgui::Slider::new("Sphere height", 1, 150).build(&imgui_ui, &mut sphere_height);
+        imgui::Slider::new("Sphere spacing", 0.0, 20.0).build(&imgui_ui, &mut sphere_spacing);
+        imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
+        imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
+        if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
+
+        let sphere_count = sphere_width as usize * sphere_height as usize;
+        imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
         let mut sphere_transforms = vec![0.0; 16 * sphere_count];
         for i in 0..sphere_width {
             for j in 0..sphere_height {
-                let sphere_matrix = glm::translation(&glm::vec3(i as f32 * 5.0, j as f32 * 5.0, 2.0 + 3.0 * f32::sin(timer.elapsed_time * (i + 7) as f32) + 5.0)) * glm::rotation(3.0 * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));                        
+                let sphere_matrix = glm::translation(&glm::vec3(
+                    i as f32 * sphere_spacing,
+                    j as f32 * sphere_spacing,
+                    sphere_z_offset + sphere_amplitude * f32::sin(timer.elapsed_time * (i + 7) as f32) + 5.0)
+                ) * glm::rotation(3.0 * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));                        
                 let mvp = view_projection * sphere_matrix;
 
                 let trans_offset = i * 16 * sphere_height + j * 16;
                 for k in 0..16 {
-                    sphere_transforms[trans_offset + k] = mvp[k];
+                    sphere_transforms[(trans_offset + k) as usize] = mvp[k as usize];
                 }
             }
         }
-        unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count)}; 
+        unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count)};
 
-        //Dear ImGUI stuff copy-pasted out of one of the OpenGL projects
-        {
-            let draw_data = imgui_ui.render();
-            if draw_data.total_vtx_count > 0 {
-                for list in draw_data.draw_lists() {
+        //Done specifying Dear ImGUI ui for this frame
+        let imgui_draw_data = imgui_ui.render();
+        
+        //Dear ImGUI geometry buffer creation
+        let (imgui_geometries, imgui_cmd_lists) = {
+            let mut geos = Vec::with_capacity(16);
+            let mut cmds = Vec::with_capacity(16);
+            imgui_geo_allocator.clear();
+
+            if imgui_draw_data.total_vtx_count > 0 {
+                for list in imgui_draw_data.draw_lists() {
                     let vert_size = 8;  //Size in floats
-                    let mut verts = vec![0.0; list.vtx_buffer().len() * vert_size];
+                    let vtx_buffer = list.vtx_buffer();
+                    let mut verts = vec![0.0; vtx_buffer.len() * vert_size];
 
                     let mut current_vertex = 0;
-                    let vtx_buffer = list.vtx_buffer();
                     for vtx in vtx_buffer.iter() {
                         let idx = current_vertex * vert_size;
                         verts[idx] = vtx.pos[0];
@@ -1139,20 +1204,25 @@ fn main() {
 
                         current_vertex += 1;
                     }
-                    
 
-                    for command in list.commands() {
-                        match command {
-                            DrawCmd::Elements {count, cmd_params} => {
-                                
-                            }
-                            DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
-                            DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
-                        }
+                    let idx_buffer = list.idx_buffer();
+                    let mut inds = vec![0u32; idx_buffer.len()];
+                    for i in (0..idx_buffer.len()).step_by(3) {
+                        inds[i] = idx_buffer[i] as u32;
+                        inds[i + 1] = idx_buffer[i + 2] as u32;
+                        inds[i + 2] = idx_buffer[i + 1] as u32;
                     }
+
+                    let g = imgui_geo_allocator.allocate_geometry(&verts, &inds).unwrap();
+                    geos.push(g);
+
+                    let mut cmd_list = Vec::with_capacity(list.commands().count());
+                    for command in list.commands() { cmd_list.push(command); }
+                    cmds.push(cmd_list);
                 }
             }
-        }
+            (geos, cmds)
+        };
 
         //Draw
         unsafe {
@@ -1179,7 +1249,7 @@ fn main() {
             let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: vk_render_pass,
-                framebuffer: vk_framebuffers[current_framebuffer_index],
+                framebuffer: vk_swapchain_framebuffers[current_framebuffer_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
@@ -1194,15 +1264,56 @@ fn main() {
             vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Bind plane's render data
-            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[plane_vertex_buffer.backing_buffer()], &[plane_vertex_buffer.offset() as u64]);
-            vk_device.cmd_bind_index_buffer(vk_command_buffer, plane_index_buffer.backing_buffer(), (plane_index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-            vk_device.cmd_draw_indexed(vk_command_buffer, 6, 1, 0, 0, 0);
+            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[plane_geometry.vertex_buffer.backing_buffer()], &[plane_geometry.vertex_buffer.offset() as u64]);
+            vk_device.cmd_bind_index_buffer(vk_command_buffer, plane_geometry.index_buffer.backing_buffer(), (plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk_device.cmd_draw_indexed(vk_command_buffer, plane_geometry.index_count, 1, 0, 0, 0);
 
             //Bind sphere's render data
-            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_vertex_buffer.backing_buffer()], &[sphere_vertex_buffer.offset() as u64]);
-            vk_device.cmd_bind_index_buffer(vk_command_buffer, sphere_index_buffer.backing_buffer(), (sphere_index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-            vk_device.cmd_draw_indexed(vk_command_buffer, sphere_index_count as u32, sphere_count as u32, 0, 0, 1);
-            
+            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_geometry.vertex_buffer.backing_buffer()], &[sphere_geometry.vertex_buffer.offset() as u64]);
+            vk_device.cmd_bind_index_buffer(vk_command_buffer, sphere_geometry.index_buffer.backing_buffer(), (sphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk_device.cmd_draw_indexed(vk_command_buffer, sphere_geometry.index_count, sphere_count as u32, 0, 0, 1);
+
+            //Record Dear ImGUI drawing commands
+            vk_device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);
+            for i in 0..imgui_cmd_lists.len() {
+                let cmd_list = &imgui_cmd_lists[i];
+                for cmd in cmd_list {
+                    match cmd {
+                        DrawCmd::Elements {count, cmd_params} => {
+                            let i_offset = cmd_params.idx_offset;
+                            let v_offset = cmd_params.vtx_offset;
+                            let v_buffer = imgui_geometries[i].vertex_buffer;
+                            let i_buffer = imgui_geometries[i].index_buffer;
+                            let tex_id = cmd_params.texture_id.id() as u32;
+
+                            let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
+                            let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
+                            let scissor_rect = {        
+                                let offset = vk::Offset2D {
+                                    x: cmd_params.clip_rect[0] as i32,
+                                    y: cmd_params.clip_rect[1] as i32
+                                };
+                                let extent = vk::Extent2D {
+                                    width: ext_x as u32,
+                                    height: ext_y as u32
+                                };
+                                vk::Rect2D {
+                                    offset,
+                                    extent
+                                }
+                            };
+                            vk_device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_rect]);
+                            vk_device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, &tex_id.to_le_bytes());
+                            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[v_buffer.backing_buffer()], &[v_buffer.offset()]);
+                            vk_device.cmd_bind_index_buffer(vk_command_buffer, i_buffer.backing_buffer(), i_buffer.offset(), vk::IndexType::UINT32);
+                            vk_device.cmd_draw_indexed(vk_command_buffer, *count as u32, 1, i_offset as u32, v_offset as i32, 0);
+                        }
+                        DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
+                        DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
+                    }
+                }
+            }
+
             vk_device.cmd_end_render_pass(vk_command_buffer);
 
             vk_device.end_command_buffer(vk_command_buffer).unwrap();
@@ -1217,12 +1328,11 @@ fn main() {
                 ..Default::default()
             };
 
-            let fence = vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap();
             let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
-            vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
+            vk_device.queue_submit(queue, &[submit_info], vk_submission_fence).unwrap();
 
-            vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-            vk_device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
+            vk_device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+            vk_device.reset_fences(&[vk_submission_fence]).unwrap();
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,

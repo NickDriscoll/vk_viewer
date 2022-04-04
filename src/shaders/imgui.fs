@@ -14,5 +14,4 @@ layout(push_constant) uniform Constants {
 
 void main() {
     frag_color = f_color * texture(global_textures[font_atlas_index], f_uv).r;
-    //frag_color = vec4(1.0);
 }

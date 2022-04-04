@@ -86,6 +86,7 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct VirtualBuffer {
     backing_buffer: vk::Buffer,
     buffer_ptr: *mut c_void,
@@ -103,6 +104,17 @@ impl VirtualBuffer {
         unsafe {
             let dst_ptr = self.buffer_ptr.offset(self.offset.try_into().unwrap());
             ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut T, in_buffer.len());
+        }
+    }
+}
+
+impl Default for VirtualBuffer {
+    fn default() -> VirtualBuffer {
+        VirtualBuffer {
+            backing_buffer: vk::Buffer::null(),
+            buffer_ptr: ptr::null_mut(),
+            offset: 0,
+            length: 0
         }
     }
 }
@@ -135,9 +147,9 @@ impl VirtualBumpAllocator {
     }
 
 
-    pub fn allocate(&mut self, size: u64) -> Result<VirtualBuffer, String> {
+    pub fn allocate_buffer(&mut self, size: u64) -> Result<VirtualBuffer, String> {
         if size + self.current_offset > self.max_size {
-            return Err(format!("Backing buffer only has {} bytes remaining.", self.max_size - self.current_offset));
+            return Err(format!("Tried to allocate {} bytes from a buffer with {} bytes remaining", size, self.max_size - self.current_offset));
         }
         
         let b = VirtualBuffer {
@@ -149,9 +161,33 @@ impl VirtualBumpAllocator {
         self.current_offset += size;
         Ok(b)
     }
+
+    pub fn allocate_geometry(&mut self, v_buffer: &[f32], i_buffer: &[u32]) -> Result<VirtualGeometry, String> {
+        let v_size = (v_buffer.len() * size_of::<f32>()) as u64;
+        let i_size = (i_buffer.len() * size_of::<u32>()) as u64;
+        let allocation_size = v_size + i_size;
+        if allocation_size + self.current_offset > self.max_size {
+            return Err(format!("Tried to allocate {} bytes from a buffer with {} bytes remaining", allocation_size, self.max_size - self.current_offset));
+        }
+        
+        let vertex_buffer = self.allocate_buffer(v_size).unwrap();
+        vertex_buffer.upload_buffer(&v_buffer);
+
+        let index_buffer = self.allocate_buffer(i_size).unwrap();
+        index_buffer.upload_buffer(&i_buffer);
+
+        Ok (
+            VirtualGeometry {
+                vertex_buffer,
+                index_buffer,
+                index_count: i_buffer.len() as u32
+            }
+        )
+    }
 }
 
 pub struct VirtualGeometry {
-    vertex_buffer: VirtualBuffer,
-    index_buffer: VirtualBuffer
+    pub vertex_buffer: VirtualBuffer,
+    pub index_buffer: VirtualBuffer,
+    pub index_count: u32
 }

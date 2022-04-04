@@ -11,5 +11,5 @@ void main() {
     //vec4 sampled_color = texture(global_textures[0], vec2(0.5));
     //frag_color = sampled_color;
     //vec4 c = texture(global_textures[0], vec2(0.0));
-    frag_color = f_color * texture(global_textures[0], vec2(0.5)).r;
+    frag_color = f_color;
 }
