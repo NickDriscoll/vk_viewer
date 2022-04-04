@@ -58,7 +58,7 @@ fn main() {
     Music::set_volume(16);
 
     //Load and play bgm
-    let bgm = Music::from_file("./music/tarp.flac").unwrap();
+    let bgm = Music::from_file("./music/bald.mp3").unwrap();
     bgm.play(-1).unwrap();
 
     //Initialize the Vulkan API
@@ -333,19 +333,29 @@ fn main() {
             stage_flags: vk::ShaderStageFlags::VERTEX,
             ..Default::default()
         };
+
+        let texture_binding = vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            ..Default::default()
+        };
+        
+        let bindings = [layout_binding, texture_binding];
         
         let descriptor_layout = vk::DescriptorSetLayoutCreateInfo {
-            binding_count: 1,
-            p_bindings: &layout_binding,
+            binding_count: bindings.len() as u32,
+            p_bindings: bindings.as_ptr(),
             ..Default::default()
         };
 
         vk_descriptor_set_layout = vk_device.create_descriptor_set_layout(&descriptor_layout, VK_MEMORY_ALLOCATOR).unwrap();
 
         let push_constant_range = vk::PushConstantRange {
-            stage_flags: vk::ShaderStageFlags::VERTEX,
+            stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             offset: 0,
-            size: size_of::<u32>() as u32
+            size: 2 * size_of::<u32>() as u32
         };
         let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
             push_constant_range_count: 1,
@@ -358,50 +368,156 @@ fn main() {
         vk_device.create_pipeline_layout(&pipeline_layout_createinfo, VK_MEMORY_ALLOCATOR).unwrap()
     };
 
-    let imgui_descriptor_set_layout;
-    let imgui_pipeline_layout = unsafe {
-        let layout_binding = vk::DescriptorSetLayoutBinding {
-            binding: 0,
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-            descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::VERTEX,
-            ..Default::default()
-        };
-        
-        let descriptor_layout = vk::DescriptorSetLayoutCreateInfo {
-            binding_count: 1,
-            p_bindings: &layout_binding,
-            ..Default::default()
-        };
+    //Initialize Dear ImGUI
+    let mut imgui_context = imgui::Context::create();
+    {
+        let io = imgui_context.io_mut();
+        io.display_size[0] = window_size.x as f32;
+        io.display_size[1] = window_size.y as f32;
+    }
+    
+    //Create and upload Dear IMGUI font atlas
+    let imgui_font_image = match imgui_context.fonts() {
+        FontAtlasRefMut::Owned(atlas) => unsafe {
+            let font_atlas = atlas.build_alpha8_texture();
 
-        imgui_descriptor_set_layout = vk_device.create_descriptor_set_layout(&descriptor_layout, VK_MEMORY_ALLOCATOR).unwrap();
+            let size = (font_atlas.width * font_atlas.height) as vk::DeviceSize;
+            let buffer_create_info = vk::BufferCreateInfo {
+                usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                size,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            let staging_buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
+            let staging_buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, staging_buffer);    
+            vk_device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
 
-        let push_constant_range = vk::PushConstantRange {
-            stage_flags: vk::ShaderStageFlags::FRAGMENT,
-            offset: 0,
-            size: size_of::<u32>() as u32
-        };
-        let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
-            push_constant_range_count: 1,
-            p_push_constant_ranges: &push_constant_range,
-            set_layout_count: 1,
-            p_set_layouts: &imgui_descriptor_set_layout,
-            ..Default::default()
-        };
-        
-        vk_device.create_pipeline_layout(&pipeline_layout_createinfo, VK_MEMORY_ALLOCATOR).unwrap()        
+
+            let staging_ptr = vk_device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
+            ptr::copy_nonoverlapping(font_atlas.data.as_ptr(), staging_ptr as *mut _, size as usize);
+            vk_device.unmap_memory(staging_buffer_memory);
+            
+            let image_extent = vk::Extent3D {
+                width: font_atlas.width,
+                height: font_atlas.height,
+                depth: 1
+            };
+            let font_create_info = vk::ImageCreateInfo {
+                image_type: vk::ImageType::TYPE_2D,
+                format: vk::Format::R8_SRGB,
+                extent: image_extent,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: &vk_queue_family_index,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                ..Default::default()
+            };
+            let vk_font_image = vk_device.create_image(&font_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            
+            let font_image_memory = dllr::allocate_image_memory(&vk_instance, vk_physical_device, &vk_device, vk_font_image);
+    
+            vk_device.bind_image_memory(vk_font_image, font_image_memory, 0).unwrap();
+
+            vk_device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let image_memory_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                old_layout: vk::ImageLayout::UNDEFINED,
+                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                image: vk_font_image,
+                subresource_range,
+                ..Default::default()
+            };
+            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+
+            let subresource_layers = vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: 0,
+                base_array_layer: 0,
+                layer_count: 1
+
+            };
+            let copy_region = vk::BufferImageCopy {
+                buffer_offset: 0,
+                buffer_row_length: 0,
+                buffer_image_height: 0,
+                image_extent,
+                image_offset: vk::Offset3D::default(),
+                image_subresource: subresource_layers
+            };
+            vk_device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, vk_font_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
+            
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let image_memory_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                image: vk_font_image,
+                subresource_range,
+                ..Default::default()
+            };
+            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+
+
+            vk_device.end_command_buffer(vk_command_buffer).unwrap();
+
+            
+            let submit_info = vk::SubmitInfo {
+                command_buffer_count: 1,
+                p_command_buffers: &vk_command_buffer,
+                ..Default::default()
+            };
+
+            let fence = vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap();
+            let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
+            vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
+            vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+
+            vk_device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
+
+            vk_font_image
+        }
+        FontAtlasRefMut::Shared(_) => {
+            panic!("Not dealing with this case.");
+        }
     };
     
     //Set up descriptors
     let vk_descriptor_sets = unsafe {
-        let pool_size = vk::DescriptorPoolSize {
+        let storage_pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::STORAGE_BUFFER,
             descriptor_count: 1
         };
+        let sampler_pool_size = vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: 1,
+        };
+
+        let pool_sizes = [storage_pool_size, sampler_pool_size];
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
             max_sets: 1,
-            pool_size_count: 1,
-            p_pool_sizes: &pool_size,
+            pool_size_count: pool_sizes.len() as u32,
+            p_pool_sizes: pool_sizes.as_ptr(),
             ..Default::default()
         };
         let descriptor_pool = vk_device.create_descriptor_pool(&descriptor_pool_info, VK_MEMORY_ALLOCATOR).unwrap();
@@ -422,7 +538,7 @@ fn main() {
             }
         ];
 
-        let write = vk::WriteDescriptorSet {
+        let storage_write = vk::WriteDescriptorSet {
             dst_set: vk_descriptor_sets[0],
             descriptor_count: 1,
             descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
@@ -432,7 +548,56 @@ fn main() {
             ..Default::default()
         };
 
-        vk_device.update_descriptor_sets(&[write], &[]);
+        let sampler_subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1
+        };
+        let sampler_view_info = vk::ImageViewCreateInfo {
+            image: imgui_font_image,
+            format: vk::Format::R8_SRGB,
+            view_type: vk::ImageViewType::TYPE_2D,
+            components: COMPONENT_MAPPING_DEFAULT,
+            subresource_range: sampler_subresource_range,
+            ..Default::default()
+        };
+        let sampler_view = vk_device.create_image_view(&sampler_view_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let sampler_info = vk::SamplerCreateInfo {
+            min_filter: vk::Filter::LINEAR,
+            mag_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode_u: vk::SamplerAddressMode::MIRRORED_REPEAT,
+            address_mode_v: vk::SamplerAddressMode::MIRRORED_REPEAT,
+            address_mode_w: vk::SamplerAddressMode::MIRRORED_REPEAT,
+            mip_lod_bias: 0.0,
+            anisotropy_enable: vk::FALSE,
+            compare_enable: vk::FALSE,
+            min_lod: 0.0,
+            max_lod: vk::LOD_CLAMP_NONE,
+            border_color: vk::BorderColor::FLOAT_TRANSPARENT_BLACK,
+            unnormalized_coordinates: vk::FALSE,
+            ..Default::default()
+        };
+        let sampler = vk_device.create_sampler(&sampler_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let image_info = vk::DescriptorImageInfo {
+            sampler,
+            image_view: sampler_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let sampler_write = vk::WriteDescriptorSet {
+            dst_set: vk_descriptor_sets[0],
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            p_image_info: &image_info,
+            dst_array_element: 0,
+            dst_binding: 1,
+            ..Default::default()
+        };
+
+        let writes = [storage_write, sampler_write];
+        vk_device.update_descriptor_sets(&writes, &[]);
 
         vk_descriptor_sets
     };
@@ -688,7 +853,7 @@ fn main() {
         };
 
         let imgui_pipeline_info = vk::GraphicsPipelineCreateInfo {
-            layout: imgui_pipeline_layout,
+            layout: vk_pipeline_layout,
             p_vertex_input_state: &im_vertex_input_state,
             p_input_assembly_state: &input_assembly_state,
             p_rasterization_state: &rasterization_state,
@@ -706,140 +871,6 @@ fn main() {
         let pipeline_infos = [graphics_pipeline_info, imgui_pipeline_info];
         let pipelines = vk_device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, VK_MEMORY_ALLOCATOR).unwrap();
         [pipelines[0], pipelines[1]]
-    };
-
-    //Initialize Dear ImGUI
-    let mut imgui_context = imgui::Context::create();
-    {
-        let io = imgui_context.io_mut();
-        io.display_size[0] = window_size.x as f32;
-        io.display_size[1] = window_size.y as f32;
-    }
-    
-    //Create and upload Dear IMGUI font atlas
-    let imgui_font_image = match imgui_context.fonts() {
-        FontAtlasRefMut::Owned(atlas) => unsafe {
-            let font_atlas = atlas.build_alpha8_texture();
-
-            let size = (font_atlas.width * font_atlas.height) as vk::DeviceSize;
-            let buffer_create_info = vk::BufferCreateInfo {
-                usage: vk::BufferUsageFlags::TRANSFER_SRC,
-                size,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            let staging_buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
-            let staging_buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, staging_buffer);    
-            vk_device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
-
-
-            let staging_ptr = vk_device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
-            ptr::copy_nonoverlapping(font_atlas.data.as_ptr(), staging_ptr as *mut _, size as usize);
-            vk_device.unmap_memory(staging_buffer_memory);
-            
-            let image_extent = vk::Extent3D {
-                width: font_atlas.width,
-                height: font_atlas.height,
-                depth: 1
-            };
-            let font_create_info = vk::ImageCreateInfo {
-                image_type: vk::ImageType::TYPE_2D,
-                format: vk::Format::R8_SRGB,
-                extent: image_extent,
-                mip_levels: 1,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 1,
-                p_queue_family_indices: &vk_queue_family_index,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                ..Default::default()
-            };
-            let vk_font_image = vk_device.create_image(&font_create_info, VK_MEMORY_ALLOCATOR).unwrap();
-            
-            let font_image_memory = dllr::allocate_image_memory(&vk_instance, vk_physical_device, &vk_device, vk_font_image);
-    
-            vk_device.bind_image_memory(vk_font_image, font_image_memory, 0).unwrap();
-
-            vk_device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-
-            let subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let image_memory_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::empty(),
-                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                old_layout: vk::ImageLayout::UNDEFINED,
-                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                image: vk_font_image,
-                subresource_range,
-                ..Default::default()
-            };
-            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
-
-            let subresource_layers = vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: 1
-
-            };
-            let copy_region = vk::BufferImageCopy {
-                buffer_offset: 0,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_extent,
-                image_offset: vk::Offset3D::default(),
-                image_subresource: subresource_layers
-            };
-            vk_device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, vk_font_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
-            
-            let subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let image_memory_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                dst_access_mask: vk::AccessFlags::SHADER_READ,
-                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                image: vk_font_image,
-                subresource_range,
-                ..Default::default()
-            };
-            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
-
-
-            vk_device.end_command_buffer(vk_command_buffer).unwrap();
-
-            
-            let submit_info = vk::SubmitInfo {
-                command_buffer_count: 1,
-                p_command_buffers: &vk_command_buffer,
-                ..Default::default()
-            };
-
-            let fence = vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap();
-            let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
-            vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
-            vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-
-            vk_device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
-
-            vk_font_image
-        }
-        FontAtlasRefMut::Shared(_) => {
-            panic!("Not dealing with this case.");
-        }
     };
 
     //Plane's mesh data
@@ -1068,20 +1099,22 @@ fn main() {
             transform_ptr = transform_ptr.offset(16);
         };
 
-        let sphere_count = 30;
-        let mut sphere_transforms = vec![0.0; 16 * sphere_count * sphere_count];
-        for i in 0..sphere_count {
-            for j in 0..sphere_count {
+        let sphere_width = 200;
+        let sphere_height = 5;
+        let sphere_count = sphere_height * sphere_width;
+        let mut sphere_transforms = vec![0.0; 16 * sphere_count];
+        for i in 0..sphere_width {
+            for j in 0..sphere_height {
                 let sphere_matrix = glm::translation(&glm::vec3(i as f32 * 5.0, j as f32 * 5.0, 2.0 + 3.0 * f32::sin(timer.elapsed_time * (i + 7) as f32) + 5.0)) * glm::rotation(3.0 * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));                        
                 let mvp = view_projection * sphere_matrix;
 
-                let trans_offset = i * 16 * sphere_count + j * 16;
+                let trans_offset = i * 16 * sphere_height + j * 16;
                 for k in 0..16 {
                     sphere_transforms[trans_offset + k] = mvp[k];
                 }
             }
         }
-        unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count * sphere_count)}; 
+        unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count)}; 
 
         //Dear ImGUI stuff copy-pasted out of one of the OpenGL projects
         {
@@ -1168,7 +1201,7 @@ fn main() {
             //Bind sphere's render data
             vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_vertex_buffer.backing_buffer()], &[sphere_vertex_buffer.offset() as u64]);
             vk_device.cmd_bind_index_buffer(vk_command_buffer, sphere_index_buffer.backing_buffer(), (sphere_index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-            vk_device.cmd_draw_indexed(vk_command_buffer, sphere_index_count as u32, (sphere_count * sphere_count) as u32, 0, 0, 1);
+            vk_device.cmd_draw_indexed(vk_command_buffer, sphere_index_count as u32, sphere_count as u32, 0, 0, 1);
             
             vk_device.cmd_end_render_pass(vk_command_buffer);
 
