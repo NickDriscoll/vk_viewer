@@ -69,6 +69,12 @@ fn main() {
             ash::extensions::khr::Win32Surface::name().as_ptr()
         ];
 
+        #[cfg(target_os = "macos")]
+        let extension_names = unsafe{[
+            ash::extensions::khr::Surface::name().as_ptr(),
+            CStr::from_bytes_with_nul_unchecked(b"VK_MVK_macos_surface\0").as_ptr()
+        ]};
+
         #[cfg(target_os = "linux")]
         let extension_names = [
             ash::extensions::khr::Surface::name().as_ptr(),

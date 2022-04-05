@@ -1,7 +1,6 @@
 use std::process::Command;
 
 fn main() {
-    if cfg!(target_os = "windows") {
         println!("Starting");
         /*
         for entry in std::fs::read_dir("./shaders").unwrap() {
@@ -30,5 +29,5 @@ fn main() {
         if let Err(e) = std::fs::copy("./redist/libmpg123-0.dll", "./target/release/libmpg123-0.dll") {
             println!("{}", e);            
         }
-    }
+    
 }
