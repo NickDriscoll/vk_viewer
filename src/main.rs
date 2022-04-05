@@ -70,10 +70,10 @@ fn main() {
         ];
 
         #[cfg(target_os = "macos")]
-        let extension_names = unsafe{[
+        let extension_names = [
             ash::extensions::khr::Surface::name().as_ptr(),
-            CStr::from_bytes_with_nul_unchecked(b"VK_MVK_macos_surface\0").as_ptr()
-        ]};
+            ash::extensions::mvk::MacOSSurface::name().as_ptr()
+        ];
 
         #[cfg(target_os = "linux")]
         let extension_names = [
@@ -157,6 +157,7 @@ fn main() {
                     panic!("The physical device queue doesn't support swapchain present!");
                 }
 
+                println!("{:#?}", indexing_features);
                 let extension_names = [ash::extensions::khr::Swapchain::name().as_ptr()];
                 let create_info = vk::DeviceCreateInfo {
                     queue_create_info_count: 1,
