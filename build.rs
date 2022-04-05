@@ -28,5 +28,11 @@ fn main() {
     }
     if let Err(e) = std::fs::copy("./redist/libmpg123-0.dll", "./target/release/libmpg123-0.dll") {
         println!("{}", e);            
-    }    
+    }
+    if let Err(e) = std::fs::copy("./redist/SDL2_mixer.dll", "./target/debug/SDL2_mixer.dll") {
+        println!("{}", e);
+    }
+    if let Err(e) = std::fs::copy("./redist/libmpg123-0.dll", "./target/debug/libmpg123-0.dll") {
+        println!("{}", e);            
+    }
 }

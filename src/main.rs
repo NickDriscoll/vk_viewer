@@ -19,6 +19,7 @@ use std::mem::size_of;
 use std::os::raw::c_void;
 use std::ptr;
 
+use ozy::io::OzyMesh;
 use ozy::structs::FrameTimer;
 
 const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
@@ -31,8 +32,18 @@ const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
 const VK_MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
 
 fn crash_with_error_dialog(message: &str) -> ! {
-    tfd::message_box_ok("Oops...", message, tfd::MessageBoxIcon::Error);
+    let message = message.replace("'", "");
+    tfd::message_box_ok("Oops...", &message, tfd::MessageBoxIcon::Error);
     panic!("{}", message);
+}
+
+fn unwrap_result<T>(res: Result<T, String>) -> T {
+    match res {
+        Ok(t) => { t }
+        Err(e) => {
+            crash_with_error_dialog(&e);
+        }
+    }
 }
 
 //Entry point
@@ -40,9 +51,8 @@ fn main() {
     //Create the window using SDL
     let sdl_ctxt = sdl2::init().unwrap();
     let mut event_pump = sdl_ctxt.event_pump().unwrap();
-    let mouse_util = sdl_ctxt.mouse();
     let video_subsystem = sdl_ctxt.video().unwrap();
-    let window_size = glm::vec2(1280, 720);
+    let window_size = glm::vec2(1280, 1024);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
@@ -52,7 +62,7 @@ fn main() {
     Music::set_volume(music_volume);
 
     //Load and play bgm
-    let bgm = Music::from_file("./music/nmwi.flac").unwrap();
+    let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"));
     bgm.play(-1).unwrap();
 
     //Initialize the Vulkan API
@@ -157,7 +167,6 @@ fn main() {
                     panic!("The physical device queue doesn't support swapchain present!");
                 }
 
-                println!("{:#?}", indexing_features);
                 let extension_names = [ash::extensions::khr::Swapchain::name().as_ptr()];
                 let create_info = vk::DeviceCreateInfo {
                     queue_create_info_count: 1,
@@ -194,6 +203,144 @@ fn main() {
             ..Default::default()
         };
         vk_device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()[0]
+    };
+
+    //Initialize Dear ImGUI
+    let mut imgui_context = imgui::Context::create();
+    imgui_context.style_mut().use_dark_colors();
+    {
+        let io = imgui_context.io_mut();
+        io.display_size[0] = window_size.x as f32;
+        io.display_size[1] = window_size.y as f32;
+    }
+    
+    //Create and upload Dear IMGUI font atlas
+    let imgui_font_image = match imgui_context.fonts() {
+        FontAtlasRefMut::Owned(atlas) => unsafe {
+            let atlas_texture = atlas.build_alpha8_texture();
+
+            let size = (atlas_texture.width * atlas_texture.height) as vk::DeviceSize;
+            let buffer_create_info = vk::BufferCreateInfo {
+                usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                size,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            let staging_buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
+            let staging_buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, staging_buffer);    
+            vk_device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
+
+
+            let staging_ptr = vk_device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
+            ptr::copy_nonoverlapping(atlas_texture.data.as_ptr(), staging_ptr as *mut _, size as usize);
+            vk_device.unmap_memory(staging_buffer_memory);
+            
+            let image_extent = vk::Extent3D {
+                width: atlas_texture.width,
+                height: atlas_texture.height,
+                depth: 1
+            };
+            let font_create_info = vk::ImageCreateInfo {
+                image_type: vk::ImageType::TYPE_2D,
+                format: vk::Format::R8_UNORM,
+                extent: image_extent,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: &vk_queue_family_index,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                ..Default::default()
+            };
+            let vk_font_image = vk_device.create_image(&font_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            
+            let font_image_memory = dllr::allocate_image_memory(&vk_instance, vk_physical_device, &vk_device, vk_font_image);
+    
+            vk_device.bind_image_memory(vk_font_image, font_image_memory, 0).unwrap();
+
+            vk_device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let image_memory_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                old_layout: vk::ImageLayout::UNDEFINED,
+                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                image: vk_font_image,
+                subresource_range,
+                ..Default::default()
+            };
+            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+
+            let subresource_layers = vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: 0,
+                base_array_layer: 0,
+                layer_count: 1
+
+            };
+            let copy_region = vk::BufferImageCopy {
+                buffer_offset: 0,
+                buffer_row_length: 0,
+                buffer_image_height: 0,
+                image_extent,
+                image_offset: vk::Offset3D::default(),
+                image_subresource: subresource_layers
+            };
+            vk_device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, vk_font_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
+            
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let image_memory_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                image: vk_font_image,
+                subresource_range,
+                ..Default::default()
+            };
+            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+
+
+            vk_device.end_command_buffer(vk_command_buffer).unwrap();
+
+            
+            let submit_info = vk::SubmitInfo {
+                command_buffer_count: 1,
+                p_command_buffers: &vk_command_buffer,
+                ..Default::default()
+            };
+
+            let fence = vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap();
+            let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
+            vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
+            vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+            vk_device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
+            vk_device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
+
+            atlas.tex_id = imgui::TextureId::new(0);    //Giving Dear Imgui a reference to the font atlas GPU texture
+            atlas.clear_tex_data();                         //Free atlas memory CPU-side
+
+            vk_font_image
+        }
+        FontAtlasRefMut::Shared(_) => {
+            panic!("Not dealing with this case.");
+        }
     };
 
     //Create swapchain extension object
@@ -352,7 +499,7 @@ fn main() {
 
     let vk_descriptor_set_layout;
     let vk_pipeline_layout = unsafe {
-        let layout_binding = vk::DescriptorSetLayoutBinding {
+        let storage_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
             descriptor_count: 1,
@@ -368,7 +515,7 @@ fn main() {
             ..Default::default()
         };
         
-        let bindings = [layout_binding, texture_binding];
+        let bindings = [storage_binding, texture_binding];
         
         let descriptor_layout = vk::DescriptorSetLayoutCreateInfo {
             binding_count: bindings.len() as u32,
@@ -379,9 +526,9 @@ fn main() {
         vk_descriptor_set_layout = vk_device.create_descriptor_set_layout(&descriptor_layout, VK_MEMORY_ALLOCATOR).unwrap();
 
         let push_constant_range = vk::PushConstantRange {
-            stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
             offset: 0,
-            size: 2 * size_of::<u32>() as u32
+            size: size_of::<u32>() as u32
         };
         let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
             push_constant_range_count: 1,
@@ -392,144 +539,6 @@ fn main() {
         };
         
         vk_device.create_pipeline_layout(&pipeline_layout_createinfo, VK_MEMORY_ALLOCATOR).unwrap()
-    };
-
-    //Initialize Dear ImGUI
-    let mut imgui_context = imgui::Context::create();
-    imgui_context.style_mut().use_dark_colors();
-    {
-        let io = imgui_context.io_mut();
-        io.display_size[0] = window_size.x as f32;
-        io.display_size[1] = window_size.y as f32;
-    }
-    
-    //Create and upload Dear IMGUI font atlas
-    let imgui_font_image = match imgui_context.fonts() {
-        FontAtlasRefMut::Owned(atlas) => unsafe {
-            let atlas_texture = atlas.build_alpha8_texture();
-
-            let size = (atlas_texture.width * atlas_texture.height) as vk::DeviceSize;
-            let buffer_create_info = vk::BufferCreateInfo {
-                usage: vk::BufferUsageFlags::TRANSFER_SRC,
-                size,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            let staging_buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
-            let staging_buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, staging_buffer);    
-            vk_device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
-
-
-            let staging_ptr = vk_device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
-            ptr::copy_nonoverlapping(atlas_texture.data.as_ptr(), staging_ptr as *mut _, size as usize);
-            vk_device.unmap_memory(staging_buffer_memory);
-            
-            let image_extent = vk::Extent3D {
-                width: atlas_texture.width,
-                height: atlas_texture.height,
-                depth: 1
-            };
-            let font_create_info = vk::ImageCreateInfo {
-                image_type: vk::ImageType::TYPE_2D,
-                format: vk::Format::R8_UNORM,
-                extent: image_extent,
-                mip_levels: 1,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 1,
-                p_queue_family_indices: &vk_queue_family_index,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                ..Default::default()
-            };
-            let vk_font_image = vk_device.create_image(&font_create_info, VK_MEMORY_ALLOCATOR).unwrap();
-            
-            let font_image_memory = dllr::allocate_image_memory(&vk_instance, vk_physical_device, &vk_device, vk_font_image);
-    
-            vk_device.bind_image_memory(vk_font_image, font_image_memory, 0).unwrap();
-
-            vk_device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-
-            let subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let image_memory_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::empty(),
-                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                old_layout: vk::ImageLayout::UNDEFINED,
-                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                image: vk_font_image,
-                subresource_range,
-                ..Default::default()
-            };
-            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
-
-            let subresource_layers = vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: 1
-
-            };
-            let copy_region = vk::BufferImageCopy {
-                buffer_offset: 0,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_extent,
-                image_offset: vk::Offset3D::default(),
-                image_subresource: subresource_layers
-            };
-            vk_device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, vk_font_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
-            
-            let subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let image_memory_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                dst_access_mask: vk::AccessFlags::SHADER_READ,
-                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                image: vk_font_image,
-                subresource_range,
-                ..Default::default()
-            };
-            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
-
-
-            vk_device.end_command_buffer(vk_command_buffer).unwrap();
-
-            
-            let submit_info = vk::SubmitInfo {
-                command_buffer_count: 1,
-                p_command_buffers: &vk_command_buffer,
-                ..Default::default()
-            };
-
-            let fence = vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap();
-            let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
-            vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
-            vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-            vk_device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
-            vk_device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
-
-            atlas.tex_id = imgui::TextureId::new(0);    //Giving Dear Imgui a reference to the font atlas GPU texture
-            atlas.clear_tex_data();                         //Free atlas memory CPU-side
-
-            vk_font_image
-        }
-        FontAtlasRefMut::Shared(_) => {
-            panic!("Not dealing with this case.");
-        }
     };
     
     //Set up descriptors
@@ -732,7 +741,7 @@ fn main() {
         fbs
     };
 
-    //Configure 3D graphics pipeline state
+    //Create graphics pipelines
     let [vk_3D_graphics_pipeline, imgui_graphics_pipeline] = unsafe {
         let dynamic_state_enables = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic_state = vk::PipelineDynamicStateCreateInfo {
@@ -801,7 +810,7 @@ fn main() {
 
         let vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
-            stride: 6 * size_of::<f32>() as u32,
+            stride: 14 * size_of::<f32>() as u32,
             input_rate: vk::VertexInputRate::VERTEX
         };
 
@@ -812,15 +821,36 @@ fn main() {
             offset: 0
         };
 
-        let color_attribute = vk::VertexInputAttributeDescription {
+        let tangent_attribute = vk::VertexInputAttributeDescription {
             location: 1,
             binding: 0,
             format: vk::Format::R32G32B32_SFLOAT,
             offset: 3 * size_of::<f32>() as u32
         };
 
+        let bitangent_attribute = vk::VertexInputAttributeDescription {
+            location: 2,
+            binding: 0,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 6 * size_of::<f32>() as u32
+        };
+
+        let normal_attribute = vk::VertexInputAttributeDescription {
+            location: 3,
+            binding: 0,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 9 * size_of::<f32>() as u32
+        };
+
+        let uv_attribute = vk::VertexInputAttributeDescription {
+            location: 4,
+            binding: 0,
+            format: vk::Format::R32G32_SFLOAT,
+            offset: 12 * size_of::<f32>() as u32
+        };
+
         let bindings = [vert_binding];
-        let attrs = [position_attribute, color_attribute];
+        let attrs = [position_attribute, tangent_attribute, bitangent_attribute, normal_attribute, uv_attribute];
         let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
             vertex_binding_description_count: bindings.len() as u32,
             p_vertex_binding_descriptions: bindings.as_ptr(),
@@ -843,7 +873,25 @@ fn main() {
             stage_count: vk_shader_stages.len() as u32,
             render_pass: vk_render_pass,
             ..Default::default()
-        };        
+        };
+
+        let imgui_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+            polygon_mode: vk::PolygonMode::FILL,
+            cull_mode: vk::CullModeFlags::NONE,
+            depth_clamp_enable: vk::FALSE,
+            rasterizer_discard_enable: vk::FALSE,
+            depth_bias_enable: vk::TRUE,
+            line_width: 1.0,
+            ..Default::default()
+        };
+
+        let imgui_depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: vk::FALSE,
+            depth_write_enable: vk::FALSE,
+            depth_bounds_test_enable: vk::FALSE,
+            stencil_test_enable: vk::FALSE,
+            ..Default::default()
+        };
 
         let im_vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
@@ -886,12 +934,12 @@ fn main() {
             layout: vk_pipeline_layout,
             p_vertex_input_state: &im_vertex_input_state,
             p_input_assembly_state: &input_assembly_state,
-            p_rasterization_state: &rasterization_state,
+            p_rasterization_state: &imgui_rasterization_state,
             p_color_blend_state: &color_blend_pipeline_state,
             p_multisample_state: &multisample_state,
             p_dynamic_state: &dynamic_state,
             p_viewport_state: &viewport_state,
-            p_depth_stencil_state: &depth_stencil_state,
+            p_depth_stencil_state: &imgui_depth_stencil_state,
             p_stages: imgui_shader_stages.as_ptr(),
             stage_count: imgui_shader_stages.len() as u32,
             render_pass: vk_render_pass,
@@ -903,55 +951,40 @@ fn main() {
         [pipelines[0], pipelines[1]]
     };
 
-    //Plane's mesh data
-    let plane_vertex_data = [
-        -10.0f32, -10.0, 0.0, 1.0, 0.0, 0.0,
-        10.0, -10.0, 0.0, 0.0, 1.0, 0.0,
-        -10.0, 10.0, 0.0, 0.0, 0.0, 1.0,
-        10.0, 10.0, 0.0, 0.0, 1.0, 1.0
-    ];
-    let plane_index_data = [
-        0u32, 1, 2,
-        3, 2, 1
-    ];
+    let g_plane_width = 64;
+    let g_plane_height = 64;
+    let g_plane_vertices = ozy::prims::plane_vertex_buffer(g_plane_width, g_plane_height, 5.0);
+    let g_plane_indices = ozy::prims::plane_index_buffer(g_plane_width, g_plane_height);
 
-    //Sphere mesh data
-    let sphere_vertex_data;
-    let sphere_index_data: Vec<u32>;
-    {
-        let radius = 2.0;
-        let segments = 32;
-        let rings = 32;
-        sphere_vertex_data = ozy::prims::sphere_vertex_buffer(radius, segments, rings);
-        sphere_index_data = ozy::prims::sphere_index_array(segments, rings).into_iter().map(|n|{n as u32}).collect();
-    }
+    //Load UV sphere OzyMesh
+    let uv_sphere = OzyMesh::load("./data/models/sphere.ozy").unwrap();
+    let uv_sphere_indices: Vec<u32> = uv_sphere.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
-    let scene_vertex_buffers = [&plane_vertex_data, sphere_vertex_data.as_slice()];
-    let scene_index_buffers = [&plane_index_data, sphere_index_data.as_slice()];
-
-    //Create plane's vertex and index buffer objects
-    let mut scene_geo_buffer_size = 0;
-    let scene_geo_buffer = unsafe {
-        //Buffer creation
-        for (&v_buffer, &i_buffer) in scene_vertex_buffers.iter().zip(scene_index_buffers.iter()) {
-            scene_geo_buffer_size += v_buffer.len() * size_of::<f32>();
-            scene_geo_buffer_size += i_buffer.len() * size_of::<u32>();
-        }
-        
-        let buffer_create_info = vk::BufferCreateInfo {
-            usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
-            size: scene_geo_buffer_size as vk::DeviceSize,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
-        };
-        let buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
-        buffer
-    };
+    let scene_vertex_buffers = [g_plane_vertices.as_slice(), uv_sphere.vertex_array.vertices.as_slice()];
+    let scene_index_buffers = [g_plane_indices.as_slice(), uv_sphere_indices.as_slice()];
 
     //Allocate and distribute memory to buffer objects
-    let plane_geometry;
+    let g_plane_geometry;
     let sphere_geometry;
     unsafe {
+        let mut scene_geo_buffer_size = 0;
+        let scene_geo_buffer = {
+            //Buffer creation
+            for (&v_buffer, &i_buffer) in scene_vertex_buffers.iter().zip(scene_index_buffers.iter()) {
+                scene_geo_buffer_size += v_buffer.len() * size_of::<f32>();
+                scene_geo_buffer_size += i_buffer.len() * size_of::<u32>();
+            }
+            
+            let buffer_create_info = vk::BufferCreateInfo {
+                usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
+                size: scene_geo_buffer_size as vk::DeviceSize,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            let buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            buffer
+        };
+
         let buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, scene_geo_buffer);
 
         //Bind buffer
@@ -968,8 +1001,8 @@ fn main() {
         //Create virtual bump allocator
         let mut scene_geo_allocator = dllr::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
-        plane_geometry = scene_geo_allocator.allocate_geometry(&plane_vertex_data, &plane_index_data).unwrap();
-        sphere_geometry = scene_geo_allocator.allocate_geometry(&sphere_vertex_data, &sphere_index_data).unwrap();
+        g_plane_geometry = scene_geo_allocator.allocate_geometry(&g_plane_vertices, &g_plane_indices).unwrap();
+        sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
 
         vk_device.unmap_memory(buffer_memory);
     }
@@ -1043,7 +1076,7 @@ fn main() {
 
     let vk_submission_fence = unsafe { vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap() };
     
-    let mut sphere_width = 100 as u32;
+    let mut sphere_width = 8 as u32;
     let mut sphere_height = 8 as u32;
     let mut sphere_spacing = 5.0;
     let mut sphere_amplitude = 3.0;
@@ -1081,6 +1114,7 @@ fn main() {
                             MouseButton::Right => {
                                 imgui_io.mouse_down[1] = false;
                                 camera.cursor_captured = !camera.cursor_captured;
+                                let mouse_util = sdl_ctxt.mouse();
                                 mouse_util.set_relative_mouse_mode(camera.cursor_captured);
                                 if !camera.cursor_captured {
                                     mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
@@ -1228,10 +1262,8 @@ fn main() {
 
                     let idx_buffer = list.idx_buffer();
                     let mut inds = vec![0u32; idx_buffer.len()];
-                    for i in (0..idx_buffer.len()).step_by(3) {
+                    for i in 0..idx_buffer.len() {
                         inds[i] = idx_buffer[i] as u32;
-                        inds[i + 1] = idx_buffer[i + 2] as u32;
-                        inds[i + 2] = idx_buffer[i + 1] as u32;
                     }
 
                     let g = imgui_geo_allocator.allocate_geometry(&verts, &inds).unwrap();
@@ -1285,9 +1317,9 @@ fn main() {
             vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Bind plane's render data
-            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[plane_geometry.vertex_buffer.backing_buffer()], &[plane_geometry.vertex_buffer.offset() as u64]);
-            vk_device.cmd_bind_index_buffer(vk_command_buffer, plane_geometry.index_buffer.backing_buffer(), (plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-            vk_device.cmd_draw_indexed(vk_command_buffer, plane_geometry.index_count, 1, 0, 0, 0);
+            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[g_plane_geometry.vertex_buffer.backing_buffer()], &[g_plane_geometry.vertex_buffer.offset() as u64]);
+            vk_device.cmd_bind_index_buffer(vk_command_buffer, g_plane_geometry.index_buffer.backing_buffer(), (g_plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk_device.cmd_draw_indexed(vk_command_buffer, g_plane_geometry.index_count, 1, 0, 0, 0);
 
             //Bind sphere's render data
             vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_geometry.vertex_buffer.backing_buffer()], &[sphere_geometry.vertex_buffer.offset() as u64]);
@@ -1324,7 +1356,8 @@ fn main() {
                                 }
                             };
                             vk_device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_rect]);
-                            vk_device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, &tex_id.to_le_bytes());
+                            
+                            vk_device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, &tex_id.to_le_bytes());
                             vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[v_buffer.backing_buffer()], &[v_buffer.offset()]);
                             vk_device.cmd_bind_index_buffer(vk_command_buffer, i_buffer.backing_buffer(), i_buffer.offset(), vk::IndexType::UINT32);
                             vk_device.cmd_draw_indexed(vk_command_buffer, *count as u32, 1, i_offset as u32, v_offset as i32, 0);

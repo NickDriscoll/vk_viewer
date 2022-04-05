@@ -86,6 +86,13 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
     }
 }
 
+pub struct VulkanState {
+    instance: vk::Instance,
+    physical_device: vk::PhysicalDevice,
+    device: ash::Device,
+    
+}
+
 #[derive(Clone, Copy)]
 pub struct VirtualBuffer {
     backing_buffer: vk::Buffer,
