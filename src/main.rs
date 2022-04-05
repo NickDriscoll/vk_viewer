@@ -42,7 +42,7 @@ fn main() {
     let mut event_pump = sdl_ctxt.event_pump().unwrap();
     let mouse_util = sdl_ctxt.mouse();
     let video_subsystem = sdl_ctxt.video().unwrap();
-    let window_size = glm::vec2(1920, 1200);
+    let window_size = glm::vec2(1280, 720);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
@@ -112,7 +112,21 @@ fn main() {
     let vk_device = unsafe {
         match vk_instance.enumerate_physical_devices() {
             Ok(phys_devices) => {
-                vk_physical_device = phys_devices[0];
+                let mut phys_device = None;
+                let device_types = [vk::PhysicalDeviceType::DISCRETE_GPU, vk::PhysicalDeviceType::INTEGRATED_GPU, vk::PhysicalDeviceType::CPU];
+                'gpu_search: for d_type in device_types {
+                    for device in phys_devices.iter() {
+                        let props = vk_instance.get_physical_device_properties(*device);
+                        if props.device_type == d_type {
+                            let name = CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap();
+                            println!("\"{}\" was chosen as 3D accelerator.", name);
+                            phys_device = Some(*device);
+                            break 'gpu_search;
+                        }
+                    }
+                }
+
+                vk_physical_device = phys_device.unwrap();
                 vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
                 
                 let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
