@@ -16,7 +16,7 @@ layout (std140, set = 0, binding = 0) readonly buffer FrameData {
 };
 
 layout (std140, set = 2, binding = 0) readonly uniform InstanceData {
-    ivec4 material_indices[];
+    ivec4 material_map_indices[];
 };
 
 void main() {

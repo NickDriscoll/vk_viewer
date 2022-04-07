@@ -95,7 +95,7 @@ pub unsafe fn load_bc7_texture(
     path: &str
 ) -> vk::Image {        
     const BC7_HEADER_SIZE: usize = 148;
-    let file = File::open(path).unwrap();
+    let file = unwrap_result(File::open(path));
     let raw_bytes: Vec<u8> = file.bytes().map(|n|{ n.unwrap() }).collect();
     let raw_bytes = &raw_bytes[BC7_HEADER_SIZE..];
 

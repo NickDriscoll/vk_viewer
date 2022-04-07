@@ -138,8 +138,84 @@ fn main() {
     let mut global_texture_update;
     let default_texture_sampler;
 
+    //Load grass billboard texture
+    let grass_billboard_global_index = unsafe {
+        let image = dllr::load_bc7_texture(
+            &vk,
+            vk_command_buffer,
+            1024,
+            1024,
+            "./data/textures/billboard_grass.dds"
+        );
+
+        let sampler_subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1
+        };
+        let grass_view_info = vk::ImageViewCreateInfo {
+            image: image,
+            format: vk::Format::BC7_SRGB_BLOCK,
+            view_type: vk::ImageViewType::TYPE_2D,
+            components: COMPONENT_MAPPING_DEFAULT,
+            subresource_range: sampler_subresource_range,
+            ..Default::default()
+        };
+        let view = vk.device.create_image_view(&grass_view_info, VK_MEMORY_ALLOCATOR).unwrap();
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let index = global_texture_free_list.insert(descriptor_info);
+        global_texture_update = true;
+
+        index as u32
+    };
+
+    //Load steel plate texture
+    let steel_plate_global_index = unsafe {
+        let image = dllr::load_bc7_texture(
+            &vk,
+            vk_command_buffer,
+            2048,
+            2048,
+            "./data/textures/steel_plate/albedo.dds"
+        );
+
+        let sampler_subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1
+        };
+        let grass_view_info = vk::ImageViewCreateInfo {
+            image: image,
+            format: vk::Format::BC7_SRGB_BLOCK,
+            view_type: vk::ImageViewType::TYPE_2D,
+            components: COMPONENT_MAPPING_DEFAULT,
+            subresource_range: sampler_subresource_range,
+            ..Default::default()
+        };
+        let view = vk.device.create_image_view(&grass_view_info, VK_MEMORY_ALLOCATOR).unwrap();
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let index = global_texture_free_list.insert(descriptor_info);
+        global_texture_update = true;
+
+        index as u32
+    };
+
     //Create and upload Dear IMGUI font atlas
-    let imgui_font_view = match imgui_context.fonts() {
+    let imgui_font_global_index = match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
 
@@ -255,6 +331,7 @@ fn main() {
             vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
             vk.device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
             vk.device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
+            atlas.clear_tex_data();  //Free atlas memory CPU-side
 
             //Then create the image view
             let sampler_subresource_range = vk::ImageSubresourceRange {
@@ -283,53 +360,12 @@ fn main() {
             global_texture_update = true;
             
             default_texture_sampler = image_info;
-
             atlas.tex_id = imgui::TextureId::new(sampler_index);    //Giving Dear Imgui a reference to the font atlas GPU texture
-            atlas.clear_tex_data();                         //Free atlas memory CPU-side
-
-            font_view
+            sampler_index as u32
         }
         FontAtlasRefMut::Shared(_) => {
             panic!("Not dealing with this case.");
         }
-    };
-
-    //Load grass billboard texture
-    let billboard_grass_view = unsafe {
-        let image = dllr::load_bc7_texture(
-            &vk,
-            vk_command_buffer,
-            1024,
-            1024,
-            "./data/textures/billboard_grass.dds"
-        );
-
-        let sampler_subresource_range = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1
-        };
-        let grass_view_info = vk::ImageViewCreateInfo {
-            image: image,
-            format: vk::Format::BC7_SRGB_BLOCK,
-            view_type: vk::ImageViewType::TYPE_2D,
-            components: COMPONENT_MAPPING_DEFAULT,
-            subresource_range: sampler_subresource_range,
-            ..Default::default()
-        };
-        let view = vk.device.create_image_view(&grass_view_info, VK_MEMORY_ALLOCATOR).unwrap();
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        global_texture_free_list.insert(descriptor_info);
-        global_texture_update = true;
-
-        view
     };
 
     //Create swapchain extension object
@@ -487,6 +523,7 @@ fn main() {
     };
 
     let vk_descriptor_set_layout;
+    let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let vk_pipeline_layout = unsafe {
         let storage_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
@@ -515,7 +552,7 @@ fn main() {
         vk_descriptor_set_layout = vk.device.create_descriptor_set_layout(&descriptor_layout, VK_MEMORY_ALLOCATOR).unwrap();
 
         let push_constant_range = vk::PushConstantRange {
-            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            stage_flags: push_constant_shader_stage_flags,
             offset: 0,
             size: size_of::<u32>() as u32
         };
@@ -578,29 +615,7 @@ fn main() {
             dst_binding: 0,
             ..Default::default()
         };
-        let image_info = vk::DescriptorImageInfo {
-            sampler: font_sampler,
-            image_view: imgui_font_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let mut image_infos = vec![image_info; global_texture_slots as usize];
-        image_infos[0] = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: billboard_grass_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let sampler_write = vk::WriteDescriptorSet {
-            dst_set: vk_descriptor_sets[0],
-            descriptor_count: global_texture_slots as u32,
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            p_image_info: image_infos.as_ptr(),
-            dst_array_element: 0,
-            dst_binding: 1,
-            ..Default::default()
-        };
-
-        let writes = [storage_write, sampler_write];
-        vk.device.update_descriptor_sets(&writes, &[]);
+        vk.device.update_descriptor_sets(&[storage_write], &[]);
     }
 
     let vk_render_pass = unsafe {
@@ -1024,7 +1039,7 @@ fn main() {
     //State for freecam controls
     let mut camera = FreeCam::new(glm::vec3(0.0f32, -10.0, 5.0));
 
-    let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.5, 50.0);
+    let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.2, 50.0);
 
     //Relative to GL clip space, Vulkan has negative Y and half Z.
     let projection_matrix = glm::mat4(
@@ -1100,7 +1115,10 @@ fn main() {
 
             let mut movement_multiplier = 1.0f32;
             if keyboard_state.is_scancode_pressed(Scancode::LShift) {
-                movement_multiplier = 15.0;
+                movement_multiplier *= 15.0;
+            }
+            if keyboard_state.is_scancode_pressed(Scancode::LCtrl) {
+                movement_multiplier *= 0.25;
             }
             if keyboard_state.is_scancode_pressed(Scancode::W) {
                 movement_vector += movement_multiplier * glm::vec3(0.0, 0.0, -1.0);
@@ -1188,6 +1206,7 @@ fn main() {
         }
         unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count)};
 
+        //Update bindless texture sampler descriptors
         if global_texture_update {
             global_texture_update = false;
 
@@ -1297,11 +1316,13 @@ fn main() {
             vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Bind plane's render data
+            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &steel_plate_global_index.to_le_bytes());
             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[g_plane_geometry.vertex_buffer.backing_buffer()], &[g_plane_geometry.vertex_buffer.offset() as u64]);
             vk.device.cmd_bind_index_buffer(vk_command_buffer, g_plane_geometry.index_buffer.backing_buffer(), (g_plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk_command_buffer, g_plane_geometry.index_count, 1, 0, 0, 0);
 
             //Bind sphere's render data
+            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &steel_plate_global_index.to_le_bytes());
             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_geometry.vertex_buffer.backing_buffer()], &[sphere_geometry.vertex_buffer.offset() as u64]);
             vk.device.cmd_bind_index_buffer(vk_command_buffer, sphere_geometry.index_buffer.backing_buffer(), (sphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk_command_buffer, sphere_geometry.index_count, sphere_count as u32, 0, 0, 1);
@@ -1337,7 +1358,7 @@ fn main() {
                             };
                             vk.device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_rect]);
                             
-                            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, &tex_id.to_le_bytes());
+                            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &tex_id.to_le_bytes());
                             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[v_buffer.backing_buffer()], &[v_buffer.offset()]);
                             vk.device.cmd_bind_index_buffer(vk_command_buffer, i_buffer.backing_buffer(), i_buffer.offset(), vk::IndexType::UINT32);
                             vk.device.cmd_draw_indexed(vk_command_buffer, *count as u32, 1, i_offset as u32, v_offset as i32, 0);
