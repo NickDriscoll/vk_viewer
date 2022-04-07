@@ -715,7 +715,7 @@ fn main() {
     };
 
     //Create graphics pipelines
-    let [vk_3D_graphics_pipeline, imgui_graphics_pipeline] = unsafe {
+    let [vk_3D_graphics_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         let dynamic_state_enables = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic_state = vk::PipelineDynamicStateCreateInfo {
             p_dynamic_states: dynamic_state_enables.as_ptr(),
@@ -919,9 +919,18 @@ fn main() {
             ..Default::default()
         };
 
-        let pipeline_infos = [graphics_pipeline_info, imgui_pipeline_info];
+        let wire_raster_state = vk::PipelineRasterizationStateCreateInfo {
+            polygon_mode: vk::PolygonMode::LINE,
+            ..rasterization_state
+        };
+        let wireframe_pipeline_info = vk::GraphicsPipelineCreateInfo {
+            p_rasterization_state: &wire_raster_state,
+            ..graphics_pipeline_info
+        };
+
+        let pipeline_infos = [graphics_pipeline_info, imgui_pipeline_info, wireframe_pipeline_info];
         let pipelines = vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, VK_MEMORY_ALLOCATOR).unwrap();
-        [pipelines[0], pipelines[1]]
+        [pipelines[0], pipelines[1], pipelines[2]]
     };
 
     let g_plane_width = 64;
@@ -1059,6 +1068,9 @@ fn main() {
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"));
     bgm.play(-1).unwrap();
 
+    let mut wireframe = false;
+    let mut main_pipeline = vk_3D_graphics_pipeline;
+
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
@@ -1148,6 +1160,7 @@ fn main() {
             tfd::message_box_yes_no("The question", "What do you think?", tfd::MessageBoxIcon::Info, tfd::YesNo::Yes);
         }
         
+
         //Camera orientation based on user input
         camera.orientation += orientation_vector;
         camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
@@ -1181,6 +1194,13 @@ fn main() {
         imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
         imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
         if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
+        if imgui_ui.checkbox("Wireframe view", &mut wireframe) {
+            if !wireframe {
+                main_pipeline = vk_3D_graphics_pipeline;
+            } else {
+                main_pipeline = vk_wireframe_graphics_pipeline;
+            }
+        }
 
         let sphere_count = sphere_width as usize * sphere_height as usize;
         imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
@@ -1306,19 +1326,19 @@ fn main() {
             vk.device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             //Bind main rendering pipeline to GRAPHICS pipeline bind point
-            vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_3D_graphics_pipeline);
+            vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, main_pipeline);
 
             //Once per frame descriptor binding
             vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Bind plane's render data
-            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &grass_billboard_global_index.to_le_bytes());
+            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &steel_plate_global_index.to_le_bytes());
             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[g_plane_geometry.vertex_buffer.backing_buffer()], &[g_plane_geometry.vertex_buffer.offset() as u64]);
             vk.device.cmd_bind_index_buffer(vk_command_buffer, g_plane_geometry.index_buffer.backing_buffer(), (g_plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk_command_buffer, g_plane_geometry.index_count, 1, 0, 0, 0);
 
             //Bind sphere's render data
-            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &steel_plate_global_index.to_le_bytes());
+            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &grass_billboard_global_index.to_le_bytes());
             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_geometry.vertex_buffer.backing_buffer()], &[sphere_geometry.vertex_buffer.offset() as u64]);
             vk.device.cmd_bind_index_buffer(vk_command_buffer, sphere_geometry.index_buffer.backing_buffer(), (sphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk_command_buffer, sphere_geometry.index_count, sphere_count as u32, 0, 0, 1);
