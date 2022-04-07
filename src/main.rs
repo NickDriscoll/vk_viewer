@@ -143,8 +143,6 @@ fn main() {
         let image = dllr::load_bc7_texture(
             &vk,
             vk_command_buffer,
-            1024,
-            1024,
             "./data/textures/billboard_grass.dds"
         );
 
@@ -181,8 +179,6 @@ fn main() {
         let image = dllr::load_bc7_texture(
             &vk,
             vk_command_buffer,
-            2048,
-            2048,
             "./data/textures/steel_plate/albedo.dds"
         );
 
@@ -930,7 +926,7 @@ fn main() {
 
     let g_plane_width = 64;
     let g_plane_height = 64;
-    let g_plane_vertices = ozy::prims::plane_vertex_buffer(g_plane_width, g_plane_height, 50.0);
+    let g_plane_vertices = ozy::prims::plane_vertex_buffer(g_plane_width, g_plane_height, 5.0);
     let g_plane_indices = ozy::prims::plane_index_buffer(g_plane_width, g_plane_height);
 
     //Load UV sphere OzyMesh
@@ -1174,7 +1170,7 @@ fn main() {
             ptr::copy_nonoverlapping(clip_from_screen.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
             transform_ptr = transform_ptr.offset(16);
 
-            let mvp = view_projection;
+            let mvp = view_projection * glm::scaling(&glm::vec3(10.0, 10.0, 1.0));
             ptr::copy_nonoverlapping(mvp.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
             transform_ptr = transform_ptr.offset(16);
         };
@@ -1316,7 +1312,7 @@ fn main() {
             vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Bind plane's render data
-            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &steel_plate_global_index.to_le_bytes());
+            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &grass_billboard_global_index.to_le_bytes());
             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[g_plane_geometry.vertex_buffer.backing_buffer()], &[g_plane_geometry.vertex_buffer.offset() as u64]);
             vk.device.cmd_bind_index_buffer(vk_command_buffer, g_plane_geometry.index_buffer.backing_buffer(), (g_plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk_command_buffer, g_plane_geometry.index_count, 1, 0, 0, 0);

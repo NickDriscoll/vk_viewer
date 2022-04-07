@@ -1,6 +1,7 @@
 use std::{ffi::c_void, io::Read};
 
 use ash::vk;
+use ozy::io::DDSHeader;
 use sdl2::video::Window;
 use std::ptr;
 use crate::*;
@@ -90,15 +91,16 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
 pub unsafe fn load_bc7_texture(
     vk: &VulkanAPI,
     vk_command_buffer: vk::CommandBuffer,
-    width: u32,
-    height: u32,
     path: &str
-) -> vk::Image {        
-    const BC7_HEADER_SIZE: usize = 148;
-    let file = unwrap_result(File::open(path));
-    let raw_bytes: Vec<u8> = file.bytes().map(|n|{ n.unwrap() }).collect();
-    let raw_bytes = &raw_bytes[BC7_HEADER_SIZE..];
+) -> vk::Image {
+    let mut file = unwrap_result(File::open(path));
+    let dds_header = DDSHeader::from_file(&mut file);
 
+    let width = dds_header.width;
+    let height = dds_header.height;
+
+    let mut raw_bytes = vec![0u8; (width * height) as usize];
+    file.read_exact(&mut raw_bytes).unwrap();
     let size = (raw_bytes.len()) as vk::DeviceSize;
 
     let buffer_create_info = vk::BufferCreateInfo {
@@ -124,7 +126,7 @@ pub unsafe fn load_bc7_texture(
         image_type: vk::ImageType::TYPE_2D,
         format: vk::Format::BC7_SRGB_BLOCK,
         extent: image_extent,
-        mip_levels: 10,
+        mip_levels: dds_header.mipmap_count,
         array_layers: 1,
         samples: vk::SampleCountFlags::TYPE_1,
         tiling: vk::ImageTiling::OPTIMAL,
