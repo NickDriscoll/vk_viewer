@@ -13,6 +13,7 @@ use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
 use structs::FreeCam;
+use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
 use std::mem::size_of;
@@ -37,11 +38,11 @@ fn crash_with_error_dialog(message: &str) -> ! {
     panic!("{}", message);
 }
 
-fn unwrap_result<T>(res: Result<T, String>) -> T {
+fn unwrap_result<T, E: Display>(res: Result<T, E>) -> T {
     match res {
         Ok(t) => { t }
         Err(e) => {
-            crash_with_error_dialog(&e);
+            crash_with_error_dialog(&format!("{}", e));
         }
     }
 }
@@ -61,140 +62,19 @@ fn main() {
     mixer::open_audio(mixer::DEFAULT_FREQUENCY, mixer::DEFAULT_FORMAT, 2, 256).unwrap();
     Music::set_volume(music_volume);
 
-    //Load and play bgm
-    let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"));
-    bgm.play(-1).unwrap();
-
     //Initialize the Vulkan API
-    let vk_entry = ash::Entry::linked();
-    let vk_instance = {
-        let app_info = vk::ApplicationInfo {
-            api_version: vk::make_api_version(0, 1, 3, 0),
-            ..Default::default()
-        };
-
-        #[cfg(target_os = "windows")]
-        let extension_names = [
-            ash::extensions::khr::Surface::name().as_ptr(),
-            ash::extensions::khr::Win32Surface::name().as_ptr()
-        ];
-
-        #[cfg(target_os = "macos")]
-        let extension_names = [
-            ash::extensions::khr::Surface::name().as_ptr(),
-            ash::extensions::mvk::MacOSSurface::name().as_ptr()
-        ];
-
-        #[cfg(target_os = "linux")]
-        let extension_names = [
-            ash::extensions::khr::Surface::name().as_ptr(),
-            ash::extensions::khr::XlibSurface::name().as_ptr()
-        ];
-
-        let layer_names = unsafe  {[
-            CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr()
-        ]};
-        let vk_create_info = vk::InstanceCreateInfo {
-            p_application_info: &app_info,
-            enabled_extension_count: extension_names.len() as u32,
-            pp_enabled_extension_names: &extension_names as *const *const _,
-            enabled_layer_count: layer_names.len() as u32,
-            pp_enabled_layer_names: &layer_names as *const *const _,
-            ..Default::default()
-        };
-
-        unsafe { vk_entry.create_instance(&vk_create_info, VK_MEMORY_ALLOCATOR).unwrap() }
-    };
-
-    //Use SDL to create the Vulkan surface
-    let vk_surface = {
-        let raw_surf = window.vulkan_create_surface(vk_instance.handle().as_raw() as usize).unwrap();
-        vk::SurfaceKHR::from_raw(raw_surf)
-    };
-    
-    //Create surface extension object
-    let vk_ext_surface = ash::extensions::khr::Surface::new(&vk_entry, &vk_instance);
-
-    //Create the Vulkan device
-    let vk_physical_device;
-    let vk_physical_device_properties;
-    let mut vk_queue_family_index = 0;
-    let vk_device = unsafe {
-        match vk_instance.enumerate_physical_devices() {
-            Ok(phys_devices) => {
-                let mut phys_device = None;
-                let device_types = [vk::PhysicalDeviceType::DISCRETE_GPU, vk::PhysicalDeviceType::INTEGRATED_GPU, vk::PhysicalDeviceType::CPU];
-                'gpu_search: for d_type in device_types {
-                    for device in phys_devices.iter() {
-                        let props = vk_instance.get_physical_device_properties(*device);
-                        if props.device_type == d_type {
-                            let name = CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap();
-                            println!("\"{}\" was chosen as 3D accelerator.", name);
-                            phys_device = Some(*device);
-                            break 'gpu_search;
-                        }
-                    }
-                }
-
-                vk_physical_device = phys_device.unwrap();
-                vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
-                
-                let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
-                let mut physical_device_features = vk::PhysicalDeviceFeatures2 {
-                    p_next: &mut indexing_features as *mut _ as *mut c_void,
-                    ..Default::default()
-                };
-                vk_instance.get_physical_device_features2(vk_physical_device, &mut physical_device_features);
-
-                let mut i = 0;
-                for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
-                    if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                        vk_queue_family_index = i;
-                        break;
-                    }
-                    i += 1;
-                }
-
-                let priorities = [1.0];
-                let queue_create_info = vk::DeviceQueueCreateInfo {
-                    queue_family_index: vk_queue_family_index,
-                    queue_count: 1,
-                    p_queue_priorities: priorities.as_ptr(),
-                    ..Default::default()
-                };
-                
-                if !vk_ext_surface.get_physical_device_surface_support(vk_physical_device, vk_queue_family_index, vk_surface).unwrap() {
-                    panic!("The physical device queue doesn't support swapchain present!");
-                }
-
-                let extension_names = [ash::extensions::khr::Swapchain::name().as_ptr()];
-                let create_info = vk::DeviceCreateInfo {
-                    queue_create_info_count: 1,
-                    p_queue_create_infos: [queue_create_info].as_ptr(),
-                    enabled_extension_count: extension_names.len() as u32,
-                    pp_enabled_extension_names: extension_names.as_ptr(),
-                    p_enabled_features: &physical_device_features.features,
-                    p_next: &mut indexing_features as *mut _ as *mut c_void,
-                    ..Default::default()
-                };
-
-                vk_instance.create_device(vk_physical_device, &create_info, VK_MEMORY_ALLOCATOR).unwrap()
-            }
-            Err(e) => {
-                crash_with_error_dialog(&format!("Unable to enumerate physical devices: {}", e));
-            }
-        }
-    };
+    let vk = dllr::VulkanState::initialize(&window);
+    println!("The Vulkan state object is {} bytes", size_of::<dllr::VulkanState>());
 
     //Create command buffer
     let vk_command_buffer = unsafe {
         let pool_create_info = vk::CommandPoolCreateInfo {
-            queue_family_index: vk_queue_family_index,
+            queue_family_index: vk.queue_family_index,
             flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
             ..Default::default()
         };
 
-        let command_pool = vk_device.create_command_pool(&pool_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let command_pool = vk.device.create_command_pool(&pool_create_info, VK_MEMORY_ALLOCATOR).unwrap();
 
         let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
             command_pool,
@@ -202,7 +82,7 @@ fn main() {
             level: vk::CommandBufferLevel::PRIMARY,
             ..Default::default()
         };
-        vk_device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()[0]
+        vk.device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()[0]
     };
 
     //Initialize Dear ImGUI
@@ -226,14 +106,13 @@ fn main() {
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
             };
-            let staging_buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
-            let staging_buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, staging_buffer);    
-            vk_device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
+            let staging_buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
+            let staging_buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, staging_buffer);    
+            vk.device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
 
-
-            let staging_ptr = vk_device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
+            let staging_ptr = vk.device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
             ptr::copy_nonoverlapping(atlas_texture.data.as_ptr(), staging_ptr as *mut _, size as usize);
-            vk_device.unmap_memory(staging_buffer_memory);
+            vk.device.unmap_memory(staging_buffer_memory);
             
             let image_extent = vk::Extent3D {
                 width: atlas_texture.width,
@@ -251,17 +130,17 @@ fn main() {
                 usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 1,
-                p_queue_family_indices: &vk_queue_family_index,
+                p_queue_family_indices: &vk.queue_family_index,
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 ..Default::default()
             };
-            let vk_font_image = vk_device.create_image(&font_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            let vk_font_image = vk.device.create_image(&font_create_info, VK_MEMORY_ALLOCATOR).unwrap();
             
-            let font_image_memory = dllr::allocate_image_memory(&vk_instance, vk_physical_device, &vk_device, vk_font_image);
+            let font_image_memory = dllr::allocate_image_memory(&vk.instance, vk.physical_device, &vk.device, vk_font_image);
     
-            vk_device.bind_image_memory(vk_font_image, font_image_memory, 0).unwrap();
+            vk.device.bind_image_memory(vk_font_image, font_image_memory, 0).unwrap();
 
-            vk_device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+            vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             let subresource_range = vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -279,7 +158,7 @@ fn main() {
                 subresource_range,
                 ..Default::default()
             };
-            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+            vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
             let subresource_layers = vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -296,7 +175,7 @@ fn main() {
                 image_offset: vk::Offset3D::default(),
                 image_subresource: subresource_layers
             };
-            vk_device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, vk_font_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
+            vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, vk_font_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
             
             let subresource_range = vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -314,10 +193,10 @@ fn main() {
                 subresource_range,
                 ..Default::default()
             };
-            vk_device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+            vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
 
-            vk_device.end_command_buffer(vk_command_buffer).unwrap();
+            vk.device.end_command_buffer(vk_command_buffer).unwrap();
 
             
             let submit_info = vk::SubmitInfo {
@@ -326,12 +205,12 @@ fn main() {
                 ..Default::default()
             };
 
-            let fence = vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap();
-            let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
-            vk_device.queue_submit(queue, &[submit_info], fence).unwrap();
-            vk_device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-            vk_device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
-            vk_device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
+            let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap();
+            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+            vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
+            vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+            vk.device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
+            vk.device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
 
             atlas.tex_id = imgui::TextureId::new(0);    //Giving Dear Imgui a reference to the font atlas GPU texture
             atlas.clear_tex_data();                         //Free atlas memory CPU-side
@@ -343,16 +222,27 @@ fn main() {
         }
     };
 
+    //Load grass billboard texture
+    let billboard_grass_image = unsafe {        
+        dllr::load_bc7_texture(
+            &vk,
+            vk_command_buffer,
+            1024,
+            1024,
+            "./data/textures/billboard_grass.dds"
+        )
+    };
+
     //Create swapchain extension object
-    let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);
+    let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk.instance, &vk.device);
 
     //Create the main swapchain for window present
     let vk_swapchain_image_format;
     let vk_swapchain_extent;
     let vk_swapchain = unsafe {
-        let present_mode = vk_ext_surface.get_physical_device_surface_present_modes(vk_physical_device, vk_surface).unwrap()[0];
-        let surf_capabilities = vk_ext_surface.get_physical_device_surface_capabilities(vk_physical_device, vk_surface).unwrap();
-        let surf_formats = vk_ext_surface.get_physical_device_surface_formats(vk_physical_device, vk_surface).unwrap();
+        let present_mode = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap()[0];
+        let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
+        let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
 
         //Search for an SRGB swapchain format
         let mut surf_format = vk::SurfaceFormatKHR::default();
@@ -367,7 +257,7 @@ fn main() {
         vk_swapchain_image_format = surf_format.format;
         vk_swapchain_extent = surf_capabilities.current_extent;
         let create_info = vk::SwapchainCreateInfoKHR {
-            surface: vk_surface,
+            surface: vk.surface,
             min_image_count: surf_capabilities.min_image_count,
             image_format: vk_swapchain_image_format,
             image_color_space: surf_format.color_space,
@@ -376,7 +266,7 @@ fn main() {
             image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
             image_sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 1,
-            p_queue_family_indices: [vk_queue_family_index].as_ptr(),
+            p_queue_family_indices: [vk.queue_family_index].as_ptr(),
             pre_transform: surf_capabilities.current_transform,
             composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
             present_mode,
@@ -408,7 +298,7 @@ fn main() {
                 ..Default::default()
             };
 
-            image_views.push(vk_device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap());
+            image_views.push(vk.device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap());
         }
 
         image_views
@@ -416,7 +306,7 @@ fn main() {
 
     let vk_depth_format;
     let vk_depth_image = unsafe {
-        let surf_capabilities = vk_ext_surface.get_physical_device_surface_capabilities(vk_physical_device, vk_surface).unwrap();
+        let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
         let extent = vk::Extent3D {
             width: surf_capabilities.current_extent.width,
             height: surf_capabilities.current_extent.height,
@@ -426,7 +316,7 @@ fn main() {
         vk_depth_format = vk::Format::D24_UNORM_S8_UINT;
         let create_info = vk::ImageCreateInfo {
             queue_family_index_count: 1,
-            p_queue_family_indices: [vk_queue_family_index].as_ptr(),
+            p_queue_family_indices: [vk.queue_family_index].as_ptr(),
             flags: vk::ImageCreateFlags::empty(),
             image_type: vk::ImageType::TYPE_2D,
             format: vk_depth_format,
@@ -439,11 +329,11 @@ fn main() {
             ..Default::default()
         };
 
-        let depth_image = vk_device.create_image(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
-        let depth_memory = dllr::allocate_image_memory(&vk_instance, vk_physical_device, &vk_device, depth_image);
+        let depth_image = vk.device.create_image(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let depth_memory = dllr::allocate_image_memory(&vk.instance, vk.physical_device, &vk.device, depth_image);
 
         //Bind the depth image to its memory
-        vk_device.bind_image_memory(depth_image, depth_memory, 0).unwrap();
+        vk.device.bind_image_memory(depth_image, depth_memory, 0).unwrap();
 
         depth_image
     };
@@ -465,7 +355,7 @@ fn main() {
             ..Default::default()
         };
 
-        vk_device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap()
+        vk.device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap()
     };
 
     let global_transform_slots = 1024 * 1024;
@@ -473,7 +363,7 @@ fn main() {
     let vk_transform_storage_buffer;
     let vk_scene_storage_buffer_ptr = unsafe {
         let mut buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
-        let alignment = vk_physical_device_properties.limits.min_uniform_buffer_offset_alignment;
+        let alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
         if alignment > 0 {
             buffer_size = (buffer_size + (alignment - 1)) & !(alignment - 1);   //Alignment is 2^N where N is a whole number
         }
@@ -487,17 +377,18 @@ fn main() {
             ..Default::default()
         };
 
-        vk_transform_storage_buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+        vk_transform_storage_buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
         
-        let transform_buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, vk_transform_storage_buffer);
+        let transform_buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, vk_transform_storage_buffer);
 
-        vk_device.bind_buffer_memory(vk_transform_storage_buffer, transform_buffer_memory, 0).unwrap();
+        vk.device.bind_buffer_memory(vk_transform_storage_buffer, transform_buffer_memory, 0).unwrap();
 
-        let uniform_ptr = vk_device.map_memory(transform_buffer_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()).unwrap();
+        let uniform_ptr = vk.device.map_memory(transform_buffer_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()).unwrap();
         uniform_ptr
     };
 
     let vk_descriptor_set_layout;
+    let global_texture_slots = 1024;
     let vk_pipeline_layout = unsafe {
         let storage_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
@@ -510,7 +401,7 @@ fn main() {
         let texture_binding = vk::DescriptorSetLayoutBinding {
             binding: 1,
             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 1,
+            descriptor_count: global_texture_slots,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             ..Default::default()
         };
@@ -523,7 +414,7 @@ fn main() {
             ..Default::default()
         };
 
-        vk_descriptor_set_layout = vk_device.create_descriptor_set_layout(&descriptor_layout, VK_MEMORY_ALLOCATOR).unwrap();
+        vk_descriptor_set_layout = vk.device.create_descriptor_set_layout(&descriptor_layout, VK_MEMORY_ALLOCATOR).unwrap();
 
         let push_constant_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -538,7 +429,7 @@ fn main() {
             ..Default::default()
         };
         
-        vk_device.create_pipeline_layout(&pipeline_layout_createinfo, VK_MEMORY_ALLOCATOR).unwrap()
+        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, VK_MEMORY_ALLOCATOR).unwrap()
     };
     
     //Set up descriptors
@@ -549,7 +440,7 @@ fn main() {
         };
         let sampler_pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 1,
+            descriptor_count: global_texture_slots,
         };
 
         let pool_sizes = [storage_pool_size, sampler_pool_size];
@@ -559,7 +450,7 @@ fn main() {
             p_pool_sizes: pool_sizes.as_ptr(),
             ..Default::default()
         };
-        let descriptor_pool = vk_device.create_descriptor_pool(&descriptor_pool_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let descriptor_pool = vk.device.create_descriptor_pool(&descriptor_pool_info, VK_MEMORY_ALLOCATOR).unwrap();
 
         let vk_alloc_info = vk::DescriptorSetAllocateInfo {
             descriptor_pool,
@@ -567,8 +458,11 @@ fn main() {
             p_set_layouts: &vk_descriptor_set_layout,
             ..Default::default()
         };
-        let vk_descriptor_sets = vk_device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
+        vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap()
+    };
 
+    //Write initial values to descriptors
+    unsafe {
         let buffer_infos = [
             vk::DescriptorBufferInfo {
                 buffer: vk_transform_storage_buffer,
@@ -602,14 +496,23 @@ fn main() {
             subresource_range: sampler_subresource_range,
             ..Default::default()
         };
-        let sampler_view = vk_device.create_image_view(&sampler_view_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let sampler_view = vk.device.create_image_view(&sampler_view_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let grass_view_info = vk::ImageViewCreateInfo {
+            image: billboard_grass_image,
+            format: vk::Format::BC7_SRGB_BLOCK,
+            view_type: vk::ImageViewType::TYPE_2D,
+            components: COMPONENT_MAPPING_DEFAULT,
+            subresource_range: sampler_subresource_range,
+            ..Default::default()
+        };
+        let grass_view = vk.device.create_image_view(&grass_view_info, VK_MEMORY_ALLOCATOR).unwrap();
         let sampler_info = vk::SamplerCreateInfo {
-            min_filter: vk::Filter::NEAREST,
-            mag_filter: vk::Filter::NEAREST,
-            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
-            address_mode_u: vk::SamplerAddressMode::MIRRORED_REPEAT,
-            address_mode_v: vk::SamplerAddressMode::MIRRORED_REPEAT,
-            address_mode_w: vk::SamplerAddressMode::MIRRORED_REPEAT,
+            min_filter: vk::Filter::LINEAR,
+            mag_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode_u: vk::SamplerAddressMode::REPEAT,
+            address_mode_v: vk::SamplerAddressMode::REPEAT,
+            address_mode_w: vk::SamplerAddressMode::REPEAT,
             mip_lod_bias: 0.0,
             anisotropy_enable: vk::FALSE,
             compare_enable: vk::FALSE,
@@ -619,27 +522,31 @@ fn main() {
             unnormalized_coordinates: vk::FALSE,
             ..Default::default()
         };
-        let sampler = vk_device.create_sampler(&sampler_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let sampler = vk.device.create_sampler(&sampler_info, VK_MEMORY_ALLOCATOR).unwrap();
         let image_info = vk::DescriptorImageInfo {
             sampler,
             image_view: sampler_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
+        let mut image_infos = vec![image_info; global_texture_slots as usize];
+        image_infos[1] = vk::DescriptorImageInfo {
+            sampler,
+            image_view: grass_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
         let sampler_write = vk::WriteDescriptorSet {
             dst_set: vk_descriptor_sets[0],
-            descriptor_count: 1,
+            descriptor_count: global_texture_slots,
             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            p_image_info: &image_info,
+            p_image_info: image_infos.as_ptr(),
             dst_array_element: 0,
             dst_binding: 1,
             ..Default::default()
         };
 
         let writes = [storage_write, sampler_write];
-        vk_device.update_descriptor_sets(&writes, &[]);
-
-        vk_descriptor_sets
-    };
+        vk.device.update_descriptor_sets(&writes, &[]);
+    }
 
     let vk_render_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
@@ -703,19 +610,19 @@ fn main() {
             p_dependencies: &subpass_dependency,
             ..Default::default()
         };
-        vk_device.create_render_pass(&renderpass_info, VK_MEMORY_ALLOCATOR).unwrap()
+        vk.device.create_render_pass(&renderpass_info, VK_MEMORY_ALLOCATOR).unwrap()
     };
 
     //Load shaders
     let vk_shader_stages = unsafe {
-        let v = dllr::load_shader_stage(&vk_device, vk::ShaderStageFlags::VERTEX, "./shaders/main_vert.spv");
-        let f = dllr::load_shader_stage(&vk_device, vk::ShaderStageFlags::FRAGMENT, "./shaders/main_frag.spv");
+        let v = dllr::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main_vert.spv");
+        let f = dllr::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/main_frag.spv");
         [v, f]
     };
 
     let imgui_shader_stages = unsafe {
-        let v = dllr::load_shader_stage(&vk_device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui_vert.spv");
-        let f = dllr::load_shader_stage(&vk_device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui_frag.spv");
+        let v = dllr::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui_vert.spv");
+        let f = dllr::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui_frag.spv");
         [v, f]
     };
 
@@ -735,7 +642,7 @@ fn main() {
         let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
         for view in vk_swapchain_image_views {
             attachments[0] = view;
-            fbs.push(vk_device.create_framebuffer(&fb_info, VK_MEMORY_ALLOCATOR).unwrap())
+            fbs.push(vk.device.create_framebuffer(&fb_info, VK_MEMORY_ALLOCATOR).unwrap())
         }
 
         fbs
@@ -947,7 +854,7 @@ fn main() {
         };
 
         let pipeline_infos = [graphics_pipeline_info, imgui_pipeline_info];
-        let pipelines = vk_device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, VK_MEMORY_ALLOCATOR).unwrap();
+        let pipelines = vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, VK_MEMORY_ALLOCATOR).unwrap();
         [pipelines[0], pipelines[1]]
     };
 
@@ -981,17 +888,17 @@ fn main() {
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
             };
-            let buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            let buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
             buffer
         };
 
-        let buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, scene_geo_buffer);
+        let buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, scene_geo_buffer);
 
         //Bind buffer
-        vk_device.bind_buffer_memory(scene_geo_buffer, buffer_memory, 0).unwrap();
+        vk.device.bind_buffer_memory(scene_geo_buffer, buffer_memory, 0).unwrap();
 
         //Map buffer to host memory
-        let buffer_ptr = vk_device.map_memory(
+        let buffer_ptr = vk.device.map_memory(
             buffer_memory,
             0,
             vk::WHOLE_SIZE,
@@ -1004,7 +911,7 @@ fn main() {
         g_plane_geometry = scene_geo_allocator.allocate_geometry(&g_plane_vertices, &g_plane_indices).unwrap();
         sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
 
-        vk_device.unmap_memory(buffer_memory);
+        vk.device.unmap_memory(buffer_memory);
     }
 
     let mut imgui_geo_allocator = unsafe {
@@ -1015,11 +922,11 @@ fn main() {
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
-        let buffer = vk_device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
-        let buffer_memory = dllr::allocate_buffer_memory(&vk_instance, vk_physical_device, &vk_device, buffer);
-        vk_device.bind_buffer_memory(buffer, buffer_memory, 0).unwrap();
+        let buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+        let buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, buffer);
+        vk.device.bind_buffer_memory(buffer, buffer_memory, 0).unwrap();
 
-        let ptr = vk_device.map_memory(buffer_memory, 0, imgui_buffer_size, vk::MemoryMapFlags::empty()).unwrap();
+        let ptr = vk.device.map_memory(buffer_memory, 0, imgui_buffer_size, vk::MemoryMapFlags::empty()).unwrap();
 
         dllr::VirtualBumpAllocator::new(buffer, ptr, imgui_buffer_size)
     };
@@ -1057,7 +964,7 @@ fn main() {
     let vk_clear_values = [vk_color_clear, vk_depth_stencil_clear];
 
     //Create semaphore used to wait on swapchain image
-    let vk_swapchain_semaphore = unsafe { vk_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap() };
+    let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
     let mut camera = FreeCam::new(glm::vec3(0.0f32, -10.0, 5.0));
@@ -1074,13 +981,17 @@ fn main() {
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
-    let vk_submission_fence = unsafe { vk_device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap() };
+    let vk_submission_fence = unsafe { vk.device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap() };
     
     let mut sphere_width = 8 as u32;
     let mut sphere_height = 8 as u32;
     let mut sphere_spacing = 5.0;
     let mut sphere_amplitude = 3.0;
     let mut sphere_z_offset = 2.0;
+    
+    //Load and play bgm
+    let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"));
+    bgm.play(-1).unwrap();
 
     //Main application loop
     'running: loop {
@@ -1283,7 +1194,7 @@ fn main() {
                 p_inheritance_info: ptr::null(),
                 ..Default::default()
             };
-            vk_device.begin_command_buffer(vk_command_buffer, &begin_info).unwrap();
+            vk.device.begin_command_buffer(vk_command_buffer, &begin_info).unwrap();
             
             //Set the viewport for this frame
             let viewport = vk::Viewport {
@@ -1294,10 +1205,10 @@ fn main() {
                 min_depth: 0.0,
                 max_depth: 1.0
             };
-            vk_device.cmd_set_viewport(vk_command_buffer, 0, &[viewport]);
+            vk.device.cmd_set_viewport(vk_command_buffer, 0, &[viewport]);
 
             //Set scissor rect to be same as render area
-            vk_device.cmd_set_scissor(vk_command_buffer, 0, &[vk_render_area]);
+            vk.device.cmd_set_scissor(vk_command_buffer, 0, &[vk_render_area]);
 
             let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
             let rp_begin_info = vk::RenderPassBeginInfo {
@@ -1308,26 +1219,26 @@ fn main() {
                 p_clear_values: vk_clear_values.as_ptr(),
                 ..Default::default()
             };
-            vk_device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            vk.device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             //Bind main rendering pipeline to GRAPHICS pipeline bind point
-            vk_device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_3D_graphics_pipeline);
+            vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_3D_graphics_pipeline);
 
             //Once per frame descriptor binding
-            vk_device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
+            vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Bind plane's render data
-            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[g_plane_geometry.vertex_buffer.backing_buffer()], &[g_plane_geometry.vertex_buffer.offset() as u64]);
-            vk_device.cmd_bind_index_buffer(vk_command_buffer, g_plane_geometry.index_buffer.backing_buffer(), (g_plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-            vk_device.cmd_draw_indexed(vk_command_buffer, g_plane_geometry.index_count, 1, 0, 0, 0);
+            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[g_plane_geometry.vertex_buffer.backing_buffer()], &[g_plane_geometry.vertex_buffer.offset() as u64]);
+            vk.device.cmd_bind_index_buffer(vk_command_buffer, g_plane_geometry.index_buffer.backing_buffer(), (g_plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk.device.cmd_draw_indexed(vk_command_buffer, g_plane_geometry.index_count, 1, 0, 0, 0);
 
             //Bind sphere's render data
-            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_geometry.vertex_buffer.backing_buffer()], &[sphere_geometry.vertex_buffer.offset() as u64]);
-            vk_device.cmd_bind_index_buffer(vk_command_buffer, sphere_geometry.index_buffer.backing_buffer(), (sphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-            vk_device.cmd_draw_indexed(vk_command_buffer, sphere_geometry.index_count, sphere_count as u32, 0, 0, 1);
+            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_geometry.vertex_buffer.backing_buffer()], &[sphere_geometry.vertex_buffer.offset() as u64]);
+            vk.device.cmd_bind_index_buffer(vk_command_buffer, sphere_geometry.index_buffer.backing_buffer(), (sphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk.device.cmd_draw_indexed(vk_command_buffer, sphere_geometry.index_count, sphere_count as u32, 0, 0, 1);
 
             //Record Dear ImGUI drawing commands
-            vk_device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);
+            vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);
             for i in 0..imgui_cmd_lists.len() {
                 let cmd_list = &imgui_cmd_lists[i];
                 for cmd in cmd_list {
@@ -1355,12 +1266,12 @@ fn main() {
                                     extent
                                 }
                             };
-                            vk_device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_rect]);
+                            vk.device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_rect]);
                             
-                            vk_device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, &tex_id.to_le_bytes());
-                            vk_device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[v_buffer.backing_buffer()], &[v_buffer.offset()]);
-                            vk_device.cmd_bind_index_buffer(vk_command_buffer, i_buffer.backing_buffer(), i_buffer.offset(), vk::IndexType::UINT32);
-                            vk_device.cmd_draw_indexed(vk_command_buffer, *count as u32, 1, i_offset as u32, v_offset as i32, 0);
+                            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, &tex_id.to_le_bytes());
+                            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[v_buffer.backing_buffer()], &[v_buffer.offset()]);
+                            vk.device.cmd_bind_index_buffer(vk_command_buffer, i_buffer.backing_buffer(), i_buffer.offset(), vk::IndexType::UINT32);
+                            vk.device.cmd_draw_indexed(vk_command_buffer, *count as u32, 1, i_offset as u32, v_offset as i32, 0);
                         }
                         DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
                         DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
@@ -1368,9 +1279,9 @@ fn main() {
                 }
             }
 
-            vk_device.cmd_end_render_pass(vk_command_buffer);
+            vk.device.cmd_end_render_pass(vk_command_buffer);
 
-            vk_device.end_command_buffer(vk_command_buffer).unwrap();
+            vk.device.end_command_buffer(vk_command_buffer).unwrap();
 
             let pipeline_stage_flags = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
             let submit_info = vk::SubmitInfo {
@@ -1382,11 +1293,11 @@ fn main() {
                 ..Default::default()
             };
 
-            let queue = vk_device.get_device_queue(vk_queue_family_index, 0);
-            vk_device.queue_submit(queue, &[submit_info], vk_submission_fence).unwrap();
+            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+            vk.device.queue_submit(queue, &[submit_info], vk_submission_fence).unwrap();
 
-            vk_device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
-            vk_device.reset_fences(&[vk_submission_fence]).unwrap();
+            vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+            vk.device.reset_fences(&[vk_submission_fence]).unwrap();
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,

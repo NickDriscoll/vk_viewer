@@ -3,11 +3,14 @@
 
 layout (location = 0) in vec4 f_color;
 layout (location = 1) in vec2 f_uv;
+layout (location = 2) flat in int instance_id;
 
 layout (location = 0) out vec4 frag_color;
 
 layout(set = 0, binding = 1) uniform sampler2D global_textures[];
 
 void main() {
-    frag_color = f_color * texture(global_textures[0], f_uv).r;
+    //frag_color = f_color * texture(global_textures[0], f_uv).r;
+    frag_color = texture(global_textures[instance_id], f_uv);
+    //frag_color = f_color;
 }
