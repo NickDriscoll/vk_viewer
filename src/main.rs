@@ -17,11 +17,10 @@ use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
 use std::mem::size_of;
-use std::os::raw::c_void;
 use std::ptr;
 
 use ozy::io::OzyMesh;
-use ozy::structs::FrameTimer;
+use ozy::structs::{FrameTimer, OptionVec};
 
 const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
     r: vk::ComponentSwizzle::R,
@@ -33,8 +32,7 @@ const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
 const VK_MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
 
 fn crash_with_error_dialog(message: &str) -> ! {
-    let message = message.replace("'", "");
-    tfd::message_box_ok("Oops...", &message, tfd::MessageBoxIcon::Error);
+    tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
     panic!("{}", message);
 }
 
@@ -50,9 +48,9 @@ fn unwrap_result<T, E: Display>(res: Result<T, E>) -> T {
 //Entry point
 fn main() {
     //Create the window using SDL
-    let sdl_ctxt = sdl2::init().unwrap();
-    let mut event_pump = sdl_ctxt.event_pump().unwrap();
-    let video_subsystem = sdl_ctxt.video().unwrap();
+    let sdl_ctxt = unwrap_result(sdl2::init());
+    let mut event_pump = unwrap_result(sdl_ctxt.event_pump());
+    let video_subsystem = unwrap_result(sdl_ctxt.video());
     let window_size = glm::vec2(1280, 1024);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
@@ -62,9 +60,17 @@ fn main() {
     mixer::open_audio(mixer::DEFAULT_FREQUENCY, mixer::DEFAULT_FORMAT, 2, 256).unwrap();
     Music::set_volume(music_volume);
 
+    //Initialize Dear ImGUI
+    let mut imgui_context = imgui::Context::create();
+    imgui_context.style_mut().use_dark_colors();
+    {
+        let io = imgui_context.io_mut();
+        io.display_size[0] = window_size.x as f32;
+        io.display_size[1] = window_size.y as f32;
+    }
+
     //Initialize the Vulkan API
-    let vk = dllr::VulkanState::initialize(&window);
-    println!("The Vulkan state object is {} bytes", size_of::<dllr::VulkanState>());
+    let vk = dllr::VulkanAPI::initialize(&window);
 
     //Create command buffer
     let vk_command_buffer = unsafe {
@@ -85,17 +91,55 @@ fn main() {
         vk.device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()[0]
     };
 
-    //Initialize Dear ImGUI
-    let mut imgui_context = imgui::Context::create();
-    imgui_context.style_mut().use_dark_colors();
-    {
-        let io = imgui_context.io_mut();
-        io.display_size[0] = window_size.x as f32;
-        io.display_size[1] = window_size.y as f32;
-    }
-    
+    //Create texture samplers
+    let (material_sampler, font_sampler) = unsafe {
+        let sampler_info = vk::SamplerCreateInfo {
+            min_filter: vk::Filter::LINEAR,
+            mag_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode_u: vk::SamplerAddressMode::REPEAT,
+            address_mode_v: vk::SamplerAddressMode::REPEAT,
+            address_mode_w: vk::SamplerAddressMode::REPEAT,
+            mip_lod_bias: 0.0,
+            anisotropy_enable: vk::FALSE,
+            compare_enable: vk::FALSE,
+            min_lod: 0.0,
+            max_lod: vk::LOD_CLAMP_NONE,
+            border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
+            unnormalized_coordinates: vk::FALSE,
+            ..Default::default()
+        };
+        let mat = vk.device.create_sampler(&sampler_info, VK_MEMORY_ALLOCATOR).unwrap();
+        
+        let sampler_info = vk::SamplerCreateInfo {
+            min_filter: vk::Filter::NEAREST,
+            mag_filter: vk::Filter::NEAREST,
+            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+            address_mode_u: vk::SamplerAddressMode::REPEAT,
+            address_mode_v: vk::SamplerAddressMode::REPEAT,
+            address_mode_w: vk::SamplerAddressMode::REPEAT,
+            mip_lod_bias: 0.0,
+            anisotropy_enable: vk::FALSE,
+            compare_enable: vk::FALSE,
+            min_lod: 0.0,
+            max_lod: vk::LOD_CLAMP_NONE,
+            border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
+            unnormalized_coordinates: vk::FALSE,
+            ..Default::default()
+        };
+        let font = vk.device.create_sampler(&sampler_info, VK_MEMORY_ALLOCATOR).unwrap();
+        
+        (mat, font)
+    };
+
+    //Maintain free list for texture allocation
+    let global_texture_slots = 1024;
+    let mut global_texture_free_list = OptionVec::with_capacity(global_texture_slots);
+    let mut global_texture_update;
+    let default_texture_sampler;
+
     //Create and upload Dear IMGUI font atlas
-    let imgui_font_image = match imgui_context.fonts() {
+    let imgui_font_view = match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
 
@@ -212,10 +256,38 @@ fn main() {
             vk.device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
             vk.device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
 
-            atlas.tex_id = imgui::TextureId::new(0);    //Giving Dear Imgui a reference to the font atlas GPU texture
+            //Then create the image view
+            let sampler_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let font_view_info = vk::ImageViewCreateInfo {
+                image: vk_font_image,
+                format: vk::Format::R8_UNORM,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: COMPONENT_MAPPING_DEFAULT,
+                subresource_range: sampler_subresource_range,
+                ..Default::default()
+            };
+            let font_view = vk.device.create_image_view(&font_view_info, VK_MEMORY_ALLOCATOR).unwrap();
+            
+            let image_info = vk::DescriptorImageInfo {
+                sampler: font_sampler,
+                image_view: font_view,
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+            };
+            let sampler_index = global_texture_free_list.insert(image_info);
+            global_texture_update = true;
+            
+            default_texture_sampler = image_info;
+
+            atlas.tex_id = imgui::TextureId::new(sampler_index);    //Giving Dear Imgui a reference to the font atlas GPU texture
             atlas.clear_tex_data();                         //Free atlas memory CPU-side
 
-            vk_font_image
+            font_view
         }
         FontAtlasRefMut::Shared(_) => {
             panic!("Not dealing with this case.");
@@ -223,14 +295,41 @@ fn main() {
     };
 
     //Load grass billboard texture
-    let billboard_grass_image = unsafe {        
-        dllr::load_bc7_texture(
+    let billboard_grass_view = unsafe {
+        let image = dllr::load_bc7_texture(
             &vk,
             vk_command_buffer,
             1024,
             1024,
             "./data/textures/billboard_grass.dds"
-        )
+        );
+
+        let sampler_subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1
+        };
+        let grass_view_info = vk::ImageViewCreateInfo {
+            image: image,
+            format: vk::Format::BC7_SRGB_BLOCK,
+            view_type: vk::ImageViewType::TYPE_2D,
+            components: COMPONENT_MAPPING_DEFAULT,
+            subresource_range: sampler_subresource_range,
+            ..Default::default()
+        };
+        let view = vk.device.create_image_view(&grass_view_info, VK_MEMORY_ALLOCATOR).unwrap();
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        global_texture_free_list.insert(descriptor_info);
+        global_texture_update = true;
+
+        view
     };
 
     //Create swapchain extension object
@@ -388,7 +487,6 @@ fn main() {
     };
 
     let vk_descriptor_set_layout;
-    let global_texture_slots = 1024;
     let vk_pipeline_layout = unsafe {
         let storage_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
@@ -401,7 +499,7 @@ fn main() {
         let texture_binding = vk::DescriptorSetLayoutBinding {
             binding: 1,
             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: global_texture_slots,
+            descriptor_count: global_texture_slots as u32,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             ..Default::default()
         };
@@ -440,7 +538,7 @@ fn main() {
         };
         let sampler_pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: global_texture_slots,
+            descriptor_count: global_texture_slots as u32,
         };
 
         let pool_sizes = [storage_pool_size, sampler_pool_size];
@@ -480,63 +578,20 @@ fn main() {
             dst_binding: 0,
             ..Default::default()
         };
-
-        let sampler_subresource_range = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1
-        };
-        let sampler_view_info = vk::ImageViewCreateInfo {
-            image: imgui_font_image,
-            format: vk::Format::R8_UNORM,
-            view_type: vk::ImageViewType::TYPE_2D,
-            components: COMPONENT_MAPPING_DEFAULT,
-            subresource_range: sampler_subresource_range,
-            ..Default::default()
-        };
-        let sampler_view = vk.device.create_image_view(&sampler_view_info, VK_MEMORY_ALLOCATOR).unwrap();
-        let grass_view_info = vk::ImageViewCreateInfo {
-            image: billboard_grass_image,
-            format: vk::Format::BC7_SRGB_BLOCK,
-            view_type: vk::ImageViewType::TYPE_2D,
-            components: COMPONENT_MAPPING_DEFAULT,
-            subresource_range: sampler_subresource_range,
-            ..Default::default()
-        };
-        let grass_view = vk.device.create_image_view(&grass_view_info, VK_MEMORY_ALLOCATOR).unwrap();
-        let sampler_info = vk::SamplerCreateInfo {
-            min_filter: vk::Filter::LINEAR,
-            mag_filter: vk::Filter::LINEAR,
-            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-            address_mode_u: vk::SamplerAddressMode::REPEAT,
-            address_mode_v: vk::SamplerAddressMode::REPEAT,
-            address_mode_w: vk::SamplerAddressMode::REPEAT,
-            mip_lod_bias: 0.0,
-            anisotropy_enable: vk::FALSE,
-            compare_enable: vk::FALSE,
-            min_lod: 0.0,
-            max_lod: vk::LOD_CLAMP_NONE,
-            border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
-            unnormalized_coordinates: vk::FALSE,
-            ..Default::default()
-        };
-        let sampler = vk.device.create_sampler(&sampler_info, VK_MEMORY_ALLOCATOR).unwrap();
         let image_info = vk::DescriptorImageInfo {
-            sampler,
-            image_view: sampler_view,
+            sampler: font_sampler,
+            image_view: imgui_font_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
         let mut image_infos = vec![image_info; global_texture_slots as usize];
-        image_infos[1] = vk::DescriptorImageInfo {
-            sampler,
-            image_view: grass_view,
+        image_infos[0] = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: billboard_grass_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
         let sampler_write = vk::WriteDescriptorSet {
             dst_set: vk_descriptor_sets[0],
-            descriptor_count: global_texture_slots,
+            descriptor_count: global_texture_slots as u32,
             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             p_image_info: image_infos.as_ptr(),
             dst_array_element: 0,
@@ -860,7 +915,7 @@ fn main() {
 
     let g_plane_width = 64;
     let g_plane_height = 64;
-    let g_plane_vertices = ozy::prims::plane_vertex_buffer(g_plane_width, g_plane_height, 5.0);
+    let g_plane_vertices = ozy::prims::plane_vertex_buffer(g_plane_width, g_plane_height, 50.0);
     let g_plane_indices = ozy::prims::plane_index_buffer(g_plane_width, g_plane_height);
 
     //Load UV sphere OzyMesh
@@ -983,7 +1038,7 @@ fn main() {
 
     let vk_submission_fence = unsafe { vk.device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap() };
     
-    let mut sphere_width = 8 as u32;
+    let mut sphere_width = 10 as u32;
     let mut sphere_height = 8 as u32;
     let mut sphere_spacing = 5.0;
     let mut sphere_amplitude = 3.0;
@@ -1012,18 +1067,9 @@ fn main() {
             for event in event_pump.poll_iter() {
                 match event {
                     Event::Quit{..} => { break 'running; }
-                    Event::MouseButtonDown { mouse_btn, .. } => {
-                        match mouse_btn {
-                            MouseButton::Left => { imgui_io.mouse_down[0] = true; }
-                            MouseButton::Right => { imgui_io.mouse_down[1] = true; }
-                            _ => {}
-                        }
-                    }
                     Event::MouseButtonUp { mouse_btn, ..} => {
                         match mouse_btn {
-                            MouseButton::Left => { imgui_io.mouse_down[0] = false; }
                             MouseButton::Right => {
-                                imgui_io.mouse_down[1] = false;
                                 camera.cursor_captured = !camera.cursor_captured;
                                 let mouse_util = sdl_ctxt.mouse();
                                 mouse_util.set_relative_mouse_mode(camera.cursor_captured);
@@ -1048,6 +1094,7 @@ fn main() {
             }
             let keyboard_state = event_pump.keyboard_state();
             let mouse_state = event_pump.mouse_state();
+            imgui_io.mouse_down = [mouse_state.left(), mouse_state.right(), mouse_state.middle(), false, false];
             imgui_io.mouse_pos[0] = mouse_state.x() as f32;
             imgui_io.mouse_pos[1] = mouse_state.y() as f32;
 
@@ -1109,7 +1156,7 @@ fn main() {
             ptr::copy_nonoverlapping(clip_from_screen.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
             transform_ptr = transform_ptr.offset(16);
 
-            let mvp = view_projection * glm::scaling(&glm::vec3(10.0, 10.0, 0.0));
+            let mvp = view_projection;
             ptr::copy_nonoverlapping(mvp.as_ptr(), transform_ptr, size_of::<glm::TMat4<f32>>());
             transform_ptr = transform_ptr.offset(16);
         };
@@ -1140,6 +1187,28 @@ fn main() {
             }
         }
         unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count)};
+
+        if global_texture_update {
+            global_texture_update = false;
+
+            let mut image_infos = vec![default_texture_sampler; global_texture_slots];
+            for i in 0..global_texture_free_list.len() {
+                if let Some(info) = global_texture_free_list[i] {
+                    image_infos[i] = info;
+                }
+            }
+
+            let sampler_write = vk::WriteDescriptorSet {
+                dst_set: vk_descriptor_sets[0],
+                descriptor_count: global_texture_slots as u32,
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                p_image_info: image_infos.as_ptr(),
+                dst_array_element: 0,
+                dst_binding: 1,
+                ..Default::default()
+            };
+            unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
+        }
 
         //Done specifying Dear ImGUI ui for this frame
         let imgui_draw_data = imgui_ui.render();

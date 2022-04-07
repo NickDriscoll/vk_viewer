@@ -10,9 +10,13 @@ layout (location = 0) out vec4 f_color;
 layout (location = 1) out vec2 f_uv;
 layout (location = 2) out int instance_id;
 
-layout (std140, set = 0, binding = 0) buffer SceneData {
+layout (std140, set = 0, binding = 0) readonly buffer FrameData {
     mat4 clip_from_screen;
     mat4 mvp_matrices[];
+};
+
+layout (std140, set = 2, binding = 0) readonly uniform InstanceData {
+    ivec4 material_indices[];
 };
 
 void main() {

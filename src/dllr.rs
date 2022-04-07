@@ -56,7 +56,7 @@ pub unsafe fn allocate_image_memory(vk_instance: &ash::Instance, vk_physical_dev
     //Search for the largest DEVICE_LOCAL heap the device advertises
     let memory_type_index = get_memory_type_index(&vk_instance, vk_physical_device, mem_reqs, vk::MemoryPropertyFlags::DEVICE_LOCAL);
     if let None = memory_type_index {
-        crash_with_error_dialog("Depth buffer memory allocation failed.");
+        crash_with_error_dialog("Image memory allocation failed.");
     }
     let memory_type_index = memory_type_index.unwrap();
 
@@ -88,7 +88,7 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
 }
 
 pub unsafe fn load_bc7_texture(
-    vk: &VulkanState,
+    vk: &VulkanAPI,
     vk_command_buffer: vk::CommandBuffer,
     width: u32,
     height: u32,
@@ -217,7 +217,7 @@ pub unsafe fn load_bc7_texture(
 }
 
 //All the variables that Vulkan needs
-pub struct VulkanState {
+pub struct VulkanAPI {
     pub instance: ash::Instance,
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
@@ -227,7 +227,7 @@ pub struct VulkanState {
     pub queue_family_index: u32
 }
 
-impl VulkanState {
+impl VulkanAPI {
     pub fn initialize(window: &Window) -> Self {
         
         //Initialize the Vulkan API
@@ -353,7 +353,7 @@ impl VulkanState {
             }
         };
 
-        VulkanState {
+        VulkanAPI {
             instance: vk_instance,
             physical_device: vk_physical_device,
             physical_device_properties: vk_physical_device_properties,
@@ -470,4 +470,10 @@ pub struct VirtualGeometry {
     pub vertex_buffer: VirtualBuffer,
     pub index_buffer: VirtualBuffer,
     pub index_count: u32
+}
+
+pub struct FrameUniforms {
+    view_from_world: glm::TMat4<f32>,
+    clip_from_view: glm::TMat4<f32>,
+    clip_from_screen: glm::TMat4<f32>
 }
