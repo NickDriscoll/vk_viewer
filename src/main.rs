@@ -51,7 +51,7 @@ fn main() {
     let sdl_ctxt = unwrap_result(sdl2::init());
     let mut event_pump = unwrap_result(sdl_ctxt.event_pump());
     let video_subsystem = unwrap_result(sdl_ctxt.video());
-    let window_size = glm::vec2(1280, 1024);
+    let window_size = glm::vec2(1280, 720);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
@@ -62,8 +62,8 @@ fn main() {
 
     //Initialize Dear ImGUI
     let mut imgui_context = imgui::Context::create();
-    imgui_context.style_mut().use_dark_colors();
     {
+        imgui_context.style_mut().use_dark_colors();
         let io = imgui_context.io_mut();
         io.display_size[0] = window_size.x as f32;
         io.display_size[1] = window_size.y as f32;
@@ -370,7 +370,7 @@ fn main() {
     //Create the main swapchain for window present
     let vk_swapchain_image_format;
     let vk_swapchain_extent;
-    let vk_swapchain = unsafe {
+    let mut vk_swapchain = unsafe {
         let present_mode = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap()[0];
         let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
         let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
@@ -1006,7 +1006,7 @@ fn main() {
         dllr::VirtualBumpAllocator::new(buffer, ptr, imgui_buffer_size)
     };
 
-    let vk_render_area = {        
+    let vk_render_area = {
         let offset = vk::Offset2D {
             x: 0,
             y: 0
@@ -1082,6 +1082,7 @@ fn main() {
         //Pump event queue
         let framerate;
         {
+            use sdl2::event::WindowEvent;
             use sdl2::keyboard::{Scancode};
             use sdl2::mouse::MouseButton;
 
@@ -1090,6 +1091,14 @@ fn main() {
             for event in event_pump.poll_iter() {
                 match event {
                     Event::Quit{..} => { break 'running; }
+                    Event::Window { win_event, .. } => {
+                        match win_event {
+                            WindowEvent::Resized(x, y) => unsafe {
+                                println!("Resized window to {}x{}", x, y);
+                            }
+                            _ => {}
+                        }
+                    }
                     Event::MouseButtonUp { mouse_btn, ..} => {
                         match mouse_btn {
                             MouseButton::Right => {
@@ -1153,9 +1162,6 @@ fn main() {
         //Update
         let imgui_ui = imgui_context.frame();
         imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
-        if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
-            break 'running;
-        }
         if imgui_ui.button_with_size("Really long button with really long text", [0.0, 32.0]) {
             tfd::message_box_yes_no("The question", "What do you think?", tfd::MessageBoxIcon::Info, tfd::YesNo::Yes);
         }
@@ -1204,6 +1210,10 @@ fn main() {
 
         let sphere_count = sphere_width as usize * sphere_height as usize;
         imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
+        if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
+            break 'running;
+        }
+
         let mut sphere_transforms = vec![0.0; 16 * sphere_count];
         for i in 0..sphere_width {
             for j in 0..sphere_height {

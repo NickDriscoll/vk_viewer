@@ -7,7 +7,7 @@ layout (location = 2) in vec4 color;
 layout (location = 0) out vec2 f_uv;
 layout (location = 1) out vec4 f_color;
 
-layout (binding = 0) buffer SceneData {
+layout (std140, set = 0, binding = 0) buffer SceneData {
     mat4 clip_from_screen;
     mat4 mvp_matrices[];
 };

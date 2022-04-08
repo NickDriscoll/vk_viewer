@@ -198,9 +198,7 @@ pub unsafe fn load_bc7_texture(
     };
     vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
-
     vk.device.end_command_buffer(vk_command_buffer).unwrap();
-
     
     let submit_info = vk::SubmitInfo {
         command_buffer_count: 1,
@@ -472,6 +470,11 @@ pub struct VirtualGeometry {
     pub vertex_buffer: VirtualBuffer,
     pub index_buffer: VirtualBuffer,
     pub index_count: u32
+}
+
+pub struct VirtualDrawCall {
+    geometry: VirtualGeometry,
+    push_constants: [u32; 4]
 }
 
 pub struct FrameUniforms {
