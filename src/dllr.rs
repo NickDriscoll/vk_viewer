@@ -98,9 +98,10 @@ pub unsafe fn load_bc7_texture(
 
     let width = dds_header.width;
     let height = dds_header.height;
+    let mipmap_count = dds_header.mipmap_count - 2;
 
     let mut bytes_size = 0;
-    for i in 0..dds_header.mipmap_count {
+    for i in 0..mipmap_count {
         let w = width / (1 << i);
         let h = height / (1 << i);
         bytes_size += w * h;
@@ -132,7 +133,7 @@ pub unsafe fn load_bc7_texture(
         image_type: vk::ImageType::TYPE_2D,
         format: vk::Format::BC7_SRGB_BLOCK,
         extent: image_extent,
-        mip_levels: dds_header.mipmap_count,
+        mip_levels: mipmap_count,
         array_layers: 1,
         samples: vk::SampleCountFlags::TYPE_1,
         tiling: vk::ImageTiling::OPTIMAL,
@@ -154,7 +155,7 @@ pub unsafe fn load_bc7_texture(
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
         base_mip_level: 0,
-        level_count: dds_header.mipmap_count,
+        level_count: mipmap_count,
         base_array_layer: 0,
         layer_count: 1
     };
@@ -170,7 +171,11 @@ pub unsafe fn load_bc7_texture(
     vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     let mut cumulative_offset = 0;
-    for i in 0..dds_header.mipmap_count {
+    let mut copy_regions = vec![vk::BufferImageCopy::default(); mipmap_count as usize];
+    for i in 0..mipmap_count {
+        let w = width / (1 << i);
+        let h = height / (1 << i);
+        println!("{} % {} is {}", w*h, 16, (w*h) % 16);
         let subresource_layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: i,
@@ -178,8 +183,6 @@ pub unsafe fn load_bc7_texture(
             layer_count: 1
 
         };
-        let w = width / (1 << i);
-        let h = height / (1 << i);
         let image_extent = vk::Extent3D {
             width: w,
             height: h,
@@ -193,15 +196,17 @@ pub unsafe fn load_bc7_texture(
             image_offset: vk::Offset3D::default(),
             image_subresource: subresource_layers
         };
-        vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
-
+        copy_regions[i as usize] = copy_region;
         cumulative_offset += w * h;
     }
+
+    vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+
     
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
         base_mip_level: 0,
-        level_count: dds_header.mipmap_count,
+        level_count: mipmap_count,
         base_array_layer: 0,
         layer_count: 1
     };

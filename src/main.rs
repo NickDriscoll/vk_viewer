@@ -185,7 +185,7 @@ fn main() {
         let sampler_subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
-            level_count: 11,
+            level_count: 9,
             base_array_layer: 0,
             layer_count: 1
         };
