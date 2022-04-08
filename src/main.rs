@@ -51,7 +51,7 @@ fn main() {
     let sdl_ctxt = unwrap_result(sdl2::init());
     let mut event_pump = unwrap_result(sdl_ctxt.event_pump());
     let video_subsystem = unwrap_result(sdl_ctxt.video());
-    let window_size = glm::vec2(1920, 1080);
+    let window_size = glm::vec2(1280, 720);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
@@ -1063,6 +1063,7 @@ fn main() {
     let mut sphere_spacing = 5.0;
     let mut sphere_amplitude = 3.0;
     let mut sphere_z_offset = 2.0;
+    let mut sphere_rotation = 3.0;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"));
@@ -1198,6 +1199,7 @@ fn main() {
         imgui::Slider::new("Sphere height", 1, 150).build(&imgui_ui, &mut sphere_height);
         imgui::Slider::new("Sphere spacing", 0.0, 20.0).build(&imgui_ui, &mut sphere_spacing);
         imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
+        imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
         imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
         if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
         if imgui_ui.checkbox("Wireframe view", &mut wireframe) {
@@ -1221,7 +1223,7 @@ fn main() {
                     i as f32 * sphere_spacing,
                     j as f32 * sphere_spacing,
                     sphere_z_offset + sphere_amplitude * f32::sin(timer.elapsed_time * (i + 7) as f32) + 5.0)
-                ) * glm::rotation(3.0 * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));                        
+                ) * glm::rotation(sphere_rotation * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));                        
                 let mvp = view_projection * sphere_matrix;
 
                 let trans_offset = i * 16 * sphere_height + j * 16;
@@ -1273,7 +1275,7 @@ fn main() {
                     let mut current_vertex = 0;
                     for vtx in vtx_buffer.iter() {
                         let idx = current_vertex * vert_size;
-                        verts[idx] = vtx.pos[0];
+                        verts[idx] =     vtx.pos[0];
                         verts[idx + 1] = vtx.pos[1];
                         verts[idx + 2] = vtx.uv[0];
                         verts[idx + 3] = vtx.uv[1];

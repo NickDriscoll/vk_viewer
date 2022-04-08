@@ -175,7 +175,6 @@ pub unsafe fn load_bc7_texture(
     for i in 0..mipmap_count {
         let w = width / (1 << i);
         let h = height / (1 << i);
-        println!("{} % {} is {}", w*h, 16, (w*h) % 16);
         let subresource_layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: i,
