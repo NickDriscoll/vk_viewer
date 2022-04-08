@@ -497,10 +497,11 @@ pub struct VirtualGeometry {
 pub struct VirtualDrawCall {
     pipeline: vk::Pipeline,
     geometry: VirtualGeometry,
-    push_constants: [u32; 4]
+    push_constants: [u32; 3]        //Assuming you get 12 fast bytes
 }
 
 pub struct FrameUniforms {
+    pipeline: vk::Pipeline,
     view_from_world: glm::TMat4<f32>,
     clip_from_view: glm::TMat4<f32>,
     clip_from_screen: glm::TMat4<f32>

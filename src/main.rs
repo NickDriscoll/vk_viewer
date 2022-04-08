@@ -10,6 +10,7 @@ use ash::vk;
 use ash::vk::Handle;
 use imgui::{DrawCmd, FontAtlasRefMut};
 use sdl2::event::Event;
+use sdl2::controller::GameController;
 use sdl2::mixer;
 use sdl2::mixer::Music;
 use structs::FreeCam;
@@ -51,6 +52,7 @@ fn main() {
     let sdl_ctxt = unwrap_result(sdl2::init());
     let mut event_pump = unwrap_result(sdl_ctxt.event_pump());
     let video_subsystem = unwrap_result(sdl_ctxt.video());
+    let controller_subsystem = unwrap_result(sdl_ctxt.game_controller());
     let window_size = glm::vec2(1280, 720);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
@@ -1072,23 +1074,44 @@ fn main() {
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
 
+    let mut game_controllers = [None, None, None, None];
+
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
 
         //Abstracted input variables
+        let mut movement_multiplier = 1.0f32;
         let mut movement_vector: glm::TVec3<f32> = glm::zero();
         let mut orientation_vector: glm::TVec2<f32> = glm::zero();
 
-        //Pump event queue
         let framerate;
         {
             use sdl2::event::WindowEvent;
             use sdl2::keyboard::{Scancode};
             use sdl2::mouse::MouseButton;
 
+            //Sync controller array with how many controllers are actually connected
+            for i in 0..game_controllers.len() {
+                match &mut game_controllers[i] {
+                    None => {
+                        if i < unwrap_result(controller_subsystem.num_joysticks()) as usize {
+                            let controller = unwrap_result(controller_subsystem.open(i as u32));
+                            game_controllers[i] = Some(controller);
+                        }
+                    }
+                    Some(controller) => {
+                        if !controller.attached() {
+                            game_controllers[i] = None;
+                        }
+                    }
+                }
+            }
+
             let imgui_io = imgui_context.io_mut();
             imgui_io.delta_time = timer.delta_time;
+            
+            //Pump event queue
             for event in event_pump.poll_iter() {
                 match event {
                     Event::Quit{..} => { break 'running; }
@@ -1115,7 +1138,7 @@ fn main() {
                     }
                     Event::MouseMotion { xrel, yrel, .. } => {
                         if camera.cursor_captured {
-                            const DAMPENING: f32 = 0.5 / 720.0;
+                            const DAMPENING: f32 = 0.25 / 360.0;
                             orientation_vector += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
                         }
                     }
@@ -1131,7 +1154,40 @@ fn main() {
             imgui_io.mouse_pos[0] = mouse_state.x() as f32;
             imgui_io.mouse_pos[1] = mouse_state.y() as f32;
 
-            let mut movement_multiplier = 1.0f32;
+            if let Some(controller) = &mut game_controllers[0] {
+                use sdl2::controller::{Axis, Button};
+                if controller.button(Button::A) {
+                    println!("Pressing A");
+                    unwrap_result(controller.set_rumble(0xFFFF, 0xFFFF, 30));
+                }
+
+                let left_trigger = controller.axis(Axis::TriggerLeft) as f32 / i16::MAX as f32;
+                movement_multiplier = 9.0 * left_trigger + 1.0;
+
+                const JOYSTICK_DEADZONE: f32 = 0.15;
+                let left_joy_vector = {
+                    let x = controller.axis(Axis::LeftX) as f32 / i16::MAX as f32;
+                    let y = controller.axis(Axis::LeftY) as f32 / i16::MAX as f32;
+                    let mut res = glm::vec3(x, -y, 0.0);
+                    if glm::length(&res) < JOYSTICK_DEADZONE {
+                        res = glm::zero();
+                    }
+                    res
+                };
+                let right_joy_vector = {
+                    let x = controller.axis(Axis::RightX) as f32 / i16::MAX as f32;
+                    let y = controller.axis(Axis::RightY) as f32 / i16::MAX as f32;
+                    let mut res = glm::vec2(x, -y);
+                    if glm::length(&res) < JOYSTICK_DEADZONE {
+                        res = glm::zero();
+                    }
+                    res
+                };
+
+                movement_vector += 5.0 * &left_joy_vector;
+                orientation_vector += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
+            }
+
             if keyboard_state.is_scancode_pressed(Scancode::LShift) {
                 movement_multiplier *= 15.0;
             }
@@ -1139,41 +1195,61 @@ fn main() {
                 movement_multiplier *= 0.25;
             }
             if keyboard_state.is_scancode_pressed(Scancode::W) {
-                movement_vector += movement_multiplier * glm::vec3(0.0, 0.0, -1.0);
+                movement_vector += glm::vec3(0.0, 1.0, 0.0);
             }
             if keyboard_state.is_scancode_pressed(Scancode::A) {
-                movement_vector += movement_multiplier * glm::vec3(-1.0, 0.0, 0.0);
+                movement_vector += glm::vec3(-1.0, 0.0, 0.0);
             }
             if keyboard_state.is_scancode_pressed(Scancode::S) {
-                movement_vector += movement_multiplier * glm::vec3(0.0, 0.0, 1.0);
+                movement_vector += glm::vec3(0.0, -1.0, 0.0);
             }
             if keyboard_state.is_scancode_pressed(Scancode::D) {
-                movement_vector += movement_multiplier * glm::vec3(1.0, 0.0, 0.0);
+                movement_vector += glm::vec3(1.0, 0.0, 0.0);
             }
             if keyboard_state.is_scancode_pressed(Scancode::Q) {
-                movement_vector += movement_multiplier * glm::vec3(0.0, -1.0, 0.0);
+                movement_vector += glm::vec3(0.0, 0.0, -1.0);
             }
             if keyboard_state.is_scancode_pressed(Scancode::E) {
-                movement_vector += movement_multiplier * glm::vec3(0.0, 1.0, 0.0);
+                movement_vector += glm::vec3(0.0, 0.0, 1.0);
             }
 
             framerate = imgui_io.framerate;
         }
 
         //Update
+        movement_vector *= movement_multiplier;
+
         let imgui_ui = imgui_context.frame();
         imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
+
+        let (message, color) =  if let Some(_) = &game_controllers[0] {
+            ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
+        } else {
+            ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])
+        };
+
+        let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
+        imgui_ui.text(message);
+        color_token.pop();
+
         if imgui_ui.button_with_size("Really long button with really long text", [0.0, 32.0]) {
             tfd::message_box_yes_no("The question", "What do you think?", tfd::MessageBoxIcon::Info, tfd::YesNo::Yes);
         }
-        
 
         //Camera orientation based on user input
         camera.orientation += orientation_vector;
         camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
         let view_matrix = camera.make_view_matrix();
+
         const CAMERA_SPEED: f32 = 3.0;
-        let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&movement_vector) * timer.delta_time;
+        let view_movement_vector = glm::mat4(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, -1.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 1.0
+        ) * glm::vec3_to_vec4(&movement_vector);
+        let view_movement_vector = glm::vec4_to_vec3(&view_movement_vector);
+        let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
         camera.position += glm::vec4_to_vec3(&delta_pos);
         let view_projection = projection_matrix * view_matrix;
 
@@ -1233,6 +1309,8 @@ fn main() {
             }
         }
         unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count)};
+
+        //Pre-render phase
 
         //Update bindless texture sampler descriptors
         if global_texture_update {
