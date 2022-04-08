@@ -51,7 +51,7 @@ fn main() {
     let sdl_ctxt = unwrap_result(sdl2::init());
     let mut event_pump = unwrap_result(sdl_ctxt.event_pump());
     let video_subsystem = unwrap_result(sdl_ctxt.video());
-    let window_size = glm::vec2(1280, 720);
+    let window_size = glm::vec2(1920, 1080);
     let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
@@ -185,7 +185,7 @@ fn main() {
         let sampler_subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
-            level_count: 1,
+            level_count: 11,
             base_array_layer: 0,
             layer_count: 1
         };

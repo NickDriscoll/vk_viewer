@@ -99,13 +99,19 @@ pub unsafe fn load_bc7_texture(
     let width = dds_header.width;
     let height = dds_header.height;
 
-    let mut raw_bytes = vec![0u8; (width * height) as usize];
+    let mut bytes_size = 0;
+    for i in 0..dds_header.mipmap_count {
+        let w = width / (1 << i);
+        let h = height / (1 << i);
+        bytes_size += w * h;
+    }
+
+    let mut raw_bytes = vec![0u8; bytes_size as usize];
     file.read_exact(&mut raw_bytes).unwrap();
-    let size = (raw_bytes.len()) as vk::DeviceSize;
 
     let buffer_create_info = vk::BufferCreateInfo {
         usage: vk::BufferUsageFlags::TRANSFER_SRC,
-        size,
+        size: bytes_size as vk::DeviceSize,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         ..Default::default()
     };
@@ -113,8 +119,8 @@ pub unsafe fn load_bc7_texture(
     let staging_buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, staging_buffer);    
     vk.device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
 
-    let staging_ptr = vk.device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
-    ptr::copy_nonoverlapping(raw_bytes.as_ptr(), staging_ptr as *mut _, size as usize);
+    let staging_ptr = vk.device.map_memory(staging_buffer_memory, 0, bytes_size as vk::DeviceSize, vk::MemoryMapFlags::empty()).unwrap();
+    ptr::copy_nonoverlapping(raw_bytes.as_ptr(), staging_ptr as *mut _, bytes_size as usize);
     vk.device.unmap_memory(staging_buffer_memory);
     
     let image_extent = vk::Extent3D {
@@ -148,7 +154,7 @@ pub unsafe fn load_bc7_texture(
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
         base_mip_level: 0,
-        level_count: 10,
+        level_count: dds_header.mipmap_count,
         base_array_layer: 0,
         layer_count: 1
     };
@@ -163,27 +169,39 @@ pub unsafe fn load_bc7_texture(
     };
     vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
-    let subresource_layers = vk::ImageSubresourceLayers {
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        mip_level: 0,
-        base_array_layer: 0,
-        layer_count: 1
+    let mut cumulative_offset = 0;
+    for i in 0..dds_header.mipmap_count {
+        let subresource_layers = vk::ImageSubresourceLayers {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_level: i,
+            base_array_layer: 0,
+            layer_count: 1
 
-    };
-    let copy_region = vk::BufferImageCopy {
-        buffer_offset: 0,
-        buffer_row_length: 0,
-        buffer_image_height: 0,
-        image_extent,
-        image_offset: vk::Offset3D::default(),
-        image_subresource: subresource_layers
-    };
-    vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
+        };
+        let w = width / (1 << i);
+        let h = height / (1 << i);
+        let image_extent = vk::Extent3D {
+            width: w,
+            height: h,
+            depth: 1
+        };
+        let copy_region = vk::BufferImageCopy {
+            buffer_offset: cumulative_offset as u64,
+            buffer_row_length: 0,
+            buffer_image_height: 0,
+            image_extent,
+            image_offset: vk::Offset3D::default(),
+            image_subresource: subresource_layers
+        };
+        vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
+
+        cumulative_offset += w * h;
+    }
     
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
         base_mip_level: 0,
-        level_count: 1,
+        level_count: dds_header.mipmap_count,
         base_array_layer: 0,
         layer_count: 1
     };
@@ -473,6 +491,7 @@ pub struct VirtualGeometry {
 }
 
 pub struct VirtualDrawCall {
+    pipeline: vk::Pipeline,
     geometry: VirtualGeometry,
     push_constants: [u32; 4]
 }
