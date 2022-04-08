@@ -30,11 +30,11 @@ unsafe fn get_memory_type_index(
     memory_type_index
 }
 
-pub unsafe fn allocate_buffer_memory(vk_instance: &ash::Instance, vk_physical_device: vk::PhysicalDevice, vk_device: &ash::Device, buffer: vk::Buffer) -> vk::DeviceMemory {
-    let mem_reqs = vk_device.get_buffer_memory_requirements(buffer);
+pub unsafe fn allocate_buffer_memory(vk: &VulkanAPI, buffer: vk::Buffer) -> vk::DeviceMemory {
+    let mem_reqs = vk.device.get_buffer_memory_requirements(buffer);
     let memory_type_index = get_memory_type_index(
-        &vk_instance,
-        vk_physical_device,
+        &vk.instance,
+        vk.physical_device,
         mem_reqs,
         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
     );
@@ -48,14 +48,14 @@ pub unsafe fn allocate_buffer_memory(vk_instance: &ash::Instance, vk_physical_de
         memory_type_index,
         ..Default::default()
     };
-    vk_device.allocate_memory(&alloc_info, VK_MEMORY_ALLOCATOR).unwrap()    
+    vk.device.allocate_memory(&alloc_info, VK_MEMORY_ALLOCATOR).unwrap()    
 }
 
-pub unsafe fn allocate_image_memory(vk_instance: &ash::Instance, vk_physical_device: vk::PhysicalDevice, vk_device: &ash::Device, image: vk::Image) -> vk::DeviceMemory {
-    let mem_reqs = vk_device.get_image_memory_requirements(image);
+pub unsafe fn allocate_image_memory(vk: &VulkanAPI, image: vk::Image) -> vk::DeviceMemory {
+    let mem_reqs = vk.device.get_image_memory_requirements(image);
 
     //Search for the largest DEVICE_LOCAL heap the device advertises
-    let memory_type_index = get_memory_type_index(&vk_instance, vk_physical_device, mem_reqs, vk::MemoryPropertyFlags::DEVICE_LOCAL);
+    let memory_type_index = get_memory_type_index(&vk.instance, vk.physical_device, mem_reqs, vk::MemoryPropertyFlags::DEVICE_LOCAL);
     if let None = memory_type_index {
         crash_with_error_dialog("Image memory allocation failed.");
     }
@@ -66,7 +66,7 @@ pub unsafe fn allocate_image_memory(vk_instance: &ash::Instance, vk_physical_dev
         memory_type_index,
         ..Default::default()
     };
-    vk_device.allocate_memory(&allocate_info, VK_MEMORY_ALLOCATOR).unwrap()
+    vk.device.allocate_memory(&allocate_info, VK_MEMORY_ALLOCATOR).unwrap()
 }
 
 pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
@@ -117,7 +117,7 @@ pub unsafe fn load_bc7_texture(
         ..Default::default()
     };
     let staging_buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
-    let staging_buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, staging_buffer);    
+    let staging_buffer_memory = vkutil::allocate_buffer_memory(&vk, staging_buffer);    
     vk.device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
 
     let staging_ptr = vk.device.map_memory(staging_buffer_memory, 0, bytes_size as vk::DeviceSize, vk::MemoryMapFlags::empty()).unwrap();
@@ -146,7 +146,7 @@ pub unsafe fn load_bc7_texture(
     };
     let image = vk.device.create_image(&image_create_info, VK_MEMORY_ALLOCATOR).unwrap();
 
-    let image_memory = dllr::allocate_image_memory(&vk.instance, vk.physical_device, &vk.device, image);
+    let image_memory = allocate_image_memory(&vk, image);
 
     vk.device.bind_image_memory(image, image_memory, 0).unwrap();
 

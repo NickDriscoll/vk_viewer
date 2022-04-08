@@ -3,7 +3,7 @@ extern crate nalgebra_glm as glm;
 extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
-mod dllr;
+mod vkutil;
 mod structs;
 
 use ash::vk;
@@ -70,7 +70,7 @@ fn main() {
     }
 
     //Initialize the Vulkan API
-    let vk = dllr::VulkanAPI::initialize(&window);
+    let vk = vkutil::VulkanAPI::initialize(&window);
 
     //Create command buffer
     let vk_command_buffer = unsafe {
@@ -140,7 +140,7 @@ fn main() {
 
     //Load grass billboard texture
     let grass_billboard_global_index = unsafe {
-        let image = dllr::load_bc7_texture(
+        let image = vkutil::load_bc7_texture(
             &vk,
             vk_command_buffer,
             "./data/textures/billboard_grass.dds"
@@ -176,7 +176,7 @@ fn main() {
 
     //Load steel plate texture
     let steel_plate_global_index = unsafe {
-        let image = dllr::load_bc7_texture(
+        let image = vkutil::load_bc7_texture(
             &vk,
             vk_command_buffer,
             "./data/textures/steel_plate/albedo.dds"
@@ -185,7 +185,7 @@ fn main() {
         let sampler_subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
-            level_count: 9,
+            level_count: 10,
             base_array_layer: 0,
             layer_count: 1
         };
@@ -223,7 +223,7 @@ fn main() {
                 ..Default::default()
             };
             let staging_buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
-            let staging_buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, staging_buffer);    
+            let staging_buffer_memory = vkutil::allocate_buffer_memory(&vk, staging_buffer);    
             vk.device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
 
             let staging_ptr = vk.device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
@@ -252,7 +252,7 @@ fn main() {
             };
             let vk_font_image = vk.device.create_image(&font_create_info, VK_MEMORY_ALLOCATOR).unwrap();
             
-            let font_image_memory = dllr::allocate_image_memory(&vk.instance, vk.physical_device, &vk.device, vk_font_image);
+            let font_image_memory = vkutil::allocate_image_memory(&vk, vk_font_image);
     
             vk.device.bind_image_memory(vk_font_image, font_image_memory, 0).unwrap();
 
@@ -461,7 +461,7 @@ fn main() {
         };
 
         let depth_image = vk.device.create_image(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
-        let depth_memory = dllr::allocate_image_memory(&vk.instance, vk.physical_device, &vk.device, depth_image);
+        let depth_memory = vkutil::allocate_image_memory(&vk, depth_image);
 
         //Bind the depth image to its memory
         vk.device.bind_image_memory(depth_image, depth_memory, 0).unwrap();
@@ -510,7 +510,7 @@ fn main() {
 
         vk_transform_storage_buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
         
-        let transform_buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, vk_transform_storage_buffer);
+        let transform_buffer_memory = vkutil::allocate_buffer_memory(&vk, vk_transform_storage_buffer);
 
         vk.device.bind_buffer_memory(vk_transform_storage_buffer, transform_buffer_memory, 0).unwrap();
 
@@ -681,14 +681,14 @@ fn main() {
 
     //Load shaders
     let vk_shader_stages = unsafe {
-        let v = dllr::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main_vert.spv");
-        let f = dllr::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/main_frag.spv");
+        let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main_vert.spv");
+        let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/main_frag.spv");
         [v, f]
     };
 
     let imgui_shader_stages = unsafe {
-        let v = dllr::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui_vert.spv");
-        let f = dllr::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui_frag.spv");
+        let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui_vert.spv");
+        let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui_frag.spv");
         [v, f]
     };
 
@@ -967,7 +967,7 @@ fn main() {
             buffer
         };
 
-        let buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, scene_geo_buffer);
+        let buffer_memory = vkutil::allocate_buffer_memory(&vk, scene_geo_buffer);
 
         //Bind buffer
         vk.device.bind_buffer_memory(scene_geo_buffer, buffer_memory, 0).unwrap();
@@ -981,7 +981,7 @@ fn main() {
         ).unwrap();
 
         //Create virtual bump allocator
-        let mut scene_geo_allocator = dllr::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
+        let mut scene_geo_allocator = vkutil::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
         g_plane_geometry = scene_geo_allocator.allocate_geometry(&g_plane_vertices, &g_plane_indices).unwrap();
         sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
@@ -998,12 +998,12 @@ fn main() {
             ..Default::default()
         };
         let buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();
-        let buffer_memory = dllr::allocate_buffer_memory(&vk.instance, vk.physical_device, &vk.device, buffer);
+        let buffer_memory = vkutil::allocate_buffer_memory(&vk, buffer);
         vk.device.bind_buffer_memory(buffer, buffer_memory, 0).unwrap();
 
         let ptr = vk.device.map_memory(buffer_memory, 0, imgui_buffer_size, vk::MemoryMapFlags::empty()).unwrap();
 
-        dllr::VirtualBumpAllocator::new(buffer, ptr, imgui_buffer_size)
+        vkutil::VirtualBumpAllocator::new(buffer, ptr, imgui_buffer_size)
     };
 
     let vk_render_area = {
