@@ -98,13 +98,16 @@ pub unsafe fn load_bc7_texture(
 
     let width = dds_header.width;
     let height = dds_header.height;
-    let mipmap_count = dds_header.mipmap_count - 2;
+    let mipmap_count = dds_header.mipmap_count;
 
     let mut bytes_size = 0;
     for i in 0..mipmap_count {
         let w = width / (1 << i);
         let h = height / (1 << i);
         bytes_size += w * h;
+
+        let alignment = 16;
+        bytes_size = (bytes_size + (alignment - 1)) & !(alignment - 1);   //Alignment is 2^N where N is a whole number
     }
 
     let mut raw_bytes = vec![0u8; bytes_size as usize];
@@ -187,6 +190,11 @@ pub unsafe fn load_bc7_texture(
             height: h,
             depth: 1
         };
+
+        let alignment = 16;
+        if alignment > 0 {
+            cumulative_offset = (cumulative_offset + (alignment - 1)) & !(alignment - 1);   //Alignment is 2^N where N is a whole number
+        }
         let copy_region = vk::BufferImageCopy {
             buffer_offset: cumulative_offset as u64,
             buffer_row_length: 0,

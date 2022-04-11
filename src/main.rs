@@ -10,7 +10,6 @@ use ash::vk;
 use ash::vk::Handle;
 use imgui::{DrawCmd, FontAtlasRefMut};
 use sdl2::event::Event;
-use sdl2::controller::GameController;
 use sdl2::mixer;
 use sdl2::mixer::Music;
 use structs::FreeCam;
@@ -49,13 +48,12 @@ fn unwrap_result<T, E: Display>(res: Result<T, E>) -> T {
 //Entry point
 fn main() {
     //Create the window using SDL
-    let sdl_ctxt = unwrap_result(sdl2::init());
-    let mut event_pump = unwrap_result(sdl_ctxt.event_pump());
-    let video_subsystem = unwrap_result(sdl_ctxt.video());
-    let controller_subsystem = unwrap_result(sdl_ctxt.game_controller());
-    let mut window_size = glm::vec2(1920, 1080);
-    let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build().unwrap();
-
+    let sdl_context = unwrap_result(sdl2::init());
+    let mut event_pump = unwrap_result(sdl_context.event_pump());
+    let video_subsystem = unwrap_result(sdl_context.video());
+    let controller_subsystem = unwrap_result(sdl_context.game_controller());
+    let mut window_size = glm::vec2(1280, 1024);
+    let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build());
     //Initialize the SDL mixer
     let mut music_volume = 16;
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
@@ -573,8 +571,6 @@ fn main() {
         vk.device.update_descriptor_sets(&[storage_write], &[]);
     }
 
-    
-
     //Load shaders
     let vk_shader_stages = unsafe {
         let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main_vert.spv");
@@ -936,6 +932,7 @@ fn main() {
         let mut movement_vector: glm::TVec3<f32> = glm::zero();
         let mut orientation_vector: glm::TVec2<f32> = glm::zero();
 
+        //Input
         let framerate;
         {
             use sdl2::event::WindowEvent;
@@ -968,7 +965,7 @@ fn main() {
                     Event::Quit{..} => { break 'running; }
                     Event::Window { win_event, .. } => {
                         match win_event {
-                            WindowEvent::Resized(x, y) => unsafe {
+                            WindowEvent::Resized(_, _) => unsafe {
                                 //Free the now-invalid swapchain data
                                 for framebuffer in vk_display.swapchain_framebuffers {
                                     vk.device.destroy_framebuffer(framebuffer, VK_MEMORY_ALLOCATOR);
@@ -979,7 +976,7 @@ fn main() {
                                 vk.device.destroy_image_view(vk_display.depth_image_view, VK_MEMORY_ALLOCATOR);
                                 vk_ext_swapchain.destroy_swapchain(vk_display.swapchain, VK_MEMORY_ALLOCATOR);
 
-                                //Recreate swapchain managing struct
+                                //Recreate swapchain and associated data
                                 vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
 
                                 window_size = glm::vec2(vk_display.extent.width, vk_display.extent.height);
@@ -993,7 +990,7 @@ fn main() {
                         match mouse_btn {
                             MouseButton::Right => {
                                 camera.cursor_captured = !camera.cursor_captured;
-                                let mouse_util = sdl_ctxt.mouse();
+                                let mouse_util = sdl_context.mouse();
                                 mouse_util.set_relative_mouse_mode(camera.cursor_captured);
                                 if !camera.cursor_captured {
                                     mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
