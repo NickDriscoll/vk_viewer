@@ -53,8 +53,8 @@ fn main() {
     let mut event_pump = unwrap_result(sdl_ctxt.event_pump());
     let video_subsystem = unwrap_result(sdl_ctxt.video());
     let controller_subsystem = unwrap_result(sdl_ctxt.game_controller());
-    let window_size = glm::vec2(1280, 720);
-    let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().vulkan().build().unwrap();
+    let mut window_size = glm::vec2(1920, 1080);
+    let window = video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build().unwrap();
 
     //Initialize the SDL mixer
     let mut music_volume = 16;
@@ -369,127 +369,84 @@ fn main() {
     //Create swapchain extension object
     let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk.instance, &vk.device);
 
-    //Create the main swapchain for window present
-    let vk_swapchain_image_format;
-    let vk_swapchain_extent;
-    let mut vk_swapchain = unsafe {
-        let present_mode = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap()[0];
-        let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
-        let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
-
-        //Search for an SRGB swapchain format
-        let mut surf_format = vk::SurfaceFormatKHR::default();
-        for sformat in surf_formats.iter() {
-            if sformat.format == vk::Format::B8G8R8A8_SRGB {
-                surf_format = *sformat;
-                break;
-            }
-            surf_format = vk::SurfaceFormatKHR::default();
+    //Search for an SRGB swapchain format    
+    let surf_formats = unsafe { vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap() };
+    let mut vk_surface_format = vk::SurfaceFormatKHR::default();
+    for sformat in surf_formats.iter() {
+        if sformat.format == vk::Format::B8G8R8A8_SRGB {
+            vk_surface_format = *sformat;
+            break;
         }
-
-        vk_swapchain_image_format = surf_format.format;
-        vk_swapchain_extent = surf_capabilities.current_extent;
-        let create_info = vk::SwapchainCreateInfoKHR {
-            surface: vk.surface,
-            min_image_count: surf_capabilities.min_image_count,
-            image_format: vk_swapchain_image_format,
-            image_color_space: surf_format.color_space,
-            image_extent: surf_capabilities.current_extent,
-            image_array_layers: 1,
-            image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            image_sharing_mode: vk::SharingMode::EXCLUSIVE,
-            queue_family_index_count: 1,
-            p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-            pre_transform: surf_capabilities.current_transform,
-            composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
-            present_mode,
-            ..Default::default()
-        };
-
-        let sc = vk_ext_swapchain.create_swapchain(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
-        sc
-    };
+        vk_surface_format = vk::SurfaceFormatKHR::default();
+    }
     
-    let vk_swapchain_image_views = unsafe {
-        let vk_swapchain_images = vk_ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
-
-        let mut image_views = Vec::with_capacity(vk_swapchain_images.len());
-        for i in 0..vk_swapchain_images.len() {
-            let image_subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let view_info = vk::ImageViewCreateInfo {
-                image: vk_swapchain_images[i],
-                format: vk_swapchain_image_format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: COMPONENT_MAPPING_DEFAULT,
-                subresource_range: image_subresource_range,
-                ..Default::default()
-            };
-
-            image_views.push(vk.device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap());
-        }
-
-        image_views
-    };
-
-    let vk_depth_format;
-    let vk_depth_image = unsafe {
-        let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
-        let extent = vk::Extent3D {
-            width: surf_capabilities.current_extent.width,
-            height: surf_capabilities.current_extent.height,
-            depth: 1
-        };
-
-        vk_depth_format = vk::Format::D24_UNORM_S8_UINT;
-        let create_info = vk::ImageCreateInfo {
-            queue_family_index_count: 1,
-            p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-            flags: vk::ImageCreateFlags::empty(),
-            image_type: vk::ImageType::TYPE_2D,
-            format: vk_depth_format,
-            extent,
-            mip_levels: 1,
-            array_layers: 1,
+    let vk_render_pass = unsafe {
+        let color_attachment_description = vk::AttachmentDescription {
+            format: vk_surface_format.format,
             samples: vk::SampleCountFlags::TYPE_1,
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::STORE,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
             ..Default::default()
         };
 
-        let depth_image = vk.device.create_image(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
-        let depth_memory = vkutil::allocate_image_memory(&vk, depth_image);
-
-        //Bind the depth image to its memory
-        vk.device.bind_image_memory(depth_image, depth_memory, 0).unwrap();
-
-        depth_image
-    };
-
-    let vk_depth_image_view = unsafe {
-        let image_subresource_range = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::DEPTH,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1
-        };
-        let view_info = vk::ImageViewCreateInfo {
-            image: vk_depth_image,
-            format: vk_depth_format,
-            view_type: vk::ImageViewType::TYPE_2D,
-            components: COMPONENT_MAPPING_DEFAULT,
-            subresource_range: image_subresource_range,
+        let depth_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::D24_UNORM_S8_UINT,
+            samples: vk::SampleCountFlags::TYPE_1,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::DONT_CARE,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             ..Default::default()
         };
 
-        vk.device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap()
+        let color_attachment_reference = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        };
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        };
+
+        let subpass = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+            color_attachment_count: 1,
+            p_color_attachments: &color_attachment_reference,
+            p_depth_stencil_attachment: &depth_attachment_reference,
+            ..Default::default()
+        };
+
+        let subpass_dependency = vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            dst_subpass: 0,
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            src_access_mask: vk::AccessFlags::NONE_KHR,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            ..Default::default()
+        };
+
+        let attachments = [color_attachment_description, depth_attachment_description];
+        let renderpass_info = vk::RenderPassCreateInfo {
+            attachment_count: attachments.len() as u32,
+            p_attachments: attachments.as_ptr(),
+            subpass_count: 1,
+            p_subpasses: &subpass,
+            dependency_count: 1,
+            p_dependencies: &subpass_dependency,
+            ..Default::default()
+        };
+        vk.device.create_render_pass(&renderpass_info, VK_MEMORY_ALLOCATOR).unwrap()
     };
+
+    //Create the main swapchain for window present
+    let mut vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
 
     let global_transform_slots = 1024 * 1024;
     let vk_uniform_buffer_size;
@@ -616,70 +573,7 @@ fn main() {
         vk.device.update_descriptor_sets(&[storage_write], &[]);
     }
 
-    let vk_render_pass = unsafe {
-        let color_attachment_description = vk::AttachmentDescription {
-            format: vk_swapchain_image_format,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::STORE,
-            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
-            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-            ..Default::default()
-        };
-
-        let depth_attachment_description = vk::AttachmentDescription {
-            format: vk_depth_format,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::DONT_CARE,
-            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
-            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            ..Default::default()
-        };
-
-        let color_attachment_reference = vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-        };
-        let depth_attachment_reference = vk::AttachmentReference {
-            attachment: 1,
-            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-        };
-
-        let subpass = vk::SubpassDescription {
-            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-            color_attachment_count: 1,
-            p_color_attachments: &color_attachment_reference,
-            p_depth_stencil_attachment: &depth_attachment_reference,
-            ..Default::default()
-        };
-
-        let subpass_dependency = vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            dst_subpass: 0,
-            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            src_access_mask: vk::AccessFlags::NONE_KHR,
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            ..Default::default()
-        };
-
-        let attachments = [color_attachment_description, depth_attachment_description];
-        let renderpass_info = vk::RenderPassCreateInfo {
-            attachment_count: attachments.len() as u32,
-            p_attachments: attachments.as_ptr(),
-            subpass_count: 1,
-            p_subpasses: &subpass,
-            dependency_count: 1,
-            p_dependencies: &subpass_dependency,
-            ..Default::default()
-        };
-        vk.device.create_render_pass(&renderpass_info, VK_MEMORY_ALLOCATOR).unwrap()
-    };
+    
 
     //Load shaders
     let vk_shader_stages = unsafe {
@@ -692,28 +586,6 @@ fn main() {
         let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui_vert.spv");
         let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui_frag.spv");
         [v, f]
-    };
-
-    //Create framebuffers
-    let vk_swapchain_framebuffers = unsafe {
-        let mut attachments = [vk::ImageView::default(), vk_depth_image_view];
-        let fb_info = vk::FramebufferCreateInfo {
-            render_pass: vk_render_pass,
-            attachment_count: attachments.len() as u32,
-            p_attachments: attachments.as_ptr(),
-            width: vk_swapchain_extent.width,
-            height: vk_swapchain_extent.height,
-            layers: 1,
-            ..Default::default()
-        };
-
-        let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
-        for view in vk_swapchain_image_views {
-            attachments[0] = view;
-            fbs.push(vk.device.create_framebuffer(&fb_info, VK_MEMORY_ALLOCATOR).unwrap())
-        }
-
-        fbs
     };
 
     //Create graphics pipelines
@@ -1008,17 +880,6 @@ fn main() {
         vkutil::VirtualBumpAllocator::new(buffer, ptr, imgui_buffer_size)
     };
 
-    let vk_render_area = {
-        let offset = vk::Offset2D {
-            x: 0,
-            y: 0
-        };
-        vk::Rect2D {
-            offset,
-            extent: vk_swapchain_extent
-        }
-    };
-
     let vk_color_clear = {
         let color = vk::ClearColorValue {
             float32: [0.0, 0.0, 0.0, 1.0]
@@ -1045,16 +906,6 @@ fn main() {
 
     //State for freecam controls
     let mut camera = FreeCam::new(glm::vec3(0.0f32, -10.0, 5.0));
-
-    let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.2, 50.0);
-
-    //Relative to GL clip space, Vulkan has negative Y and half Z.
-    let projection_matrix = glm::mat4(
-        1.0, 0.0, 0.0, 0.0,
-        0.0, -1.0, 0.0, 0.0,
-        0.0, 0.0, 0.5, 0.0,
-        0.0, 0.0, 0.5, 1.0,
-    ) * projection_matrix;
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
@@ -1118,7 +969,22 @@ fn main() {
                     Event::Window { win_event, .. } => {
                         match win_event {
                             WindowEvent::Resized(x, y) => unsafe {
-                                println!("Resized window to {}x{}", x, y);
+                                //Free the now-invalid swapchain data
+                                for framebuffer in vk_display.swapchain_framebuffers {
+                                    vk.device.destroy_framebuffer(framebuffer, VK_MEMORY_ALLOCATOR);
+                                }
+                                for view in vk_display.swapchain_image_views {
+                                    vk.device.destroy_image_view(view, VK_MEMORY_ALLOCATOR);
+                                }
+                                vk.device.destroy_image_view(vk_display.depth_image_view, VK_MEMORY_ALLOCATOR);
+                                vk_ext_swapchain.destroy_swapchain(vk_display.swapchain, VK_MEMORY_ALLOCATOR);
+
+                                //Recreate swapchain managing struct
+                                vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
+
+                                window_size = glm::vec2(vk_display.extent.width, vk_display.extent.height);
+                                imgui_io.display_size[0] = window_size.x as f32;
+                                imgui_io.display_size[1] = window_size.y as f32;
                             }
                             _ => {}
                         }
@@ -1251,6 +1117,17 @@ fn main() {
         let view_movement_vector = glm::vec4_to_vec3(&view_movement_vector);
         let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
         camera.position += glm::vec4_to_vec3(&delta_pos);
+
+        let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.2, 50.0);
+
+        //Relative to GL clip space, Vulkan has negative Y and half Z.
+        let projection_matrix = glm::mat4(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, -1.0, 0.0, 0.0,
+            0.0, 0.0, 0.5, 0.0,
+            0.0, 0.0, 0.5, 1.0,
+        ) * projection_matrix;
+
         let view_projection = projection_matrix * view_matrix;
 
         let mut transform_ptr = vk_scene_storage_buffer_ptr as *mut f32;
@@ -1394,20 +1271,30 @@ fn main() {
             let viewport = vk::Viewport {
                 x: 0.0,
                 y: 0.0,
-                width: vk_swapchain_extent.width as f32,
-                height: vk_swapchain_extent.height as f32,
+                width: vk_display.extent.width as f32,
+                height: vk_display.extent.height as f32,
                 min_depth: 0.0,
                 max_depth: 1.0
             };
             vk.device.cmd_set_viewport(vk_command_buffer, 0, &[viewport]);
 
             //Set scissor rect to be same as render area
+            let vk_render_area = {
+                let offset = vk::Offset2D {
+                    x: 0,
+                    y: 0
+                };
+                vk::Rect2D {
+                    offset,
+                    extent: vk_display.extent
+                }
+            };
             vk.device.cmd_set_scissor(vk_command_buffer, 0, &[vk_render_area]);
 
-            let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_display.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: vk_render_pass,
-                framebuffer: vk_swapchain_framebuffers[current_framebuffer_index],
+                framebuffer: vk_display.swapchain_framebuffers[current_framebuffer_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
@@ -1497,11 +1384,11 @@ fn main() {
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
-                p_swapchains: &vk_swapchain,
+                p_swapchains: &vk_display.swapchain,
                 p_image_indices: &(current_framebuffer_index as u32),
                 ..Default::default()
             };
-            vk_ext_swapchain.queue_present(queue, &present_info).unwrap();
+            unwrap_result(vk_ext_swapchain.queue_present(queue, &present_info));
         }
     }
 }

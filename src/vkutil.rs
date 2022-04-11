@@ -431,9 +431,9 @@ pub struct VirtualBumpAllocator {
 
 impl VirtualBumpAllocator {
     //Read-only access to fields
-    pub fn backing_buffer(&self) -> vk::Buffer { self.backing_buffer }
-    pub fn current_offset(&self) -> u64 { self.current_offset }
-    pub fn max_size(&self) -> u64 { self.max_size }
+    //pub fn backing_buffer(&self) -> vk::Buffer { self.backing_buffer }
+    //pub fn current_offset(&self) -> u64 { self.current_offset }
+    //pub fn max_size(&self) -> u64 { self.max_size }
 
     pub fn new(backing_buffer: vk::Buffer, ptr: *mut c_void, max_size: u64) -> Self {
         VirtualBumpAllocator {
@@ -505,4 +505,174 @@ pub struct FrameUniforms {
     view_from_world: glm::TMat4<f32>,
     clip_from_view: glm::TMat4<f32>,
     clip_from_screen: glm::TMat4<f32>
+}
+
+pub struct Display {
+    pub swapchain: vk::SwapchainKHR,
+    pub extent: vk::Extent2D,
+    pub color_format: vk::Format,
+    pub depth_format: vk::Format,
+    pub depth_image: vk::Image,
+    pub depth_image_view: vk::ImageView,
+    pub swapchain_image_views: Vec<vk::ImageView>,
+    pub swapchain_framebuffers: Vec<vk::Framebuffer>
+}
+
+impl Display {
+    pub fn initialize_swapchain(vk: &VulkanAPI, vk_ext_swapchain: &ash::extensions::khr::Swapchain, render_pass: vk::RenderPass) -> Self {
+        //Create the main swapchain for window present
+        let vk_swapchain_image_format;
+        let vk_swapchain_extent;
+        let vk_swapchain = unsafe {
+            let present_mode = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap()[0];
+            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
+            let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
+
+            //Search for an SRGB swapchain format
+            let mut surf_format = vk::SurfaceFormatKHR::default();
+            for sformat in surf_formats.iter() {
+                if sformat.format == vk::Format::B8G8R8A8_SRGB {
+                    surf_format = *sformat;
+                    break;
+                }
+                surf_format = vk::SurfaceFormatKHR::default();
+            }
+
+            vk_swapchain_image_format = surf_format.format;
+            vk_swapchain_extent = surf_capabilities.current_extent;
+            let create_info = vk::SwapchainCreateInfoKHR {
+                surface: vk.surface,
+                min_image_count: surf_capabilities.min_image_count,
+                image_format: vk_swapchain_image_format,
+                image_color_space: surf_format.color_space,
+                image_extent: surf_capabilities.current_extent,
+                image_array_layers: 1,
+                image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                image_sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                pre_transform: surf_capabilities.current_transform,
+                composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+                present_mode,
+                ..Default::default()
+            };
+
+            let sc = vk_ext_swapchain.create_swapchain(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            sc
+        };
+        
+        let vk_swapchain_image_views = unsafe {
+            let vk_swapchain_images = vk_ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
+
+            let mut image_views = Vec::with_capacity(vk_swapchain_images.len());
+            for i in 0..vk_swapchain_images.len() {
+                let image_subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                };
+                let view_info = vk::ImageViewCreateInfo {
+                    image: vk_swapchain_images[i],
+                    format: vk_swapchain_image_format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: image_subresource_range,
+                    ..Default::default()
+                };
+
+                image_views.push(vk.device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap());
+            }
+
+            image_views
+        };
+
+        let vk_depth_format;
+        let vk_depth_image = unsafe {
+            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
+            let extent = vk::Extent3D {
+                width: surf_capabilities.current_extent.width,
+                height: surf_capabilities.current_extent.height,
+                depth: 1
+            };
+
+            vk_depth_format = vk::Format::D24_UNORM_S8_UINT;
+            let create_info = vk::ImageCreateInfo {
+                queue_family_index_count: 1,
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                flags: vk::ImageCreateFlags::empty(),
+                image_type: vk::ImageType::TYPE_2D,
+                format: vk_depth_format,
+                extent,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+
+            let depth_image = vk.device.create_image(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            let depth_memory = vkutil::allocate_image_memory(&vk, depth_image);
+
+            //Bind the depth image to its memory
+            vk.device.bind_image_memory(depth_image, depth_memory, 0).unwrap();
+
+            depth_image
+        };
+
+        let vk_depth_image_view = unsafe {
+            let image_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let view_info = vk::ImageViewCreateInfo {
+                image: vk_depth_image,
+                format: vk_depth_format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: COMPONENT_MAPPING_DEFAULT,
+                subresource_range: image_subresource_range,
+                ..Default::default()
+            };
+
+            vk.device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap()
+        };
+
+        //Create framebuffers
+        let vk_swapchain_framebuffers = unsafe {
+            let mut attachments = [vk::ImageView::default(), vk_depth_image_view];
+            let fb_info = vk::FramebufferCreateInfo {
+                render_pass,
+                attachment_count: attachments.len() as u32,
+                p_attachments: attachments.as_ptr(),
+                width: vk_swapchain_extent.width,
+                height: vk_swapchain_extent.height,
+                layers: 1,
+                ..Default::default()
+            };
+    
+            let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
+            for view in vk_swapchain_image_views.iter() {
+                attachments[0] = view.clone();
+                fbs.push(vk.device.create_framebuffer(&fb_info, VK_MEMORY_ALLOCATOR).unwrap())
+            }
+    
+            fbs
+        };
+
+        Display {
+            swapchain: vk_swapchain,
+            extent: vk_swapchain_extent,
+            color_format: vk_swapchain_image_format,
+            depth_format: vk_depth_format,
+            depth_image: vk_depth_image,
+            swapchain_image_views: vk_swapchain_image_views,
+            depth_image_view: vk_depth_image_view,
+            swapchain_framebuffers: vk_swapchain_framebuffers
+        }
+    }
 }
