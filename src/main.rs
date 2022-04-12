@@ -3,6 +3,7 @@ extern crate nalgebra_glm as glm;
 extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
+#[macro_use]
 mod vkutil;
 mod structs;
 
@@ -54,6 +55,7 @@ fn main() {
     let controller_subsystem = unwrap_result(sdl_context.game_controller());
     let mut window_size = glm::vec2(1280, 1024);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build());
+    
     //Initialize the SDL mixer
     let mut music_volume = 16;
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
@@ -375,7 +377,6 @@ fn main() {
             vk_surface_format = *sformat;
             break;
         }
-        vk_surface_format = vk::SurfaceFormatKHR::default();
     }
     
     let vk_render_pass = unsafe {
@@ -452,9 +453,7 @@ fn main() {
     let vk_scene_storage_buffer_ptr = unsafe {
         let mut buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
         let alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
-        if alignment > 0 {
-            buffer_size = (buffer_size + (alignment - 1)) & !(alignment - 1);   //Alignment is 2^N where N is a whole number
-        }
+        buffer_size = size_to_alignment!(buffer_size, alignment);
         vk_uniform_buffer_size = buffer_size;
         println!("Transform buffer is {} bytes", vk_uniform_buffer_size);
 
@@ -507,7 +506,7 @@ fn main() {
         let push_constant_range = vk::PushConstantRange {
             stage_flags: push_constant_shader_stage_flags,
             offset: 0,
-            size: size_of::<u32>() as u32
+            size: 3 * size_of::<u32>() as u32
         };
         let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
             push_constant_range_count: 1,
@@ -548,6 +547,7 @@ fn main() {
         };
         vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap()
     };
+    println!("There are {} descriptor sets", vk_descriptor_sets.len());
 
     //Write initial values to descriptors
     unsafe {
@@ -774,19 +774,12 @@ fn main() {
         };
 
         let imgui_pipeline_info = vk::GraphicsPipelineCreateInfo {
-            layout: vk_pipeline_layout,
             p_vertex_input_state: &im_vertex_input_state,
-            p_input_assembly_state: &input_assembly_state,
             p_rasterization_state: &imgui_rasterization_state,
-            p_color_blend_state: &color_blend_pipeline_state,
-            p_multisample_state: &multisample_state,
-            p_dynamic_state: &dynamic_state,
-            p_viewport_state: &viewport_state,
             p_depth_stencil_state: &imgui_depth_stencil_state,
             p_stages: imgui_shader_stages.as_ptr(),
             stage_count: imgui_shader_stages.len() as u32,
-            render_pass: vk_render_pass,
-            ..Default::default()
+            ..graphics_pipeline_info
         };
 
         let wire_raster_state = vk::PipelineRasterizationStateCreateInfo {
@@ -803,30 +796,25 @@ fn main() {
         [pipelines[0], pipelines[1], pipelines[2]]
     };
 
-    let g_plane_width = 64;
-    let g_plane_height = 64;
-    let g_plane_vertices = ozy::prims::plane_vertex_buffer(g_plane_width, g_plane_height, 5.0);
-    let g_plane_indices = ozy::prims::plane_index_buffer(g_plane_width, g_plane_height);
+    let plane_width = 64;
+    let plane_height = 64;
+    let plane_vertices = ozy::prims::plane_vertex_buffer(plane_width, plane_height, 5.0);
+    let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
 
     //Load UV sphere OzyMesh
     let uv_sphere = OzyMesh::load("./data/models/sphere.ozy").unwrap();
     let uv_sphere_indices: Vec<u32> = uv_sphere.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
-    let scene_vertex_buffers = [g_plane_vertices.as_slice(), uv_sphere.vertex_array.vertices.as_slice()];
-    let scene_index_buffers = [g_plane_indices.as_slice(), uv_sphere_indices.as_slice()];
+    let scene_vertex_buffers = [plane_vertices.as_slice(), uv_sphere.vertex_array.vertices.as_slice()];
+    let scene_index_buffers = [plane_indices.as_slice(), uv_sphere_indices.as_slice()];
 
     //Allocate and distribute memory to buffer objects
     let g_plane_geometry;
     let sphere_geometry;
     unsafe {
-        let mut scene_geo_buffer_size = 0;
+        let scene_geo_buffer_size = 256 * 1024 * 1024;
         let scene_geo_buffer = {
             //Buffer creation
-            for (&v_buffer, &i_buffer) in scene_vertex_buffers.iter().zip(scene_index_buffers.iter()) {
-                scene_geo_buffer_size += v_buffer.len() * size_of::<f32>();
-                scene_geo_buffer_size += i_buffer.len() * size_of::<u32>();
-            }
-            
             let buffer_create_info = vk::BufferCreateInfo {
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
                 size: scene_geo_buffer_size as vk::DeviceSize,
@@ -853,7 +841,7 @@ fn main() {
         //Create virtual bump allocator
         let mut scene_geo_allocator = vkutil::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
-        g_plane_geometry = scene_geo_allocator.allocate_geometry(&g_plane_vertices, &g_plane_indices).unwrap();
+        g_plane_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
         sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
 
         vk.device.unmap_memory(buffer_memory);
@@ -923,9 +911,13 @@ fn main() {
 
     let mut game_controllers = [None, None, None, None];
 
+    let mut vk_draw_calls = Vec::with_capacity(64);
+
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
+
+        let mut last_bound_pipeline = vk::Pipeline::default();
 
         //Abstracted input variables
         let mut movement_multiplier = 1.0f32;
@@ -1082,22 +1074,15 @@ fn main() {
         //Update
         movement_vector *= movement_multiplier;
 
-        let imgui_ui = imgui_context.frame();
-        imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
-
-        let (message, color) =  if let Some(_) = &game_controllers[0] {
-            ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
-        } else {
-            ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])
+        let mut pcs = [0; 12];
+        pcs[0] = 1;
+        let dc = vkutil::VirtualDrawCall {
+            pipeline: main_pipeline,
+            geometry: &g_plane_geometry,
+            push_constants: pcs,
+            instance_count: 1
         };
-
-        let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
-        imgui_ui.text(message);
-        color_token.pop();
-
-        if imgui_ui.button_with_size("Really long button with really long text", [0.0, 32.0]) {
-            tfd::message_box_yes_no("The question", "What do you think?", tfd::MessageBoxIcon::Info, tfd::YesNo::Yes);
-        }
+        vk_draw_calls.push(dc);
 
         //Camera orientation based on user input
         camera.orientation += orientation_vector;
@@ -1145,27 +1130,7 @@ fn main() {
             transform_ptr = transform_ptr.offset(16);
         };
 
-        imgui::Slider::new("Sphere width", 1, 150).build(&imgui_ui, &mut sphere_width);
-        imgui::Slider::new("Sphere height", 1, 150).build(&imgui_ui, &mut sphere_height);
-        imgui::Slider::new("Sphere spacing", 0.0, 20.0).build(&imgui_ui, &mut sphere_spacing);
-        imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
-        imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
-        imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
-        if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
-        if imgui_ui.checkbox("Wireframe view", &mut wireframe) {
-            if !wireframe {
-                main_pipeline = vk_3D_graphics_pipeline;
-            } else {
-                main_pipeline = vk_wireframe_graphics_pipeline;
-            }
-        }
-
         let sphere_count = sphere_width as usize * sphere_height as usize;
-        imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
-        if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
-            break 'running;
-        }
-
         let mut sphere_transforms = vec![0.0; 16 * sphere_count];
         for i in 0..sphere_width {
             for j in 0..sphere_height {
@@ -1183,6 +1148,62 @@ fn main() {
             }
         }
         unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count)};
+
+        let imgui_ui = imgui_context.frame();
+
+        if let Some(win_token) = imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui) {
+            if let Some(menu_token) = imgui_ui.begin_menu_bar() {
+                if let Some(memory_token) = imgui_ui.begin_menu("Memory") {
+
+
+                    memory_token.end();
+                }
+
+                menu_token.end();
+            }
+
+            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
+    
+            let (message, color) =  if game_controllers[0].is_some() {
+                ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
+            } else {
+                ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])
+            };
+    
+            let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
+            imgui_ui.text(message);
+            color_token.pop();
+    
+            imgui::Slider::new("Sphere width", 1, 150).build(&imgui_ui, &mut sphere_width);
+            imgui::Slider::new("Sphere height", 1, 150).build(&imgui_ui, &mut sphere_height);
+            imgui::Slider::new("Sphere spacing", 0.0, 20.0).build(&imgui_ui, &mut sphere_spacing);
+            imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
+            imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
+            imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
+            if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
+            if imgui_ui.checkbox("Wireframe view", &mut wireframe) {
+                if !wireframe {
+                    main_pipeline = vk_3D_graphics_pipeline;
+                } else {
+                    main_pipeline = vk_wireframe_graphics_pipeline;
+                }
+            }
+    
+            imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
+            if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
+                break 'running;
+            }
+
+            win_token.end();
+        }
+        
+        let dc = vkutil::VirtualDrawCall {
+            pipeline: main_pipeline,
+            geometry: &sphere_geometry,
+            push_constants: [0; 12],
+            instance_count: sphere_count as u32
+        };
+        vk_draw_calls.push(dc);
 
         //Pre-render phase
 
@@ -1299,23 +1320,20 @@ fn main() {
             };
             vk.device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
-            //Bind main rendering pipeline to GRAPHICS pipeline bind point
-            vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, main_pipeline);
-
             //Once per frame descriptor binding
             vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
-            //Bind plane's render data
-            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &steel_plate_global_index.to_le_bytes());
-            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[g_plane_geometry.vertex_buffer.backing_buffer()], &[g_plane_geometry.vertex_buffer.offset() as u64]);
-            vk.device.cmd_bind_index_buffer(vk_command_buffer, g_plane_geometry.index_buffer.backing_buffer(), (g_plane_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-            vk.device.cmd_draw_indexed(vk_command_buffer, g_plane_geometry.index_count, 1, 0, 0, 0);
-
-            //Bind sphere's render data
-            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &grass_billboard_global_index.to_le_bytes());
-            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[sphere_geometry.vertex_buffer.backing_buffer()], &[sphere_geometry.vertex_buffer.offset() as u64]);
-            vk.device.cmd_bind_index_buffer(vk_command_buffer, sphere_geometry.index_buffer.backing_buffer(), (sphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-            vk.device.cmd_draw_indexed(vk_command_buffer, sphere_geometry.index_count, sphere_count as u32, 0, 0, 1);
+            //Iterate through draw calls
+            for virtual_draw in vk_draw_calls.drain(0..vk_draw_calls.len()) {
+                if virtual_draw.pipeline != last_bound_pipeline {
+                    vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, virtual_draw.pipeline);
+                    last_bound_pipeline = virtual_draw.pipeline;
+                }
+                vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[virtual_draw.geometry.vertex_buffer.backing_buffer()], &[virtual_draw.geometry.vertex_buffer.offset() as u64]);
+                vk.device.cmd_bind_index_buffer(vk_command_buffer, virtual_draw.geometry.index_buffer.backing_buffer(), (virtual_draw.geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+                vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &virtual_draw.push_constants);
+                vk.device.cmd_draw_indexed(vk_command_buffer, virtual_draw.geometry.index_count, virtual_draw.instance_count, 0, 0, 1);
+            }
 
             //Record Dear ImGUI drawing commands
             vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);

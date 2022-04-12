@@ -1,4 +1,4 @@
-use std::{ffi::c_void, io::Read};
+use std::{ffi::c_void, io::Read, ops::{Add, Not, Sub, BitAnd}};
 
 use ash::vk;
 use ozy::io::DDSHeader;
@@ -88,6 +88,18 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
     }
 }
 
+macro_rules! size_to_alignment {
+    ($in_size:ident, $alignment:expr) => {
+        {
+            let mut final_size = $in_size;
+            if $alignment > 0 {
+                final_size = (final_size + ($alignment - 1)) & !($alignment - 1);   //Alignment is 2^N where N is a whole number
+            }
+            final_size
+        }
+    };
+}
+
 pub unsafe fn load_bc7_texture(
     vk: &VulkanAPI,
     vk_command_buffer: vk::CommandBuffer,
@@ -106,8 +118,7 @@ pub unsafe fn load_bc7_texture(
         let h = height / (1 << i);
         bytes_size += w * h;
 
-        let alignment = 16;
-        bytes_size = (bytes_size + (alignment - 1)) & !(alignment - 1);   //Alignment is 2^N where N is a whole number
+        bytes_size = size_to_alignment!(bytes_size, 16);
     }
 
     let mut raw_bytes = vec![0u8; bytes_size as usize];
@@ -191,10 +202,7 @@ pub unsafe fn load_bc7_texture(
             depth: 1
         };
 
-        let alignment = 16;
-        if alignment > 0 {
-            cumulative_offset = (cumulative_offset + (alignment - 1)) & !(alignment - 1);   //Alignment is 2^N where N is a whole number
-        }
+        cumulative_offset = size_to_alignment!(cumulative_offset, 16);
         let copy_region = vk::BufferImageCopy {
             buffer_offset: cumulative_offset as u64,
             buffer_row_length: 0,
@@ -259,8 +267,6 @@ pub struct VulkanAPI {
 
 impl VulkanAPI {
     pub fn initialize(window: &Window) -> Self {
-        
-        //Initialize the Vulkan API
         let vk_entry = ash::Entry::linked();
         let vk_instance = {
             let app_info = vk::ApplicationInfo {
@@ -502,14 +508,14 @@ pub struct VirtualGeometry {
     pub index_count: u32
 }
 
-pub struct VirtualDrawCall {
-    pipeline: vk::Pipeline,
-    geometry: VirtualGeometry,
-    push_constants: [u32; 3]        //Assuming you get 12 fast bytes
+pub struct VirtualDrawCall<'a> {
+    pub geometry: &'a VirtualGeometry,
+    pub pipeline: vk::Pipeline,
+    pub push_constants: [u8; 12],        //Assuming you get 12 fast bytes
+    pub instance_count: u32
 }
 
 pub struct FrameUniforms {
-    pipeline: vk::Pipeline,
     view_from_world: glm::TMat4<f32>,
     clip_from_view: glm::TMat4<f32>,
     clip_from_screen: glm::TMat4<f32>
