@@ -23,6 +23,5 @@ layout (std140, set = 0, binding = 2) readonly buffer InstanceData {
 void main() {
     f_color = vec4(normal * 0.5 + 0.5, 1.0);
     f_uv = uv;
-    //gl_Position = clip_from_world * model_matrices[gl_InstanceIndex] * vec4(position, 1.0);
-    gl_Position = clip_from_world * vec4(position, 1.0);
+    gl_Position = clip_from_world * model_matrices[gl_InstanceIndex] * vec4(position, 1.0);
 }

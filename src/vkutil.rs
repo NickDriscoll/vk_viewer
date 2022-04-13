@@ -514,7 +514,8 @@ pub struct VirtualDrawCall<'a> {
     pub geometry: &'a VirtualGeometry,
     pub pipeline: vk::Pipeline,
     pub push_constants: [u8; 12],        //Assuming you get 12 fast bytes
-    pub instance_count: u32
+    pub instance_count: u32,
+    pub first_instance: u32
 }
 
 pub struct FrameUniforms {

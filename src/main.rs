@@ -519,13 +519,13 @@ fn main() {
         let transforms_binding = vk::DescriptorSetLayoutBinding {
             binding: 2,
             descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: global_transform_slots as u32,
+            descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::VERTEX,
             ..Default::default()
         };
         let transforms_pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: global_transform_slots as u32
+            descriptor_count: 1
         };
 
         let bindings = [uniform_binding, texture_binding, transforms_binding];
@@ -586,15 +586,11 @@ fn main() {
             }
         ];
 
-        let mut buffer_infos = Vec::with_capacity(global_transform_slots);
-        for i in 0..global_transform_slots {
-            let info = vk::DescriptorBufferInfo {
-                buffer: vk_transform_storage_buffer,
-                offset: (i * size_of::<glm::TMat4<f32>>()) as vk::DeviceSize,
-                range: (size_of::<glm::TMat4<f32>>()) as vk::DeviceSize
-            };
-            buffer_infos.push(info);
-        }
+        let storage_info = vk::DescriptorBufferInfo {
+            buffer: vk_transform_storage_buffer,
+            offset: 0,
+            range: (global_transform_slots * size_of::<glm::TMat4<f32>>()) as vk::DeviceSize
+        };
 
         let uniform_write = vk::WriteDescriptorSet {
             dst_set: vk_descriptor_sets[0],
@@ -610,7 +606,7 @@ fn main() {
             dst_set: vk_descriptor_sets[0],
             descriptor_count: 1,
             descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            p_buffer_info: buffer_infos.as_ptr(),
+            p_buffer_info: &storage_info,
             dst_array_element: 0,
             dst_binding: 2,
             ..Default::default()
@@ -1147,7 +1143,8 @@ fn main() {
             pipeline: main_pipeline,
             geometry: &g_plane_geometry,
             push_constants: pcs.try_into().unwrap(),
-            instance_count: 1
+            instance_count: 1,
+            first_instance: 0
         };
         vk_draw_calls.push(dc);
 
@@ -1203,16 +1200,20 @@ fn main() {
                     i as f32 * sphere_spacing,
                     j as f32 * sphere_spacing,
                     sphere_z_offset + sphere_amplitude * f32::sin(timer.elapsed_time * (i + 7) as f32) + 5.0)
-                ) * glm::rotation(sphere_rotation * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));                        
-                let mvp = view_projection * sphere_matrix;
+                ) * glm::rotation(sphere_rotation * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
                 let trans_offset = i * 16 * sphere_height + j * 16;
                 for k in 0..16 {
-                    sphere_transforms[(trans_offset + k) as usize] = mvp[k as usize];
+                    sphere_transforms[(trans_offset + k) as usize] = sphere_matrix[k as usize];
                 }
             }
         }
-        unsafe { ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count)};
+        unsafe {
+            let plane_model_matrix = glm::scaling(&glm::vec3(5.0, 5.0, 5.0));
+            ptr::copy_nonoverlapping(plane_model_matrix.as_ptr(), transform_ptr, 16);
+            transform_ptr = transform_ptr.offset(16);
+            ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count);
+        };
 
         let imgui_ui = imgui_context.frame();
         if do_imgui {
@@ -1267,7 +1268,8 @@ fn main() {
             pipeline: main_pipeline,
             geometry: &sphere_geometry,
             push_constants: [0; 12],
-            instance_count: sphere_count as u32
+            instance_count: sphere_count as u32,
+            first_instance: 1
         };
         vk_draw_calls.push(dc);
 
@@ -1399,7 +1401,7 @@ fn main() {
                 vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &virtual_draw.push_constants);
                 vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[virtual_draw.geometry.vertex_buffer.backing_buffer()], &[virtual_draw.geometry.vertex_buffer.offset() as u64]);
                 vk.device.cmd_bind_index_buffer(vk_command_buffer, virtual_draw.geometry.index_buffer.backing_buffer(), (virtual_draw.geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-                vk.device.cmd_draw_indexed(vk_command_buffer, virtual_draw.geometry.index_count, virtual_draw.instance_count, 0, 0, 0);
+                vk.device.cmd_draw_indexed(vk_command_buffer, virtual_draw.geometry.index_count, virtual_draw.instance_count, 0, 0, virtual_draw.first_instance);
             }
 
             //Record Dear ImGUI drawing commands
