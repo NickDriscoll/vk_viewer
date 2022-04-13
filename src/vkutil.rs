@@ -6,6 +6,8 @@ use sdl2::video::Window;
 use std::ptr;
 use crate::*;
 
+pub const MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
+
 unsafe fn get_memory_type_index(
     vk_instance: &ash::Instance,
     vk_physical_device: vk::PhysicalDevice,
@@ -48,7 +50,7 @@ pub unsafe fn allocate_buffer_memory(vk: &VulkanAPI, buffer: vk::Buffer) -> vk::
         memory_type_index,
         ..Default::default()
     };
-    vk.device.allocate_memory(&alloc_info, VK_MEMORY_ALLOCATOR).unwrap()    
+    vk.device.allocate_memory(&alloc_info, vkutil::MEMORY_ALLOCATOR).unwrap()    
 }
 
 pub unsafe fn allocate_image_memory(vk: &VulkanAPI, image: vk::Image) -> vk::DeviceMemory {
@@ -66,7 +68,7 @@ pub unsafe fn allocate_image_memory(vk: &VulkanAPI, image: vk::Image) -> vk::Dev
         memory_type_index,
         ..Default::default()
     };
-    vk.device.allocate_memory(&allocate_info, VK_MEMORY_ALLOCATOR).unwrap()
+    vk.device.allocate_memory(&allocate_info, vkutil::MEMORY_ALLOCATOR).unwrap()
 }
 
 pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
@@ -78,7 +80,7 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
         p_code: spv.as_ptr(),
         ..Default::default()
     };
-    let module = vk_device.create_shader_module(&module_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+    let module = vk_device.create_shader_module(&module_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
 
     vk::PipelineShaderStageCreateInfo {
         stage: shader_stage_flags,
@@ -130,7 +132,7 @@ pub unsafe fn load_bc7_texture(
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         ..Default::default()
     };
-    let staging_buffer = vk.device.create_buffer(&buffer_create_info, VK_MEMORY_ALLOCATOR).unwrap();            
+    let staging_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();            
     let staging_buffer_memory = vkutil::allocate_buffer_memory(&vk, staging_buffer);    
     vk.device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
 
@@ -158,7 +160,7 @@ pub unsafe fn load_bc7_texture(
         initial_layout: vk::ImageLayout::UNDEFINED,
         ..Default::default()
     };
-    let image = vk.device.create_image(&image_create_info, VK_MEMORY_ALLOCATOR).unwrap();
+    let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
 
     let image_memory = allocate_image_memory(&vk, image);
 
@@ -244,12 +246,12 @@ pub unsafe fn load_bc7_texture(
         ..Default::default()
     };
 
-    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), VK_MEMORY_ALLOCATOR).unwrap();
+    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
     let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
     vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-    vk.device.destroy_fence(fence, VK_MEMORY_ALLOCATOR);
-    vk.device.destroy_buffer(staging_buffer, VK_MEMORY_ALLOCATOR);
+    vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
+    vk.device.destroy_buffer(staging_buffer, vkutil::MEMORY_ALLOCATOR);
 
     image
 }
@@ -304,7 +306,7 @@ impl VulkanAPI {
                 ..Default::default()
             };
 
-            unsafe { vk_entry.create_instance(&vk_create_info, VK_MEMORY_ALLOCATOR).unwrap() }
+            unsafe { vk_entry.create_instance(&vk_create_info, vkutil::MEMORY_ALLOCATOR).unwrap() }
         };
 
         //Use SDL to create the Vulkan surface
@@ -381,7 +383,7 @@ impl VulkanAPI {
                         ..Default::default()
                     };
 
-                    vk_instance.create_device(vk_physical_device, &create_info, VK_MEMORY_ALLOCATOR).unwrap()
+                    vk_instance.create_device(vk_physical_device, &create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
                 }
                 Err(e) => {
                     crash_with_error_dialog(&format!("Unable to enumerate physical devices: {}", e));
@@ -571,7 +573,7 @@ impl Display {
                 ..Default::default()
             };
 
-            let sc = vk_ext_swapchain.create_swapchain(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            let sc = vk_ext_swapchain.create_swapchain(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
             sc
         };
         
@@ -596,7 +598,7 @@ impl Display {
                     ..Default::default()
                 };
 
-                image_views.push(vk.device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap());
+                image_views.push(vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap());
             }
 
             image_views
@@ -627,7 +629,7 @@ impl Display {
                 ..Default::default()
             };
 
-            let depth_image = vk.device.create_image(&create_info, VK_MEMORY_ALLOCATOR).unwrap();
+            let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
             let depth_memory = vkutil::allocate_image_memory(&vk, depth_image);
 
             //Bind the depth image to its memory
@@ -653,7 +655,7 @@ impl Display {
                 ..Default::default()
             };
 
-            vk.device.create_image_view(&view_info, VK_MEMORY_ALLOCATOR).unwrap()
+            vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
         };
 
         //Create framebuffers
@@ -672,7 +674,7 @@ impl Display {
             let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
             for view in vk_swapchain_image_views.iter() {
                 attachments[0] = view.clone();
-                fbs.push(vk.device.create_framebuffer(&fb_info, VK_MEMORY_ALLOCATOR).unwrap())
+                fbs.push(vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap())
             }
     
             fbs
