@@ -118,17 +118,7 @@ fn main() {
             min_filter: vk::Filter::NEAREST,
             mag_filter: vk::Filter::NEAREST,
             mipmap_mode: vk::SamplerMipmapMode::NEAREST,
-            address_mode_u: vk::SamplerAddressMode::REPEAT,
-            address_mode_v: vk::SamplerAddressMode::REPEAT,
-            address_mode_w: vk::SamplerAddressMode::REPEAT,
-            mip_lod_bias: 0.0,
-            anisotropy_enable: vk::FALSE,
-            compare_enable: vk::FALSE,
-            min_lod: 0.0,
-            max_lod: vk::LOD_CLAMP_NONE,
-            border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
-            unnormalized_coordinates: vk::FALSE,
-            ..Default::default()
+            ..sampler_info
         };
         let font = vk.device.create_sampler(&sampler_info, vkutil::MEMORY_ALLOCATOR).unwrap();
         
@@ -340,7 +330,7 @@ fn main() {
 
     //Allocate buffer for frame-constant uniforms
     let vk_uniform_buffer;
-    let uniform_buffer_size = 4 * size_of::<glm::TMat4<f32>>() as vk::DeviceSize;
+    let uniform_buffer_size = (4 * size_of::<glm::TMat4<f32>>() + size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
     let uniform_buffer_size = size_to_alignment!(uniform_buffer_size, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
     let vk_uniform_buffer_ptr = unsafe {        
         let buffer_create_info = vk::BufferCreateInfo {
@@ -387,7 +377,7 @@ fn main() {
             binding: 0,
             descriptor_type: per_frame_type,
             descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::VERTEX,
+            stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             ..Default::default()
         };
         let uniform_pool_size = vk::DescriptorPoolSize {
@@ -473,7 +463,7 @@ fn main() {
             vk::DescriptorBufferInfo {
                 buffer: vk_uniform_buffer,
                 offset: 0,
-                range: 4 * size_of::<glm::TMat4<f32>>() as vk::DeviceSize
+                range: uniform_buffer_size
             }
         ];
 
@@ -1169,8 +1159,14 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let uniform_matrices = [clip_from_screen.as_slice(), view_projection.as_slice(), projection_matrix.as_slice(), view_matrix.as_slice()].concat();
-            ptr::copy_nonoverlapping(uniform_matrices.as_ptr() as *mut _, uniform_ptr, uniform_matrices.len() * size_of::<glm::TMat4<f32>>());
+            let sun_direction = glm::normalize(&glm::vec3(1.0, 1.0, 1.0));
+
+            let mut uniform_buffer = [clip_from_screen.as_slice(), view_projection.as_slice(), projection_matrix.as_slice(), view_matrix.as_slice()].concat();
+            uniform_buffer.push(sun_direction.x);
+            uniform_buffer.push(sun_direction.y);
+            uniform_buffer.push(sun_direction.z);
+
+            ptr::copy_nonoverlapping(uniform_buffer.as_ptr() as *mut _, uniform_ptr, uniform_buffer.len() * size_of::<f32>());
 
             //Update model matrix storage buffer
             let transform_ptr = vk_scene_transform_buffer_ptr as *mut f32;

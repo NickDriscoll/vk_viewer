@@ -633,11 +633,12 @@ pub struct VirtualDrawCall<'a> {
 }
 
 pub struct FrameUniforms {
-    clip_from_screen: glm::TMat4<f32>,
-    clip_from_world: glm::TMat4<f32>,
-    clip_from_view: glm::TMat4<f32>,
-    view_from_world: glm::TMat4<f32>,
-    time: f32
+    pub clip_from_screen: glm::TMat4<f32>,
+    pub clip_from_world: glm::TMat4<f32>,
+    pub clip_from_view: glm::TMat4<f32>,
+    pub view_from_world: glm::TMat4<f32>,
+    pub sun_direction: glm::TVec3<f32>,
+    pub time: f32
 }
 
 pub struct Display {

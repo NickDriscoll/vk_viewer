@@ -6,7 +6,7 @@ layout (location = 2) in vec3 bitangent;
 layout (location = 3) in vec3 normal;
 layout (location = 4) in vec2 uv;
 
-layout (location = 0) out vec4 f_color;
+layout (location = 0) out vec3 f_normal;
 layout (location = 1) out vec2 f_uv;
 
 layout (std140, set = 0, binding = 0) readonly uniform FrameData {
@@ -25,7 +25,7 @@ void main() {
     mat4 model_matrix = model_matrices[gl_InstanceIndex];
     mat4 normal_matrix = transpose(mat4(inverse(mat3(model_matrix))));
     vec3 world_normal = (normal_matrix * vec4(normal, 0.0)).xyz;
-    f_color = vec4(world_normal * 0.5 + 0.5, 1.0);
+    f_normal = world_normal;
     f_uv = uv;
     gl_Position = clip_from_world * model_matrix * vec4(position, 1.0);
 }
