@@ -13,6 +13,7 @@ strip = true
 ozy_engine = { path = "../ozy_engine" }
 imgui = "0.8.2"
 nalgebra-glm = "0.16.0"
+noise = "0.7.0"
 tinyfiledialogs = "3.9.0"
 
 [dependencies.ash]

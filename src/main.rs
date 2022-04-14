@@ -10,6 +10,7 @@ mod structs;
 use ash::vk;
 use ash::vk::Handle;
 use imgui::{DrawCmd, FontAtlasRefMut};
+use noise::NoiseFn;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
@@ -837,9 +838,10 @@ fn main() {
         [pipelines[0], pipelines[1], pipelines[2]]
     };
 
-    let plane_width = 4;
-    let plane_height = 4;
-    let plane_vertices = ozy::prims::plane_vertex_buffer(plane_width, plane_height, 5.0);
+    let simplex_generator = noise::OpenSimplex::new();
+    let plane_width = 256;
+    let plane_height = 256;
+    let plane_vertices = ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, &simplex_generator);
     let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
 
     //Load UV sphere OzyMesh
@@ -850,7 +852,7 @@ fn main() {
     let g_plane_geometry;
     let sphere_geometry;
     unsafe {
-        let scene_geo_buffer_size = 64 * 1024 * 1024;
+        let scene_geo_buffer_size = 4 * 64 * 1024 * 1024;
         let scene_geo_buffer = {
             //Buffer creation
             let buffer_create_info = vk::BufferCreateInfo {
@@ -886,7 +888,7 @@ fn main() {
     }
 
     let mut imgui_geo_allocator = unsafe {
-        let imgui_buffer_size = 1024 * 1024 * 64;
+        let imgui_buffer_size = 1024 * 1024;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
             size: imgui_buffer_size as vk::DeviceSize,
@@ -1112,7 +1114,8 @@ fn main() {
         };
         vk_draw_calls.push(dc);
         
-        let plane_model_matrix = glm::scaling(&glm::vec3(5.0, 5.0, 5.0));
+        //let plane_model_matrix = ozy::routines::uniform_scale(1.0);
+        let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 1.0));
         for i in 0..16 {
             host_transform_buffer.push(plane_model_matrix[i]);
         }
@@ -1146,6 +1149,15 @@ fn main() {
         let view_projection = projection_matrix * view_matrix;
 
         let sphere_count = sphere_width as usize * sphere_height as usize;
+        let pcs = [steel_plate_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
+        let dc = vkutil::VirtualDrawCall {
+            pipeline: main_pipeline,
+            geometry: &sphere_geometry,
+            push_constants: pcs.try_into().unwrap(),
+            instance_count: sphere_count as u32,
+            first_instance: (host_transform_buffer.len() / 16) as u32
+        };
+        vk_draw_calls.push(dc);
         for i in 0..sphere_width {
             for j in 0..sphere_height {
                 let sphere_matrix = glm::translation(&glm::vec3(
@@ -1159,15 +1171,6 @@ fn main() {
                 }
             }
         }
-        let pcs = [steel_plate_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
-        let dc = vkutil::VirtualDrawCall {
-            pipeline: main_pipeline,
-            geometry: &sphere_geometry,
-            push_constants: pcs.try_into().unwrap(),
-            instance_count: sphere_count as u32,
-            first_instance: 1
-        };
-        vk_draw_calls.push(dc);
 
         let imgui_ui = imgui_context.frame();
         if do_imgui {

@@ -23,7 +23,8 @@ layout (std140, set = 0, binding = 2) readonly buffer InstanceData {
 
 void main() {
     mat4 model_matrix = model_matrices[gl_InstanceIndex];
-    vec3 world_normal = (model_matrix * vec4(normal, 0.0)).xyz;
+    mat4 normal_matrix = transpose(mat4(inverse(mat3(model_matrix))));
+    vec3 world_normal = (normal_matrix * vec4(normal, 0.0)).xyz;
     f_color = vec4(world_normal * 0.5 + 0.5, 1.0);
     f_uv = uv;
     gl_Position = clip_from_world * model_matrix * vec4(position, 1.0);
