@@ -185,7 +185,7 @@ impl VirtualImage {
         let sampler_subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
-            level_count: 11,
+            level_count: mipmap_count,
             base_array_layer: 0,
             layer_count: 1
         };
