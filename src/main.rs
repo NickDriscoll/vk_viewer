@@ -10,7 +10,7 @@ mod structs;
 use ash::vk;
 use ash::vk::Handle;
 use imgui::{DrawCmd, FontAtlasRefMut};
-use noise::NoiseFn;
+use noise::Seedable;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
@@ -20,6 +20,7 @@ use std::fs::{File};
 use std::ffi::CStr;
 use std::mem::size_of;
 use std::ptr;
+use std::time::SystemTime;
 
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
@@ -54,7 +55,7 @@ fn main() {
     let mut event_pump = unwrap_result(sdl_context.event_pump());
     let video_subsystem = unwrap_result(sdl_context.video());
     let controller_subsystem = unwrap_result(sdl_context.game_controller());
-    let mut window_size = glm::vec2(1280, 1024);
+    let mut window_size = glm::vec2(1920, 1080);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build());
     
     //Initialize the SDL mixer
@@ -720,7 +721,8 @@ fn main() {
         [pipelines[0], pipelines[1], pipelines[2]]
     };
 
-    let simplex_generator = noise::OpenSimplex::new();
+    let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+    let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
     let plane_width = 256;
     let plane_height = 256;
     let plane_vertices = ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, &simplex_generator);
@@ -739,7 +741,7 @@ fn main() {
     let sphere_geometry;
     let totoro_geometry;
     unsafe {
-        let scene_geo_buffer_size = 4 * 64 * 1024 * 1024;
+        let scene_geo_buffer_size = 256 * 1024 * 1024;
         let scene_geo_buffer = {
             //Buffer creation
             let buffer_create_info = vk::BufferCreateInfo {
@@ -796,7 +798,7 @@ fn main() {
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
-    let mut camera = FreeCam::new(glm::vec3(0.0f32, -10.0, 5.0));
+    let mut camera = FreeCam::new(glm::vec3(0.0f32, -30.0, 15.0));
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
