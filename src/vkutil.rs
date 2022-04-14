@@ -1,4 +1,4 @@
-use std::{ffi::c_void, io::Read, ops::{Add, Not, Sub, BitAnd}};
+use std::{ffi::c_void, io::Read};
 
 use ash::vk;
 use ozy::io::DDSHeader;
@@ -7,6 +7,25 @@ use std::ptr;
 use crate::*;
 
 pub const MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
+
+pub const COLOR_CLEAR: vk::ClearValue = {
+    let color = vk::ClearColorValue {
+        float32: [0.0, 0.0, 0.0, 1.0]
+    };
+    vk::ClearValue {
+        color
+    }
+};
+
+pub const DEPTH_STENCIL_CLEAR: vk::ClearValue = {
+    let value = vk::ClearDepthStencilValue {
+        depth: 1.0,
+        stencil: 0
+    };
+    vk::ClearValue {
+        depth_stencil: value
+    }
+};
 
 unsafe fn get_memory_type_index(
     vk_instance: &ash::Instance,
@@ -519,9 +538,11 @@ pub struct VirtualDrawCall<'a> {
 }
 
 pub struct FrameUniforms {
-    view_from_world: glm::TMat4<f32>,
+    clip_from_screen: glm::TMat4<f32>,
+    clip_from_world: glm::TMat4<f32>,
     clip_from_view: glm::TMat4<f32>,
-    clip_from_screen: glm::TMat4<f32>
+    view_from_world: glm::TMat4<f32>,
+    time: f32
 }
 
 pub struct Display {

@@ -465,18 +465,16 @@ fn main() {
     };
 
     let global_transform_slots = 1024 * 1024;
-    let vk_transform_buffer_size;
+    let mut host_transform_buffer = Vec::with_capacity(16 * global_transform_slots);
     let vk_transform_storage_buffer;
     let vk_scene_transform_buffer_ptr = unsafe {
         let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
-        let alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
-        let buffer_size = size_to_alignment!(buffer_size, alignment);
-        vk_transform_buffer_size = buffer_size;
-        println!("Transform buffer is {} bytes", vk_transform_buffer_size);
+        let buffer_size = size_to_alignment!(buffer_size, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
+        println!("Transform buffer is {} bytes", buffer_size);
 
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::STORAGE_BUFFER,
-            size: vk_transform_buffer_size,
+            size: buffer_size,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
@@ -839,8 +837,8 @@ fn main() {
         [pipelines[0], pipelines[1], pipelines[2]]
     };
 
-    let plane_width = 32;
-    let plane_height = 32;
+    let plane_width = 4;
+    let plane_height = 4;
     let plane_vertices = ozy::prims::plane_vertex_buffer(plane_width, plane_height, 5.0);
     let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
 
@@ -848,24 +846,11 @@ fn main() {
     let uv_sphere = OzyMesh::load("./data/models/sphere.ozy").unwrap();
     let uv_sphere_indices: Vec<u32> = uv_sphere.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
-    let scene_vertex_buffers = [plane_vertices.as_slice(), uv_sphere.vertex_array.vertices.as_slice()];
-    let scene_index_buffers = [plane_indices.as_slice(), uv_sphere_indices.as_slice()];
-
     //Allocate and distribute memory to buffer objects
     let g_plane_geometry;
     let sphere_geometry;
     unsafe {
         let scene_geo_buffer_size = 64 * 1024 * 1024;
-
-        {
-            let mut the_size = 0;
-            for (&v_buffer, &i_buffer) in scene_vertex_buffers.iter().zip(scene_index_buffers.iter()) {
-                the_size += v_buffer.len() * size_of::<f32>();
-                the_size += i_buffer.len() * size_of::<u32>();
-            }
-            println!("Scene geos used {} KB out of {} KB total.", the_size as f32 / 1024.0, scene_geo_buffer_size as f32 / 1024.0);
-        }
-
         let scene_geo_buffer = {
             //Buffer creation
             let buffer_create_info = vk::BufferCreateInfo {
@@ -901,7 +886,7 @@ fn main() {
     }
 
     let mut imgui_geo_allocator = unsafe {
-        let imgui_buffer_size = 1024 * 64;
+        let imgui_buffer_size = 1024 * 1024 * 64;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
             size: imgui_buffer_size as vk::DeviceSize,
@@ -916,27 +901,6 @@ fn main() {
 
         vkutil::VirtualBumpAllocator::new(buffer, ptr, imgui_buffer_size)
     };
-
-    let vk_color_clear = {
-        let color = vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 1.0]
-        };
-        vk::ClearValue {
-            color
-        }
-    };
-
-    let vk_depth_stencil_clear = {
-        let value = vk::ClearDepthStencilValue {
-            depth: 1.0,
-            stencil: 0
-        };
-        vk::ClearValue {
-            depth_stencil: value
-        }
-    };
-
-    let vk_clear_values = [vk_color_clear, vk_depth_stencil_clear];
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -965,11 +929,13 @@ fn main() {
 
     let mut game_controllers = [None, None, None, None];
 
+    //Draw related lists that reset every frame
     let mut vk_draw_calls = Vec::with_capacity(64);
 
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
+        host_transform_buffer.clear();
 
         //Abstracted input variables
         let mut movement_multiplier = 1.0f32;
@@ -1136,8 +1102,6 @@ fn main() {
         //Update
         movement_vector *= movement_multiplier;
 
-        let mut pcs = [0; 12];
-        pcs[0] = 1;
         let pcs = [steel_plate_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
         let dc = vkutil::VirtualDrawCall {
             pipeline: main_pipeline,
@@ -1147,6 +1111,11 @@ fn main() {
             first_instance: 0
         };
         vk_draw_calls.push(dc);
+        
+        let plane_model_matrix = glm::scaling(&glm::vec3(5.0, 5.0, 5.0));
+        for i in 0..16 {
+            host_transform_buffer.push(plane_model_matrix[i]);
+        }
 
         //Camera orientation based on user input
         camera.orientation += orientation_vector;
@@ -1176,24 +1145,7 @@ fn main() {
 
         let view_projection = projection_matrix * view_matrix;
 
-        let mut transform_ptr = vk_scene_transform_buffer_ptr as *mut f32;
-        
-        //Update static scene data
-        unsafe {
-            let uniform_ptr = vk_uniform_buffer_ptr as *mut f32;
-            let clip_from_screen = glm::mat4(
-                2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
-                0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0
-            );
-
-            let uniform_matrices = [clip_from_screen.as_slice(), view_projection.as_slice(), projection_matrix.as_slice(), view_matrix.as_slice()].concat();
-            ptr::copy_nonoverlapping(uniform_matrices.as_ptr() as *mut _, uniform_ptr, uniform_matrices.len() * size_of::<glm::TMat4<f32>>());
-        };
-
         let sphere_count = sphere_width as usize * sphere_height as usize;
-        let mut sphere_transforms = vec![0.0; 16 * sphere_count];
         for i in 0..sphere_width {
             for j in 0..sphere_height {
                 let sphere_matrix = glm::translation(&glm::vec3(
@@ -1202,18 +1154,20 @@ fn main() {
                     sphere_z_offset + sphere_amplitude * f32::sin(timer.elapsed_time * (i + 7) as f32) + 5.0)
                 ) * glm::rotation(sphere_rotation * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
-                let trans_offset = i * 16 * sphere_height + j * 16;
                 for k in 0..16 {
-                    sphere_transforms[(trans_offset + k) as usize] = sphere_matrix[k as usize];
+                    host_transform_buffer.push(sphere_matrix[k as usize]);
                 }
             }
         }
-        unsafe {
-            let plane_model_matrix = glm::scaling(&glm::vec3(5.0, 5.0, 5.0));
-            ptr::copy_nonoverlapping(plane_model_matrix.as_ptr(), transform_ptr, 16);
-            transform_ptr = transform_ptr.offset(16);
-            ptr::copy_nonoverlapping(sphere_transforms.as_ptr(), transform_ptr, 16 * sphere_count);
+        let pcs = [steel_plate_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
+        let dc = vkutil::VirtualDrawCall {
+            pipeline: main_pipeline,
+            geometry: &sphere_geometry,
+            push_constants: pcs.try_into().unwrap(),
+            instance_count: sphere_count as u32,
+            first_instance: 1
         };
+        vk_draw_calls.push(dc);
 
         let imgui_ui = imgui_context.frame();
         if do_imgui {
@@ -1264,15 +1218,6 @@ fn main() {
             }
         }
         
-        let dc = vkutil::VirtualDrawCall {
-            pipeline: main_pipeline,
-            geometry: &sphere_geometry,
-            push_constants: [0; 12],
-            instance_count: sphere_count as u32,
-            first_instance: 1
-        };
-        vk_draw_calls.push(dc);
-
         //Pre-render phase
 
         //Update bindless texture sampler descriptors
@@ -1297,16 +1242,33 @@ fn main() {
             };
             unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
         }
-
-        //Done specifying Dear ImGUI ui for this frame
-        let imgui_draw_data = imgui_ui.render();
         
-        //Dear ImGUI geometry buffer creation
+        //Update uniform/storage buffers
+        unsafe {
+            //Update static scene data
+            let uniform_ptr = vk_uniform_buffer_ptr as *mut f32;
+            let clip_from_screen = glm::mat4(
+                2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
+                0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            );
+
+            let uniform_matrices = [clip_from_screen.as_slice(), view_projection.as_slice(), projection_matrix.as_slice(), view_matrix.as_slice()].concat();
+            ptr::copy_nonoverlapping(uniform_matrices.as_ptr() as *mut _, uniform_ptr, uniform_matrices.len() * size_of::<glm::TMat4<f32>>());
+
+            //Update model matrix storage buffer
+            let transform_ptr = vk_scene_transform_buffer_ptr as *mut f32;
+            ptr::copy_nonoverlapping(host_transform_buffer.as_ptr(), transform_ptr, host_transform_buffer.len());
+        };
+
+        //Dear ImGUI virtual allocations
         let (imgui_geometries, imgui_cmd_lists) = {
             let mut geos = Vec::with_capacity(16);
             let mut cmds = Vec::with_capacity(16);
             imgui_geo_allocator.clear();
 
+            let imgui_draw_data = imgui_ui.render();
             if imgui_draw_data.total_vtx_count > 0 {
                 for list in imgui_draw_data.draw_lists() {
                     let vert_size = 8;  //Size in floats
@@ -1377,6 +1339,7 @@ fn main() {
             };
             vk.device.cmd_set_scissor(vk_command_buffer, 0, &[vk_render_area]);
 
+            let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
             let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_display.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: vk_render_pass,

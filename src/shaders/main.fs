@@ -13,5 +13,5 @@ layout(push_constant) uniform Indices {
 };
 
 void main() {
-    frag_color = f_color * texture(global_textures[tex_index], f_uv);
+    frag_color = vec4(f_color.rgb * texture(global_textures[tex_index], f_uv).rgb, 1.0);
 }

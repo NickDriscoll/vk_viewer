@@ -14,6 +14,7 @@ layout (std140, set = 0, binding = 0) readonly uniform FrameData {
     mat4 clip_from_world;
     mat4 clip_from_view;
     mat4 view_from_world;
+    float time;
 };
 
 layout (std140, set = 0, binding = 2) readonly buffer InstanceData {
@@ -21,7 +22,9 @@ layout (std140, set = 0, binding = 2) readonly buffer InstanceData {
 };
 
 void main() {
-    f_color = vec4(normal * 0.5 + 0.5, 1.0);
+    mat4 model_matrix = model_matrices[gl_InstanceIndex];
+    vec3 world_normal = (model_matrix * vec4(normal, 0.0)).xyz;
+    f_color = vec4(world_normal * 0.5 + 0.5, 1.0);
     f_uv = uv;
-    gl_Position = clip_from_world * model_matrices[gl_InstanceIndex] * vec4(position, 1.0);
+    gl_Position = clip_from_world * model_matrix * vec4(position, 1.0);
 }
