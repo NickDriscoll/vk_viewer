@@ -24,6 +24,8 @@ use std::ptr;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
+use crate::vkutil::VirtualImage;
+
 const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
     r: vk::ComponentSwizzle::R,
     g: vk::ComponentSwizzle::G,
@@ -141,32 +143,24 @@ fn main() {
 
     //Load grass billboard texture
     let grass_billboard_global_index = unsafe {
-        let image = vkutil::load_bc7_texture(
-            &vk,
-            vk_command_buffer,
-            "./data/textures/billboard_grass.dds"
-        );
+        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/billboard_grass.dds");
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: vim.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let index = global_texture_free_list.insert(descriptor_info);
+        global_texture_update = true;
 
-        let sampler_subresource_range = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1
-        };
-        let grass_view_info = vk::ImageViewCreateInfo {
-            image: image,
-            format: vk::Format::BC7_SRGB_BLOCK,
-            view_type: vk::ImageViewType::TYPE_2D,
-            components: COMPONENT_MAPPING_DEFAULT,
-            subresource_range: sampler_subresource_range,
-            ..Default::default()
-        };
-        let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+        index as u32
+    };
+
+    let grass_global_index = unsafe {
+        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/grass/color.dds");
 
         let descriptor_info = vk::DescriptorImageInfo {
             sampler: material_sampler,
-            image_view: view,
+            image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
         let index = global_texture_free_list.insert(descriptor_info);
@@ -177,32 +171,11 @@ fn main() {
 
     //Load steel plate texture
     let steel_plate_global_index = unsafe {
-        let image = vkutil::load_bc7_texture(
-            &vk,
-            vk_command_buffer,
-            "./data/textures/steel_plate/albedo.dds"
-        );
-
-        let sampler_subresource_range = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 10,
-            base_array_layer: 0,
-            layer_count: 1
-        };
-        let grass_view_info = vk::ImageViewCreateInfo {
-            image: image,
-            format: vk::Format::BC7_SRGB_BLOCK,
-            view_type: vk::ImageViewType::TYPE_2D,
-            components: COMPONENT_MAPPING_DEFAULT,
-            subresource_range: sampler_subresource_range,
-            ..Default::default()
-        };
-        let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/steel_plate/color.dds");
 
         let descriptor_info = vk::DescriptorImageInfo {
             sampler: material_sampler,
-            image_view: view,
+            image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
         let index = global_texture_free_list.insert(descriptor_info);
@@ -215,21 +188,6 @@ fn main() {
     let imgui_font_global_index = match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
-
-            let size = (atlas_texture.width * atlas_texture.height) as vk::DeviceSize;
-            let buffer_create_info = vk::BufferCreateInfo {
-                usage: vk::BufferUsageFlags::TRANSFER_SRC,
-                size,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            let staging_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();            
-            let staging_buffer_memory = vkutil::allocate_buffer_memory(&vk, staging_buffer);    
-            vk.device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
-
-            let staging_ptr = vk.device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty()).unwrap();
-            ptr::copy_nonoverlapping(atlas_texture.data.as_ptr(), staging_ptr as *mut _, size as usize);
-            vk.device.unmap_memory(staging_buffer_memory);
             
             let image_extent = vk::Extent3D {
                 width: atlas_texture.width,
@@ -252,82 +210,16 @@ fn main() {
                 ..Default::default()
             };
             let vk_font_image = vk.device.create_image(&font_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            
-            let font_image_memory = vkutil::allocate_image_memory(&vk, vk_font_image);
-    
-            vk.device.bind_image_memory(vk_font_image, font_image_memory, 0).unwrap();
 
-            vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-
-            let subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
+            let vim = vkutil::VirtualImage {                
+                vk_image: vk_font_image,
+                vk_view: vk::ImageView::default(),
+                width: atlas_texture.width,
+                height: atlas_texture.height,
+                mip_count: 1
             };
-            let image_memory_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::empty(),
-                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                old_layout: vk::ImageLayout::UNDEFINED,
-                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                image: vk_font_image,
-                subresource_range,
-                ..Default::default()
-            };
-            vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+            vkutil::upload_image(&vk, vk_command_buffer, &vim, atlas_texture.data);
 
-            let subresource_layers = vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: 1
-
-            };
-            let copy_region = vk::BufferImageCopy {
-                buffer_offset: 0,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_extent,
-                image_offset: vk::Offset3D::default(),
-                image_subresource: subresource_layers
-            };
-            vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, vk_font_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
-            
-            let subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let image_memory_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                dst_access_mask: vk::AccessFlags::SHADER_READ,
-                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                image: vk_font_image,
-                subresource_range,
-                ..Default::default()
-            };
-            vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
-
-
-            vk.device.end_command_buffer(vk_command_buffer).unwrap();
-
-            
-            let submit_info = vk::SubmitInfo {
-                command_buffer_count: 1,
-                p_command_buffers: &vk_command_buffer,
-                ..Default::default()
-            };
-
-            let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
-            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-            vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
-            vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-            vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
-            vk.device.destroy_buffer(staging_buffer, vkutil::MEMORY_ALLOCATOR);
             atlas.clear_tex_data();  //Free atlas memory CPU-side
 
             //Then create the image view
@@ -848,9 +740,14 @@ fn main() {
     let uv_sphere = OzyMesh::load("./data/models/sphere.ozy").unwrap();
     let uv_sphere_indices: Vec<u32> = uv_sphere.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
+    //Load totoro model
+    let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
+    let totoro_mesh_indices: Vec<u32> = totoro_mesh.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
+
     //Allocate and distribute memory to buffer objects
     let g_plane_geometry;
     let sphere_geometry;
+    let totoro_geometry;
     unsafe {
         let scene_geo_buffer_size = 4 * 64 * 1024 * 1024;
         let scene_geo_buffer = {
@@ -883,6 +780,7 @@ fn main() {
 
         g_plane_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
         sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
+        totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh_indices).unwrap();
 
         vk.device.unmap_memory(buffer_memory);
     }
@@ -922,7 +820,7 @@ fn main() {
     let mut sphere_rotation = 3.0;
     
     //Load and play bgm
-    let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"));
+    let bgm = unwrap_result(Music::from_file("./data/music/nmwi.flac"));
     bgm.play(-1).unwrap();
 
     let mut do_imgui = true;
@@ -1107,14 +1005,28 @@ fn main() {
         let pcs = [steel_plate_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
         let dc = vkutil::VirtualDrawCall {
             pipeline: main_pipeline,
-            geometry: &g_plane_geometry,
+            geometry: &totoro_geometry,
             push_constants: pcs.try_into().unwrap(),
             instance_count: 1,
-            first_instance: 0
+            first_instance: host_transform_buffer.len() as u32 / 16
         };
         vk_draw_calls.push(dc);
         
-        //let plane_model_matrix = ozy::routines::uniform_scale(1.0);
+        let model_matrix = glm::translation(&glm::vec3(-10.0, 5.0, 3.0)) * glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
+        for i in 0..16 {
+            host_transform_buffer.push(model_matrix[i]);
+        }
+
+        let pcs = [grass_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
+        let dc = vkutil::VirtualDrawCall {
+            pipeline: main_pipeline,
+            geometry: &g_plane_geometry,
+            push_constants: pcs.try_into().unwrap(),
+            instance_count: 1,
+            first_instance: host_transform_buffer.len() as u32 / 16
+        };
+        vk_draw_calls.push(dc);
+        
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 1.0));
         for i in 0..16 {
             host_transform_buffer.push(plane_model_matrix[i]);

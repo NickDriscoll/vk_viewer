@@ -10,7 +10,8 @@ pub const MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
 
 pub const COLOR_CLEAR: vk::ClearValue = {
     let color = vk::ClearColorValue {
-        float32: [0.0, 0.0, 0.0, 1.0]
+        //float32: [0.0, 0.0, 0.0, 1.0]
+        float32: [0.26, 0.4, 0.46, 1.0]
     };
     vk::ClearValue {
         color
@@ -121,29 +122,90 @@ macro_rules! size_to_alignment {
     };
 }
 
-pub unsafe fn load_bc7_texture(
-    vk: &VulkanAPI,
-    vk_command_buffer: vk::CommandBuffer,
-    path: &str
-) -> vk::Image {
-    let mut file = unwrap_result(File::open(path));
-    let dds_header = DDSHeader::from_file(&mut file);
+pub struct VirtualImage {
+    pub vk_image: vk::Image,
+    pub vk_view: vk::ImageView,
+    pub width: u32,
+    pub height: u32,
+    pub mip_count: u32
+}
 
-    let width = dds_header.width;
-    let height = dds_header.height;
-    let mipmap_count = dds_header.mipmap_count;
+impl VirtualImage {
+    pub unsafe fn from_bc7(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str) -> Self {
+        let mut file = unwrap_result(File::open(path));
+        let dds_header = DDSHeader::from_file(&mut file);
 
-    let mut bytes_size = 0;
-    for i in 0..mipmap_count {
-        let w = width / (1 << i);
-        let h = height / (1 << i);
-        bytes_size += w * h;
+        let width = dds_header.width;
+        let height = dds_header.height;
+        let mipmap_count = dds_header.mipmap_count;
 
-        bytes_size = size_to_alignment!(bytes_size, 16);
+        let mut bytes_size = 0;
+        for i in 0..mipmap_count {
+            let w = width / (1 << i);
+            let h = height / (1 << i);
+            bytes_size += w * h;
+
+            bytes_size = size_to_alignment!(bytes_size, 16);
+        }
+
+        let mut raw_bytes = vec![0u8; bytes_size as usize];
+        file.read_exact(&mut raw_bytes).unwrap();
+        
+        let image_extent = vk::Extent3D {
+            width,
+            height,
+            depth: 1
+        };
+        let image_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::TYPE_2D,
+            format: vk::Format::BC7_SRGB_BLOCK,
+            extent: image_extent,
+            mip_levels: mipmap_count,
+            array_layers: 1,
+            samples: vk::SampleCountFlags::TYPE_1,
+            tiling: vk::ImageTiling::OPTIMAL,
+            usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            queue_family_index_count: 1,
+            p_queue_family_indices: &vk.queue_family_index,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            ..Default::default()
+        };
+        let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+        let mut vim = VirtualImage {
+            vk_image: image,
+            vk_view: vk::ImageView::default(),
+            width,
+            height,
+            mip_count: mipmap_count
+        };
+        upload_image(vk, vk_command_buffer, &vim, &raw_bytes);
+        
+        let sampler_subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 11,
+            base_array_layer: 0,
+            layer_count: 1
+        };
+        let grass_view_info = vk::ImageViewCreateInfo {
+            image: image,
+            format: vk::Format::BC7_SRGB_BLOCK,
+            view_type: vk::ImageViewType::TYPE_2D,
+            components: COMPONENT_MAPPING_DEFAULT,
+            subresource_range: sampler_subresource_range,
+            ..Default::default()
+        };
+        let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+        vim.vk_view = view;
+        vim
     }
+}
 
-    let mut raw_bytes = vec![0u8; bytes_size as usize];
-    file.read_exact(&mut raw_bytes).unwrap();
+pub unsafe fn upload_image(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer, image: &VirtualImage, raw_bytes: &[u8]) {
+    let bytes_size = raw_bytes.len();
 
     let buffer_create_info = vk::BufferCreateInfo {
         usage: vk::BufferUsageFlags::TRANSFER_SRC,
@@ -158,39 +220,17 @@ pub unsafe fn load_bc7_texture(
     let staging_ptr = vk.device.map_memory(staging_buffer_memory, 0, bytes_size as vk::DeviceSize, vk::MemoryMapFlags::empty()).unwrap();
     ptr::copy_nonoverlapping(raw_bytes.as_ptr(), staging_ptr as *mut _, bytes_size as usize);
     vk.device.unmap_memory(staging_buffer_memory);
-    
-    let image_extent = vk::Extent3D {
-        width,
-        height,
-        depth: 1
-    };
-    let image_create_info = vk::ImageCreateInfo {
-        image_type: vk::ImageType::TYPE_2D,
-        format: vk::Format::BC7_SRGB_BLOCK,
-        extent: image_extent,
-        mip_levels: mipmap_count,
-        array_layers: 1,
-        samples: vk::SampleCountFlags::TYPE_1,
-        tiling: vk::ImageTiling::OPTIMAL,
-        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-        sharing_mode: vk::SharingMode::EXCLUSIVE,
-        queue_family_index_count: 1,
-        p_queue_family_indices: &vk.queue_family_index,
-        initial_layout: vk::ImageLayout::UNDEFINED,
-        ..Default::default()
-    };
-    let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
 
-    let image_memory = allocate_image_memory(&vk, image);
+    let image_memory = allocate_image_memory(vk, image.vk_image);
 
-    vk.device.bind_image_memory(image, image_memory, 0).unwrap();
+    vk.device.bind_image_memory(image.vk_image, image_memory, 0).unwrap();
 
     vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
         base_mip_level: 0,
-        level_count: mipmap_count,
+        level_count: image.mip_count,
         base_array_layer: 0,
         layer_count: 1
     };
@@ -199,17 +239,17 @@ pub unsafe fn load_bc7_texture(
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
         old_layout: vk::ImageLayout::UNDEFINED,
         new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        image,
+        image: image.vk_image,
         subresource_range,
         ..Default::default()
     };
     vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     let mut cumulative_offset = 0;
-    let mut copy_regions = vec![vk::BufferImageCopy::default(); mipmap_count as usize];
-    for i in 0..mipmap_count {
-        let w = width / (1 << i);
-        let h = height / (1 << i);
+    let mut copy_regions = vec![vk::BufferImageCopy::default(); image.mip_count as usize];
+    for i in 0..image.mip_count {
+        let w = image.width / (1 << i);
+        let h = image.height / (1 << i);
         let subresource_layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: i,
@@ -236,13 +276,12 @@ pub unsafe fn load_bc7_texture(
         cumulative_offset += w * h;
     }
 
-    vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, image.vk_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
-    
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
         base_mip_level: 0,
-        level_count: mipmap_count,
+        level_count: image.mip_count,
         base_array_layer: 0,
         layer_count: 1
     };
@@ -251,7 +290,7 @@ pub unsafe fn load_bc7_texture(
         dst_access_mask: vk::AccessFlags::SHADER_READ,
         old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        image,
+        image: image.vk_image,
         subresource_range,
         ..Default::default()
     };
@@ -271,6 +310,62 @@ pub unsafe fn load_bc7_texture(
     vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
     vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
     vk.device.destroy_buffer(staging_buffer, vkutil::MEMORY_ALLOCATOR);
+}
+
+pub unsafe fn load_bc7_texture(
+    vk: &VulkanAPI,
+    vk_command_buffer: vk::CommandBuffer,
+    path: &str
+) -> vk::Image {
+    let mut file = unwrap_result(File::open(path));
+    let dds_header = DDSHeader::from_file(&mut file);
+
+    let width = dds_header.width;
+    let height = dds_header.height;
+    let mipmap_count = dds_header.mipmap_count;
+
+    let mut bytes_size = 0;
+    for i in 0..mipmap_count {
+        let w = width / (1 << i);
+        let h = height / (1 << i);
+        bytes_size += w * h;
+
+        bytes_size = size_to_alignment!(bytes_size, 16);
+    }
+
+    let mut raw_bytes = vec![0u8; bytes_size as usize];
+    file.read_exact(&mut raw_bytes).unwrap();
+    
+    let image_extent = vk::Extent3D {
+        width,
+        height,
+        depth: 1
+    };
+    let image_create_info = vk::ImageCreateInfo {
+        image_type: vk::ImageType::TYPE_2D,
+        format: vk::Format::BC7_SRGB_BLOCK,
+        extent: image_extent,
+        mip_levels: mipmap_count,
+        array_layers: 1,
+        samples: vk::SampleCountFlags::TYPE_1,
+        tiling: vk::ImageTiling::OPTIMAL,
+        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+        sharing_mode: vk::SharingMode::EXCLUSIVE,
+        queue_family_index_count: 1,
+        p_queue_family_indices: &vk.queue_family_index,
+        initial_layout: vk::ImageLayout::UNDEFINED,
+        ..Default::default()
+    };
+    let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+    let mut vim = VirtualImage {
+        vk_image: image,
+        vk_view: vk::ImageView::default(),
+        width,
+        height,
+        mip_count: mipmap_count
+    };
+    upload_image(vk, vk_command_buffer, &vim, &raw_bytes);
 
     image
 }
