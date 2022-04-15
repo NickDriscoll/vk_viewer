@@ -17,7 +17,7 @@ layout (std140, set = 0, binding = 0) readonly uniform FrameData {
 void main() {
     //frag_color = vec4(sin(time) * 0.5 + 0.5, 0.5, cos(time) * 0.5 + 0.5, 1.0);
     vec3 view_direction = normalize(f_view_direction);    
-    vec3 final_color = -1.0 * f_view_direction * 0.5 + 0.5;
+    vec3 final_color = -1.0 * view_direction * 0.5 + 0.5;
 
     float sun_likeness = max(0.0, dot(view_direction, sun_direction));
     final_color += smoothstep(mix(1.0, 0.99, 0.5), 1.0, sun_likeness);
