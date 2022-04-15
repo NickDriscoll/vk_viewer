@@ -65,7 +65,7 @@ fn main() {
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build());
     
     //Initialize the SDL mixer
-    let mut music_volume = 16;
+    let mut music_volume = 0;
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
     mixer::open_audio(mixer::DEFAULT_FREQUENCY, mixer::DEFAULT_FORMAT, 2, 256).unwrap();
     Music::set_volume(music_volume);
@@ -517,7 +517,7 @@ fn main() {
     }
 
     //Create graphics pipelines
-    let [vk_3D_graphics_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
+    let [vk_3D_graphics_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main_vert.spv");
@@ -681,11 +681,44 @@ fn main() {
             ..Default::default()
         };
 
-        let atmosphere_attrs = 3;
+        let atmosphere_stride = 3;
         let atmosphere_vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
-            stride: atmosphere_attrs * size_of::<f32>() as u32,
+            stride: atmosphere_stride * size_of::<f32>() as u32,
             input_rate: vk::VertexInputRate::VERTEX
+        };
+
+        let atmosphere_position_attribute = vk::VertexInputAttributeDescription {
+            location: 0,
+            binding: 0,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 0
+        };
+
+        let atm_bindings = [atmosphere_vert_binding];
+        let atm_attrs = [atmosphere_position_attribute];
+        let atmosphere_vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
+            vertex_binding_description_count: atm_bindings.len() as u32,
+            p_vertex_binding_descriptions: atm_bindings.as_ptr(),
+            vertex_attribute_description_count: atm_attrs.len() as u32,
+            p_vertex_attribute_descriptions: atm_attrs.as_ptr(),
+            ..Default::default()
+        };
+
+        let atmosphere_pipeline_info = vk::GraphicsPipelineCreateInfo {
+            layout: vk_pipeline_layout,
+            p_vertex_input_state: &atmosphere_vertex_input_state,
+            p_input_assembly_state: &input_assembly_state,
+            p_rasterization_state: &rasterization_state,
+            p_color_blend_state: &color_blend_pipeline_state,
+            p_multisample_state: &multisample_state,
+            p_dynamic_state: &dynamic_state,
+            p_viewport_state: &viewport_state,
+            p_depth_stencil_state: &depth_stencil_state,
+            p_stages: atmosphere_shader_stages.as_ptr(),
+            stage_count: atmosphere_shader_stages.len() as u32,
+            render_pass: vk_render_pass,
+            ..Default::default()
         };
 
         let im_vert_binding = vk::VertexInputBindingDescription {
@@ -743,9 +776,9 @@ fn main() {
             ..main_graphics_pipeline_info
         };
 
-        let pipeline_infos = [main_graphics_pipeline_info, imgui_pipeline_info, wireframe_pipeline_info];
+        let pipeline_infos = [main_graphics_pipeline_info, atmosphere_pipeline_info, imgui_pipeline_info, wireframe_pipeline_info];
         let pipelines = vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, vkutil::MEMORY_ALLOCATOR).unwrap();
-        [pipelines[0], pipelines[1], pipelines[2]]
+        [pipelines[0], pipelines[1], pipelines[2], pipelines[3]]
     };
 
     let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
@@ -772,13 +805,13 @@ fn main() {
     let atmosphere_indices = ozy::prims::skybox_cube_index_buffer();
 
     //Allocate and distribute memory to buffer objects
-    let g_plane_geometry;
+    let plane_geometry;
     let sphere_geometry;
     let totoro_geometry;
     let dragon_geometry;
     let atmosphere_geometry;
     unsafe {
-        let scene_geo_buffer_size = 256 * 1024 * 1024;
+        let scene_geo_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE;
         let scene_geo_buffer = {
             //Buffer creation
             let buffer_create_info = vk::BufferCreateInfo {
@@ -807,7 +840,7 @@ fn main() {
         //Create virtual bump allocator
         let mut scene_geo_allocator = vkutil::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
-        g_plane_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
+        plane_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
         sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
         totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh_indices).unwrap();
         dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh_indices).unwrap();
@@ -817,7 +850,7 @@ fn main() {
     }
 
     let mut imgui_geo_allocator = unsafe {
-        let imgui_buffer_size = 256 * 1024 * 1024;
+        let imgui_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
             size: imgui_buffer_size as vk::DeviceSize,
@@ -843,6 +876,9 @@ fn main() {
 
     let vk_submission_fence = unsafe { vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
     
+    let mut sun_pitch = 0.637;
+    let mut sun_yaw = 0.783;
+
     let mut sphere_width = 10 as u32;
     let mut sphere_height = 8 as u32;
     let mut sphere_spacing = 5.0;
@@ -866,6 +902,7 @@ fn main() {
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
+        vk_draw_calls.clear();
         host_transform_buffer.clear();
 
         //Abstracted input variables
@@ -1039,7 +1076,7 @@ fn main() {
         let model_matrix = glm::translation(&glm::vec3(-10.0, 5.0, 3.0)) * glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
-        let dc = vkutil::VirtualDrawCall::new(&g_plane_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        let dc = vkutil::VirtualDrawCall::new(&plane_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 1.0));
@@ -1084,6 +1121,8 @@ fn main() {
             imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
             imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
             imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
+            imgui::Slider::new("Sun pitch", 0.0, glm::pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
+            imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
         }
 
         let sphere_count = sphere_width as usize * sphere_height as usize;
@@ -1171,12 +1210,17 @@ fn main() {
     
             let view_projection = projection_matrix * view_matrix;
             
+            //Compute sun direction from pitch and yaw
+            let sun_direction = glm::vec4_to_vec3(&(
+                glm::rotation(sun_yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+                glm::rotation(sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+                glm::vec4(-1.0, 0.0, 0.0, 0.0)
+            ));
+            
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
             //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
             //that the sky is infinitely far away
             let skybox_view_projection = projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_matrix));
-
-            let sun_direction = glm::normalize(&glm::vec3(-1.0, -1.0, 1.0));
 
             let mut uniform_buffer = [
                 clip_from_screen.as_slice(),
@@ -1292,12 +1336,12 @@ fn main() {
             };
             vk.device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
-            //Once per frame descriptor binding
+            //Once-per-frame descriptor binding
             vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
-            for virtual_draw in vk_draw_calls.drain(0..vk_draw_calls.len()) {
+            for virtual_draw in vk_draw_calls.iter() {
                 if virtual_draw.pipeline != last_bound_pipeline {
                     vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, virtual_draw.pipeline);
                     last_bound_pipeline = virtual_draw.pipeline;
@@ -1307,6 +1351,12 @@ fn main() {
                 vk.device.cmd_bind_index_buffer(vk_command_buffer, virtual_draw.geometry.index_buffer.backing_buffer(), (virtual_draw.geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
                 vk.device.cmd_draw_indexed(vk_command_buffer, virtual_draw.geometry.index_count, virtual_draw.instance_count, 0, 0, virtual_draw.first_instance);
             }
+
+            //Record atmosphere rendering commands
+            vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
+            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[atmosphere_geometry.vertex_buffer.backing_buffer()], &[atmosphere_geometry.vertex_buffer.offset() as u64]);
+            vk.device.cmd_bind_index_buffer(vk_command_buffer, atmosphere_geometry.index_buffer.backing_buffer(), (atmosphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk.device.cmd_draw_indexed(vk_command_buffer, atmosphere_geometry.index_count, 1, 0, 0, 0);
 
             //Record Dear ImGUI drawing commands
             vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);

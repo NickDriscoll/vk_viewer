@@ -2,7 +2,7 @@
 
 layout (location = 0) in vec3 position;
 
-layout (location = 0) out vec3 cube_sampling_vector;
+layout (location = 0) out vec3 f_view_direction;
 
 layout (std140, set = 0, binding = 0) readonly uniform FrameData {
     mat4 clip_from_screen;
@@ -15,5 +15,7 @@ layout (std140, set = 0, binding = 0) readonly uniform FrameData {
 };
 
 void main() {
-    
+    f_view_direction = position;
+    vec4 screen_space_pos = clip_from_skybox * vec4(position, 1.0);
+    gl_Position = screen_space_pos.xyww;
 }

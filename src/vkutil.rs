@@ -28,6 +28,9 @@ pub const DEPTH_STENCIL_CLEAR: vk::ClearValue = {
     }
 };
 
+//I have no idea if this is optimal
+pub const DEFAULT_ALLOCATION_SIZE: vk::DeviceSize = 256 * 1024 * 1024;
+
 unsafe fn get_memory_type_index(
     vk_instance: &ash::Instance,
     vk_physical_device: vk::PhysicalDevice,
