@@ -48,6 +48,12 @@ fn unwrap_result<T, E: Display>(res: Result<T, E>) -> T {
     }
 }
 
+fn push_matrix_to_vec(vec: &mut Vec<f32>, matrix: &[f32]) {
+    for k in 0..16 {
+        vec.push(matrix[k]);
+    }
+}
+
 //Entry point
 fn main() {
     //Create the window using SDL
@@ -175,11 +181,26 @@ fn main() {
         index as u32
     };
 
+    let dragon_color_global_index = unsafe {
+        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/dragon/color.dds");
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: vim.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let index = global_texture_free_list.insert(descriptor_info);
+        global_texture_update = true;
+
+        index as u32
+    };
+
     //Create and upload Dear IMGUI font atlas
     let imgui_font_global_index = match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
             
+            let atlas_format = vk::Format::R8_UNORM;
             let image_extent = vk::Extent3D {
                 width: atlas_texture.width,
                 height: atlas_texture.height,
@@ -187,7 +208,7 @@ fn main() {
             };
             let font_create_info = vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,
-                format: vk::Format::R8_UNORM,
+                format: atlas_format,
                 extent: image_extent,
                 mip_levels: 1,
                 array_layers: 1,
@@ -202,7 +223,7 @@ fn main() {
             };
             let vk_font_image = vk.device.create_image(&font_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
 
-            let vim = vkutil::VirtualImage {                
+            let vim = vkutil::VirtualImage {
                 vk_image: vk_font_image,
                 vk_view: vk::ImageView::default(),
                 width: atlas_texture.width,
@@ -223,7 +244,7 @@ fn main() {
             };
             let font_view_info = vk::ImageViewCreateInfo {
                 image: vk_font_image,
-                format: vk::Format::R8_UNORM,
+                format: atlas_format,
                 view_type: vk::ImageViewType::TYPE_2D,
                 components: COMPONENT_MAPPING_DEFAULT,
                 subresource_range: sampler_subresource_range,
@@ -331,7 +352,7 @@ fn main() {
 
     //Allocate buffer for frame-constant uniforms
     let vk_uniform_buffer;
-    let uniform_buffer_size = (4 * size_of::<glm::TMat4<f32>>() + size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
+    let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
     let uniform_buffer_size = size_to_alignment!(uniform_buffer_size, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
     let vk_uniform_buffer_ptr = unsafe {        
         let buffer_create_info = vk::BufferCreateInfo {
@@ -348,13 +369,12 @@ fn main() {
         vk.device.map_memory(uniform_buffer_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()).unwrap()
     };
 
-    let global_transform_slots = 1024 * 1024;
+    let global_transform_slots = 4 * 1024 * 1024;
     let mut host_transform_buffer = Vec::with_capacity(16 * global_transform_slots);
     let vk_transform_storage_buffer;
     let vk_scene_transform_buffer_ptr = unsafe {
         let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
         let buffer_size = size_to_alignment!(buffer_size, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
-        println!("Transform buffer is {} bytes", buffer_size);
 
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -499,9 +519,15 @@ fn main() {
     //Create graphics pipelines
     let [vk_3D_graphics_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         //Load shaders
-        let vk_shader_stages = {
+        let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main_vert.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/main_frag.spv");
+            [v, f]
+        };
+        
+        let atmosphere_shader_stages = {
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/atmosphere_vert.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/atmosphere_frag.spv");
             [v, f]
         };
 
@@ -532,6 +558,12 @@ fn main() {
             depth_bias_enable: vk::TRUE,
             line_width: 1.0,
             ..Default::default()
+        };
+
+        let imgui_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+            polygon_mode: vk::PolygonMode::FILL,
+            cull_mode: vk::CullModeFlags::NONE,
+            ..rasterization_state
         };
 
         let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
@@ -569,6 +601,12 @@ fn main() {
             depth_bounds_test_enable: vk::FALSE,
             stencil_test_enable: vk::FALSE,
             ..Default::default()
+        };
+
+        let imgui_depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: vk::FALSE,
+            depth_write_enable: vk::FALSE,
+            ..depth_stencil_state
         };
 
         let multisample_state = vk::PipelineMultisampleStateCreateInfo {
@@ -627,7 +665,7 @@ fn main() {
             ..Default::default()
         };
 
-        let graphics_pipeline_info = vk::GraphicsPipelineCreateInfo {
+        let main_graphics_pipeline_info = vk::GraphicsPipelineCreateInfo {
             layout: vk_pipeline_layout,
             p_vertex_input_state: &vertex_input_state,
             p_input_assembly_state: &input_assembly_state,
@@ -637,28 +675,17 @@ fn main() {
             p_dynamic_state: &dynamic_state,
             p_viewport_state: &viewport_state,
             p_depth_stencil_state: &depth_stencil_state,
-            p_stages: vk_shader_stages.as_ptr(),
-            stage_count: vk_shader_stages.len() as u32,
+            p_stages: main_shader_stages.as_ptr(),
+            stage_count: main_shader_stages.len() as u32,
             render_pass: vk_render_pass,
             ..Default::default()
         };
 
-        let imgui_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
-            polygon_mode: vk::PolygonMode::FILL,
-            cull_mode: vk::CullModeFlags::NONE,
-            depth_clamp_enable: vk::FALSE,
-            rasterizer_discard_enable: vk::FALSE,
-            depth_bias_enable: vk::TRUE,
-            line_width: 1.0,
-            ..Default::default()
-        };
-
-        let imgui_depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable: vk::FALSE,
-            depth_write_enable: vk::FALSE,
-            depth_bounds_test_enable: vk::FALSE,
-            stencil_test_enable: vk::FALSE,
-            ..Default::default()
+        let atmosphere_attrs = 3;
+        let atmosphere_vert_binding = vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: atmosphere_attrs * size_of::<f32>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX
         };
 
         let im_vert_binding = vk::VertexInputBindingDescription {
@@ -704,7 +731,7 @@ fn main() {
             p_depth_stencil_state: &imgui_depth_stencil_state,
             p_stages: imgui_shader_stages.as_ptr(),
             stage_count: imgui_shader_stages.len() as u32,
-            ..graphics_pipeline_info
+            ..main_graphics_pipeline_info
         };
 
         let wire_raster_state = vk::PipelineRasterizationStateCreateInfo {
@@ -713,10 +740,10 @@ fn main() {
         };
         let wireframe_pipeline_info = vk::GraphicsPipelineCreateInfo {
             p_rasterization_state: &wire_raster_state,
-            ..graphics_pipeline_info
+            ..main_graphics_pipeline_info
         };
 
-        let pipeline_infos = [graphics_pipeline_info, imgui_pipeline_info, wireframe_pipeline_info];
+        let pipeline_infos = [main_graphics_pipeline_info, imgui_pipeline_info, wireframe_pipeline_info];
         let pipelines = vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, vkutil::MEMORY_ALLOCATOR).unwrap();
         [pipelines[0], pipelines[1], pipelines[2]]
     };
@@ -736,10 +763,20 @@ fn main() {
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
     let totoro_mesh_indices: Vec<u32> = totoro_mesh.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
+    //Load dragon model
+    let dragon_mesh = OzyMesh::load("./data/models/dragon.ozy").unwrap();
+    let dragon_mesh_indices: Vec<u32> = dragon_mesh.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
+
+    //Load atmosphere cube
+    let atmosphere_vertices = ozy::prims::skybox_cube_vertex_buffer();
+    let atmosphere_indices = ozy::prims::skybox_cube_index_buffer();
+
     //Allocate and distribute memory to buffer objects
     let g_plane_geometry;
     let sphere_geometry;
     let totoro_geometry;
+    let dragon_geometry;
+    let atmosphere_geometry;
     unsafe {
         let scene_geo_buffer_size = 256 * 1024 * 1024;
         let scene_geo_buffer = {
@@ -773,12 +810,14 @@ fn main() {
         g_plane_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
         sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
         totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh_indices).unwrap();
+        dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh_indices).unwrap();
+        atmosphere_geometry = scene_geo_allocator.allocate_geometry(&atmosphere_vertices, &atmosphere_indices).unwrap();
 
         vk.device.unmap_memory(buffer_memory);
     }
 
     let mut imgui_geo_allocator = unsafe {
-        let imgui_buffer_size = 1024 * 1024;
+        let imgui_buffer_size = 256 * 1024 * 1024;
         let buffer_create_info = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
             size: imgui_buffer_size as vk::DeviceSize,
@@ -993,36 +1032,18 @@ fn main() {
 
         //Update
         movement_vector *= movement_multiplier;
-
-        let pcs = [steel_plate_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
-        let dc = vkutil::VirtualDrawCall {
-            pipeline: main_pipeline,
-            geometry: &totoro_geometry,
-            push_constants: pcs.try_into().unwrap(),
-            instance_count: 1,
-            first_instance: host_transform_buffer.len() as u32 / 16
-        };
+        
+        let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [steel_plate_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         
         let model_matrix = glm::translation(&glm::vec3(-10.0, 5.0, 3.0)) * glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
-        for i in 0..16 {
-            host_transform_buffer.push(model_matrix[i]);
-        }
+        push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
-        let pcs = [grass_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
-        let dc = vkutil::VirtualDrawCall {
-            pipeline: main_pipeline,
-            geometry: &g_plane_geometry,
-            push_constants: pcs.try_into().unwrap(),
-            instance_count: 1,
-            first_instance: host_transform_buffer.len() as u32 / 16
-        };
+        let dc = vkutil::VirtualDrawCall::new(&g_plane_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 1.0));
-        for i in 0..16 {
-            host_transform_buffer.push(plane_model_matrix[i]);
-        }
+        push_matrix_to_vec(&mut host_transform_buffer, plane_model_matrix.as_slice());
 
         //Camera orientation based on user input
         camera.orientation += orientation_vector;
@@ -1039,28 +1060,34 @@ fn main() {
         let view_movement_vector = glm::vec4_to_vec3(&view_movement_vector);
         let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
         camera.position += glm::vec4_to_vec3(&delta_pos);
+        
+        let imgui_ui = imgui_context.frame();
+        let imgui_window_token = if do_imgui { 
+            imgui::Window::new("Main control panel (press ESC to hide)").begin(&imgui_ui)
+        } else {
+            None
+        };
 
-        let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.2, 50.0);
-
-        //Relative to GL clip space, Vulkan has negative Y and half Z.
-        let projection_matrix = glm::mat4(
-            1.0, 0.0, 0.0, 0.0,
-            0.0, -1.0, 0.0, 0.0,
-            0.0, 0.0, 0.5, 0.0,
-            0.0, 0.0, 0.5, 1.0,
-        ) * projection_matrix;
-
-        let view_projection = projection_matrix * view_matrix;
+        if let Some(_) = imgui_window_token {
+            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
+            let (message, color) =  if game_controllers[0].is_some() {
+                ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
+            } else {
+                ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])
+            };
+            let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
+            imgui_ui.text(message);
+            color_token.pop();
+            imgui::Slider::new("Sphere width", 1, 150).build(&imgui_ui, &mut sphere_width);
+            imgui::Slider::new("Sphere height", 1, 150).build(&imgui_ui, &mut sphere_height);
+            imgui::Slider::new("Sphere spacing", 0.0, 20.0).build(&imgui_ui, &mut sphere_spacing);
+            imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
+            imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
+            imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
+        }
 
         let sphere_count = sphere_width as usize * sphere_height as usize;
-        let pcs = [steel_plate_global_index.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
-        let dc = vkutil::VirtualDrawCall {
-            pipeline: main_pipeline,
-            geometry: &sphere_geometry,
-            push_constants: pcs.try_into().unwrap(),
-            instance_count: sphere_count as u32,
-            first_instance: (host_transform_buffer.len() / 16) as u32
-        };
+        let dc = vkutil::VirtualDrawCall::new(&sphere_geometry, main_pipeline, [grass_global_index, 0, 0], sphere_count as u32, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         for i in 0..sphere_width {
             for j in 0..sphere_height {
@@ -1070,59 +1097,31 @@ fn main() {
                     sphere_z_offset + sphere_amplitude * f32::sin(timer.elapsed_time * (i + 7) as f32) + 5.0)
                 ) * glm::rotation(sphere_rotation * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
-                for k in 0..16 {
-                    host_transform_buffer.push(sphere_matrix[k as usize]);
-                }
+                push_matrix_to_vec(&mut host_transform_buffer, sphere_matrix.as_slice());
             }
         }
-
-        let imgui_ui = imgui_context.frame();
-        if do_imgui {
-            if let Some(win_token) = imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui) {
-                if let Some(menu_token) = imgui_ui.begin_menu_bar() {
-                    if let Some(memory_token) = imgui_ui.begin_menu("Memory") {
-
-
-                        memory_token.end();
-                    }
-
-                    menu_token.end();
-                }
-
-                imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
         
-                let (message, color) =  if game_controllers[0].is_some() {
-                    ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
+        let dc = vkutil::VirtualDrawCall::new(&dragon_geometry, main_pipeline, [dragon_color_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        vk_draw_calls.push(dc);
+        push_matrix_to_vec(&mut host_transform_buffer, glm::translation(&glm::vec3(20.0, 300.0, 10.0)).as_slice());
+        
+
+        if let Some(t) = imgui_window_token {
+            if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
+            if imgui_ui.checkbox("Wireframe view", &mut wireframe) {
+                if !wireframe {
+                    main_pipeline = vk_3D_graphics_pipeline;
                 } else {
-                    ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])
-                };
-        
-                let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
-                imgui_ui.text(message);
-                color_token.pop();
-        
-                imgui::Slider::new("Sphere width", 1, 150).build(&imgui_ui, &mut sphere_width);
-                imgui::Slider::new("Sphere height", 1, 150).build(&imgui_ui, &mut sphere_height);
-                imgui::Slider::new("Sphere spacing", 0.0, 20.0).build(&imgui_ui, &mut sphere_spacing);
-                imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
-                imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
-                imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
-                if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
-                if imgui_ui.checkbox("Wireframe view", &mut wireframe) {
-                    if !wireframe {
-                        main_pipeline = vk_3D_graphics_pipeline;
-                    } else {
-                        main_pipeline = vk_wireframe_graphics_pipeline;
-                    }
+                    main_pipeline = vk_wireframe_graphics_pipeline;
                 }
-        
-                imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
-                if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
-                    break 'running;
-                }
-
-                win_token.end();
             }
+    
+            imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
+            if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
+                break 'running;
+            }
+
+            t.end();
         }
         
         //Pre-render phase
@@ -1153,7 +1152,6 @@ fn main() {
         //Update uniform/storage buffers
         unsafe {
             //Update static scene data
-            let uniform_ptr = vk_uniform_buffer_ptr as *mut f32;
             let clip_from_screen = glm::mat4(
                 2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
                 0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
@@ -1161,13 +1159,35 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let sun_direction = glm::normalize(&glm::vec3(1.0, 1.0, 1.0));
+            let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.2, 50.0);
+    
+            //Relative to GL clip space, Vulkan has negative Y and half Z.
+            let projection_matrix = glm::mat4(
+                1.0, 0.0, 0.0, 0.0,
+                0.0, -1.0, 0.0, 0.0,
+                0.0, 0.0, 0.5, 0.0,
+                0.0, 0.0, 0.5, 1.0,
+            ) * projection_matrix;
+    
+            let view_projection = projection_matrix * view_matrix;
+            
+            //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
+            //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
+            //that the sky is infinitely far away
+            let skybox_view_projection = projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_matrix));
 
-            let mut uniform_buffer = [clip_from_screen.as_slice(), view_projection.as_slice(), projection_matrix.as_slice(), view_matrix.as_slice()].concat();
-            uniform_buffer.push(sun_direction.x);
-            uniform_buffer.push(sun_direction.y);
-            uniform_buffer.push(sun_direction.z);
+            let sun_direction = glm::normalize(&glm::vec3(-1.0, -1.0, 1.0));
 
+            let mut uniform_buffer = [
+                clip_from_screen.as_slice(),
+                view_projection.as_slice(),
+                projection_matrix.as_slice(),
+                view_matrix.as_slice(),
+                skybox_view_projection.as_slice(),
+                sun_direction.as_slice()
+            ].concat();
+
+            let uniform_ptr = vk_uniform_buffer_ptr as *mut f32;
             ptr::copy_nonoverlapping(uniform_buffer.as_ptr() as *mut _, uniform_ptr, uniform_buffer.len() * size_of::<f32>());
 
             //Update model matrix storage buffer
@@ -1232,8 +1252,8 @@ fn main() {
             let viewport = vk::Viewport {
                 x: 0.0,
                 y: 0.0,
-                width: vk_display.extent.width as f32,
-                height: vk_display.extent.height as f32,
+                width: (vk_display.extent.width) as f32,
+                height: (vk_display.extent.height) as f32,
                 min_depth: 0.0,
                 max_depth: 1.0
             };
@@ -1250,7 +1270,15 @@ fn main() {
                     extent: vk_display.extent
                 }
             };
-            vk.device.cmd_set_scissor(vk_command_buffer, 0, &[vk_render_area]);
+
+            let scissor_area = vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent: vk::Extent2D {
+                    width: window_size.x,
+                    height: window_size.y
+                }
+            };
+            vk.device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_area]);
 
             let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
             let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_display.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;

@@ -17,6 +17,10 @@ fn main() {
     println!("{:?}", out);
     let out = Command::new("glslangValidator").args(["-V", "-S", "frag", "-o" , "./shaders/main_frag.spv", "./src/shaders/main.fs"]).output().unwrap();
     println!("{:?}", out);
+    let out = Command::new("glslangValidator").args(["-V", "-S", "vert", "-o" , "./shaders/atmosphere_vert.spv", "./src/shaders/atmosphere.vs"]).output().unwrap();
+    println!("{:?}", out);
+    let out = Command::new("glslangValidator").args(["-V", "-S", "frag", "-o" , "./shaders/atmosphere_frag.spv", "./src/shaders/atmosphere.fs"]).output().unwrap();
+    println!("{:?}", out);
     let out = Command::new("glslangValidator").args(["-V", "-S", "vert", "-o" , "./shaders/imgui_vert.spv", "./src/shaders/imgui.vs"]).output().unwrap();
     println!("{:?}", out);
     let out = Command::new("glslangValidator").args(["-V", "-S", "frag", "-o" , "./shaders/imgui_frag.spv", "./src/shaders/imgui.fs"]).output().unwrap();

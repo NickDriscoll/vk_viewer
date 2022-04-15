@@ -312,64 +312,6 @@ pub unsafe fn upload_image(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer,
     vk.device.destroy_buffer(staging_buffer, vkutil::MEMORY_ALLOCATOR);
 }
 
-pub unsafe fn load_bc7_texture(
-    vk: &VulkanAPI,
-    vk_command_buffer: vk::CommandBuffer,
-    path: &str
-) -> vk::Image {
-    let mut file = unwrap_result(File::open(path));
-    let dds_header = DDSHeader::from_file(&mut file);
-
-    let width = dds_header.width;
-    let height = dds_header.height;
-    let mipmap_count = dds_header.mipmap_count;
-
-    let mut bytes_size = 0;
-    for i in 0..mipmap_count {
-        let w = width / (1 << i);
-        let h = height / (1 << i);
-        bytes_size += w * h;
-
-        bytes_size = size_to_alignment!(bytes_size, 16);
-    }
-
-    let mut raw_bytes = vec![0u8; bytes_size as usize];
-    file.read_exact(&mut raw_bytes).unwrap();
-    
-    let image_extent = vk::Extent3D {
-        width,
-        height,
-        depth: 1
-    };
-    let image_create_info = vk::ImageCreateInfo {
-        image_type: vk::ImageType::TYPE_2D,
-        format: vk::Format::BC7_SRGB_BLOCK,
-        extent: image_extent,
-        mip_levels: mipmap_count,
-        array_layers: 1,
-        samples: vk::SampleCountFlags::TYPE_1,
-        tiling: vk::ImageTiling::OPTIMAL,
-        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-        sharing_mode: vk::SharingMode::EXCLUSIVE,
-        queue_family_index_count: 1,
-        p_queue_family_indices: &vk.queue_family_index,
-        initial_layout: vk::ImageLayout::UNDEFINED,
-        ..Default::default()
-    };
-    let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-
-    let mut vim = VirtualImage {
-        vk_image: image,
-        vk_view: vk::ImageView::default(),
-        width,
-        height,
-        mip_count: mipmap_count
-    };
-    upload_image(vk, vk_command_buffer, &vim, &raw_bytes);
-
-    image
-}
-
 //All the variables that Vulkan needs
 pub struct VulkanAPI {
     pub instance: ash::Instance,
@@ -632,6 +574,19 @@ pub struct VirtualDrawCall<'a> {
     pub first_instance: u32
 }
 
+impl<'a> VirtualDrawCall<'a> {
+    pub fn new(geometry: &'a VirtualGeometry, pipeline: vk::Pipeline, push_constants: [u32; 3], instance_count: u32, first_instance: u32) -> Self {
+        let pcs = [push_constants[0].to_le_bytes(), push_constants[1].to_le_bytes(), push_constants[2].to_le_bytes()].concat();
+        VirtualDrawCall {
+            geometry,
+            pipeline,
+            push_constants: pcs.try_into().unwrap(),
+            instance_count,
+            first_instance
+        }
+    }
+}
+
 pub struct FrameUniforms {
     pub clip_from_screen: glm::TMat4<f32>,
     pub clip_from_world: glm::TMat4<f32>,
@@ -673,7 +628,10 @@ impl Display {
             }
 
             vk_swapchain_image_format = surf_format.format;
-            vk_swapchain_extent = surf_capabilities.current_extent;
+            vk_swapchain_extent = vk::Extent2D {
+                width: surf_capabilities.current_extent.width,
+                height: surf_capabilities.current_extent.height
+            };
             let create_info = vk::SwapchainCreateInfoKHR {
                 surface: vk.surface,
                 min_image_count: surf_capabilities.min_image_count,

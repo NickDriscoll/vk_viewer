@@ -11,6 +11,7 @@ layout (std140, set = 0, binding = 0) readonly uniform FrameData {
     mat4 clip_from_world;
     mat4 clip_from_view;
     mat4 view_from_world;
+    mat4 clip_from_skybox;
     vec3 sun_direction;
     float time;
 };
@@ -27,6 +28,4 @@ void main() {
 
     vec3 norm_color = normal * 0.5 + 0.5;
     frag_color = vec4(sun_contribution * texture(global_textures[color_map_index], f_uv).rgb, 1.0);
-    //frag_color = vec4(f_color.rgb, 1.0);
-    //frag_color = texture(global_textures[color_map_index], f_uv);
 }
