@@ -196,6 +196,31 @@ fn main() {
         index as u32
     };
 
+    //Load environment textures
+    let atmosphere_tex_indices = unsafe {
+        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/sunzenith_gradient.dds");
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: vim.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let sunzenith_index = global_texture_free_list.insert(descriptor_info) as u32;
+        global_texture_update = true;
+
+        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/sunview_gradient.dds");
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: vim.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let sunview_index = global_texture_free_list.insert(descriptor_info) as u32;
+        global_texture_update = true;
+
+        [sunzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
+    };
+
     //Create and upload Dear IMGUI font atlas
     let imgui_font_global_index = match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
@@ -789,14 +814,15 @@ fn main() {
     let plane_vertices = ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, move |x, y| {
         use noise::NoiseFn;
 
-        let amplitude = 4.0;
-
-        let mut z = 0.0;
         let mut amplitude_sum = 0.0;
-        let amps = [1.0, 0.5, 0.25, 0.125];//, 0.0625];
+        let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
         let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
         let x_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
         let y_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
+
+        let mut z = 0.0;
+
+        //Apply each level of noise with the appropriate offset, frequency, and amplitude
         for i in 0..amps.len() {
             let xi = x_offsets[i]  + x * freqs[i];
             let yi = y_offsets[i] + y * freqs[i];
@@ -804,26 +830,15 @@ fn main() {
             amplitude_sum += amps[i];
         }
         z /= amplitude_sum;
+
+        let amplitude = 4.0;
         z *= amplitude;
+
 		let z = if z < 0.0 {
-		    f64::powf(f64::abs(z), 2.2)
+		    -f64::powf(f64::abs(z), 2.2)
 		} else {
 			f64::powf(z, 2.2)
 		};
-
-
-		// let z =     simplex_generator.get([x / 2.0, y / 2.0]);
-		// let z = z + 0.5 * simplex_generator.get([40.0 + x / 2.0, 40.0 + y / 2.0]);
-		// let z = z + 0.25 * simplex_generator.get([80.0 + x / 2.0, 80.0 + y / 2.0]);
-		// let z = z + 0.125 * simplex_generator.get([120.0 + x * 2.0, 120.0 + y * 2.0]);
-		// let z = z + 0.0625 * simplex_generator.get([240.0 + x * 4.0, 240.0 + y * 4.0]);
-		// let z = z / (1.0 + 0.5 + 0.25 + 0.125 + 0.0625);
-		// let z = amplitude * z;
-		// let z = if z < 0.0 {
-		// 	-f64::powf(f64::abs(z), 2.2)
-		// } else {
-		// 	f64::powf(z, 2.2)
-		// };
 
         z
     });
@@ -913,8 +928,8 @@ fn main() {
 
     let vk_submission_fence = unsafe { vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
     
-    let mut sun_speed = 0.05;
-    let mut sun_pitch = 0.637;
+    let mut sun_speed = 0.003;
+    let mut sun_pitch = 0.118;
     let mut sun_yaw = 0.783;
 
     let mut sphere_width = 10 as u32;
@@ -929,6 +944,8 @@ fn main() {
     bgm.play(-1).unwrap();
 
     let mut do_imgui = true;
+    let mut do_terrain_window = false;
+    
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
 
@@ -944,7 +961,7 @@ fn main() {
         host_transform_buffer.clear();
 
         //Abstracted input variables
-        let mut movement_multiplier = 1.0f32;
+        let mut movement_multiplier = 5.0f32;
         let mut movement_vector: glm::TVec3<f32> = glm::zero();
         let mut orientation_vector: glm::TVec2<f32> = glm::zero();
 
@@ -1050,6 +1067,14 @@ fn main() {
                     controller.axis(axis) as f32 / i16::MAX as f32
                 }
 
+                if controller.button(Button::LeftShoulder) {
+                    movement_vector += glm::vec3(0.0, 0.0, -1.0);                    
+                }
+
+                if controller.button(Button::RightShoulder) {
+                    movement_vector += glm::vec3(0.0, 0.0, 1.0);                    
+                }
+
                 if controller.button(Button::A) {
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                         println!("{}", e);
@@ -1057,7 +1082,7 @@ fn main() {
                 }
 
                 let left_trigger = get_normalized_axis(&controller, Axis::TriggerLeft);
-                movement_multiplier = 9.0 * left_trigger + 1.0;
+                movement_multiplier *= 4.0 * left_trigger + 1.0;
 
                 const JOYSTICK_DEADZONE: f32 = 0.15;
                 let left_joy_vector = {
@@ -1079,7 +1104,7 @@ fn main() {
                     res
                 };
 
-                movement_vector += 5.0 * &left_joy_vector;
+                movement_vector += &left_joy_vector;
                 orientation_vector += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
             }
 
@@ -1113,18 +1138,18 @@ fn main() {
 
         //Update
         movement_vector *= movement_multiplier;
-        
-        let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [steel_plate_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
-        vk_draw_calls.push(dc);
-        
-        let model_matrix = glm::translation(&glm::vec3(-10.0, 5.0, 3.0)) * glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
-        push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
         let dc = vkutil::VirtualDrawCall::new(&plane_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         push_matrix_to_vec(&mut host_transform_buffer, plane_model_matrix.as_slice());
+        
+        let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [steel_plate_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        vk_draw_calls.push(dc);
+        
+        let model_matrix = glm::translation(&glm::vec3(-10.0, 5.0, 3.0)) * glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
+        push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
         //Camera orientation based on user input
         camera.orientation += orientation_vector;
@@ -1144,12 +1169,22 @@ fn main() {
         
         let imgui_ui = imgui_context.frame();
         let imgui_window_token = if do_imgui { 
-            imgui::Window::new("Main control panel (press ESC to hide)").begin(&imgui_ui)
+            imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
         } else {
             None
         };
 
         if let Some(_) = imgui_window_token {
+            if let Some(mb) = imgui_ui.begin_menu_bar() {
+                if let Some(mt) = imgui_ui.begin_menu("Environment") {
+                    if imgui::MenuItem::new("Terrain").build(&imgui_ui) {
+                        do_terrain_window = true;
+                    }
+                    mt.end();
+                }
+                mb.end();
+            }
+
             imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
             let (message, color) =  if game_controllers[0].is_some() {
                 ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
@@ -1404,6 +1439,7 @@ fn main() {
 
             //Record atmosphere rendering commands
             vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
+            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, atmosphere_tex_indices.as_slice());
             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[atmosphere_geometry.vertex_buffer.backing_buffer()], &[atmosphere_geometry.vertex_buffer.offset() as u64]);
             vk.device.cmd_bind_index_buffer(vk_command_buffer, atmosphere_geometry.index_buffer.backing_buffer(), (atmosphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk_command_buffer, atmosphere_geometry.index_count, 1, 0, 0, 0);

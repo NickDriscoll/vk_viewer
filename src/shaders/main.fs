@@ -30,5 +30,13 @@ void main() {
     vec3 base_color = texture(global_textures[color_map_index], f_uv).rgb;
     vec3 norm_color = normal * 0.5 + 0.5;
 
+    vec3 tints[] = { vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0), vec3(1.0) };
+    for (int i = 0; i < 4; i++) {
+        if (f_position.z < 10.0 * (i + 1)) {
+            //base_color *= tints[i];
+            break;
+        }
+    }
+
     frag_color = vec4(sun_contribution * base_color, 1.0);
 }

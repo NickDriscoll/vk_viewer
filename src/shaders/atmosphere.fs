@@ -1,4 +1,5 @@
 #version 430 core
+#extension GL_EXT_nonuniform_qualifier: enable
 
 layout (location = 0) in vec3 f_view_direction;
 
@@ -20,18 +21,21 @@ layout(set = 0, binding = 1) uniform sampler2D global_textures[];
 
 layout(push_constant) uniform TexIndices {
     uint sunzenith_idx;
+    uint sunview_idx;
+    //uint sunzenith_idx;
+    //uint sunzenith_idx;
 };
-
-const vec3 ZENITH = vec3(0.0, 0.0, 1.0);
 
 void main() {
     vec3 view_direction = normalize(f_view_direction);
-    float viewzenith_dot = view_direction.z;
+    float sunzenith_dot = max(0.0, sun_direction.z);
+    float sunview_dot = max(0.0, dot(sun_direction, view_direction));
+    float viewzenith_dot = max(0.0, view_direction.z);
 
-
-    float color_param = dot(sun_direction, ZENITH);
-    vec3 sky_color = (1.0 - color_param) * vec3(1.0, 0.0, 0.0) + color_param * vec3(0.0, 0.0, 1.0);
-    vec3 final_color = max(0.0, viewzenith_dot) * sky_color;
+    vec3 base_color = texture(global_textures[sunzenith_idx], vec2(sunzenith_dot, 0.5)).rgb;
+    vec3 sunview_color = texture(global_textures[sunview_idx], vec2(sunview_dot, 0.5)).rgb;
+    
+    vec3 final_color = base_color + sunview_color;
 
     float sun_likeness = max(0.0, dot(view_direction, sun_direction));
     final_color += smoothstep(mix(1.0, 0.99, 0.5), 1.0, sun_likeness);
