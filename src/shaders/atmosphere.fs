@@ -23,8 +23,6 @@ layout(push_constant) uniform TexIndices {
     uint sunzenith_idx;
     uint viewzenith_idx;
     uint sunview_idx;
-    //uint sunzenith_idx;
-    //uint sunzenith_idx;
 };
 
 void main() {
@@ -36,15 +34,15 @@ void main() {
     vec3 base_color = texture(global_textures[sunzenith_idx], vec2(sunzenith_dot, 0.5)).rgb;
 
     vec3 viewzenith_color = texture(global_textures[viewzenith_idx], vec2(sunzenith_dot, 0.5)).rgb;
-    viewzenith_color *= pow(1.0 - viewzenith_dot, 2.0);
+    viewzenith_color *= pow(1.0 - viewzenith_dot, 4.0);
 
     vec3 sunview_color = texture(global_textures[sunview_idx], vec2(sunzenith_dot, 0.5)).rgb;
-    sunview_color *= pow(sunview_dot, 2.0);
+    sunview_color *= pow(sunview_dot, 4.0);
     
     vec3 final_color = base_color + viewzenith_color + sunview_color;
 
     float sun_likeness = max(0.0, dot(view_direction, sun_direction));
-    final_color += smoothstep(mix(1.0, 0.99, 0.5), 1.0, sun_likeness);
+    final_color += smoothstep(mix(1.0, 0.99, 0.25), 1.0, sun_likeness);
 
     frag_color = vec4(final_color, 1.0);
 }

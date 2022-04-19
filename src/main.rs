@@ -23,6 +23,7 @@ use std::mem::size_of;
 use std::ptr;
 use std::time::SystemTime;
 
+use ozy::collision;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
@@ -854,6 +855,23 @@ fn main() {
     });
     let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
 
+    //Create collision data from terrain mesh
+    /*/
+    let terrain_collision = {
+        let mut vertices = Vec::with_capacity(plane_width * plane_height);
+        for i in (0..plane_vertices.len()).step_by(14) {
+            let vertex = glm::vec3(plane_vertices[i], plane_vertices[i + 1], plane_vertices[i + 2]);
+            vertices.push(vertex);
+        }
+
+        collision::MeshCollision {
+            vertices,
+            indices: plane_indices,
+
+        }
+    };
+    */
+
     //Load UV sphere OzyMesh
     let uv_sphere = OzyMesh::load("./data/models/sphere.ozy").unwrap();
     let uv_sphere_indices: Vec<u32> = uv_sphere.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
@@ -1147,6 +1165,55 @@ fn main() {
         }
 
         //Update
+        let imgui_ui = imgui_context.frame();
+        if do_imgui && do_terrain_window {
+            if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) {
+                if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
+                    let plane_width = 256;
+                    let plane_height = 256;
+                    let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+                    let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
+                    let plane_vertices = ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, move |x, y| {
+                        use noise::NoiseFn;
+
+                        let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
+                        let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
+                        let x_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
+                        let y_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
+
+                        let mut z = 0.0;
+
+                        //Apply each level of noise with the appropriate offset, frequency, and amplitude
+                        let mut amplitude_sum = 0.0;
+                        for i in 0..amps.len() {
+                            let xi = x_offsets[i]  + x * freqs[i];
+                            let yi = y_offsets[i] + y * freqs[i];
+                            z += amps[i] * simplex_generator.get([xi, yi]);
+                            amplitude_sum += amps[i];
+                        }
+                        z /= amplitude_sum;
+
+                        let amplitude = 4.0;
+                        z *= amplitude;
+
+                        let z = if z < 0.0 {
+                            -f64::powf(f64::abs(z), 2.2)
+                        } else {
+                            f64::powf(z, 2.2)
+                        };
+
+                        z
+                    });
+
+                    plane_geometry.vertex_buffer.upload_buffer(&plane_vertices);
+                }
+
+                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { do_terrain_window = false; }
+
+                token.end();
+            }
+        }
+
         movement_vector *= movement_multiplier;
 
         let dc = vkutil::VirtualDrawCall::new(&plane_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
@@ -1177,7 +1244,6 @@ fn main() {
         let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
         camera.position += glm::vec4_to_vec3(&delta_pos);
         
-        let imgui_ui = imgui_context.frame();
         let imgui_window_token = if do_imgui { 
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
         } else {
