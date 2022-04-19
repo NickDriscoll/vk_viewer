@@ -793,8 +793,8 @@ fn main() {
 
         let mut z = 0.0;
         let mut amplitude_sum = 0.0;
-        let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
-        let freqs = [0.5, 0.5, 0.5, 2.0, 4.0];
+        let amps = [1.0, 0.5, 0.25, 0.125];//, 0.0625];
+        let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
         let x_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
         let y_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
         for i in 0..amps.len() {
@@ -805,6 +805,11 @@ fn main() {
         }
         z /= amplitude_sum;
         z *= amplitude;
+		let z = if z < 0.0 {
+		    f64::powf(f64::abs(z), 2.2)
+		} else {
+			f64::powf(z, 2.2)
+		};
 
 
 		// let z =     simplex_generator.get([x / 2.0, y / 2.0]);
@@ -1065,8 +1070,8 @@ fn main() {
                     res
                 };
                 let right_joy_vector = {
-                    let x = get_normalized_axis(&controller, Axis::LeftX);
-                    let y = get_normalized_axis(&controller, Axis::LeftY);
+                    let x = get_normalized_axis(&controller, Axis::RightX);
+                    let y = get_normalized_axis(&controller, Axis::RightY);
                     let mut res = glm::vec2(x, -y);
                     if glm::length(&res) < JOYSTICK_DEADZONE {
                         res = glm::zero();
