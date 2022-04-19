@@ -11,6 +11,7 @@ use ash::vk;
 use ash::vk::Handle;
 use imgui::{DrawCmd, FontAtlasRefMut};
 use noise::Seedable;
+use sdl2::controller::GameController;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
@@ -61,7 +62,7 @@ fn main() {
     let mut event_pump = unwrap_result(sdl_context.event_pump());
     let video_subsystem = unwrap_result(sdl_context.video());
     let controller_subsystem = unwrap_result(sdl_context.game_controller());
-    let mut window_size = glm::vec2(1920, 1080);
+    let mut window_size = glm::vec2(1280, 720);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build());
     
     //Initialize the SDL mixer
@@ -1019,7 +1020,8 @@ fn main() {
                             orientation_vector += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
                         }
                     }
-                    Event::MouseWheel { y, .. } => {
+                    Event::MouseWheel { x, y, .. } => {
+                        imgui_io.mouse_wheel_h = x as f32;
                         imgui_io.mouse_wheel = y as f32;
                     }
                     Event::ControllerButtonDown { button: Button::A, which, .. } => {
@@ -1027,30 +1029,35 @@ fn main() {
                             println!("Rumbling controller {}", which);
                         }
                     }
-                    _ => {}
+                    _ => {  }
                 }
             }
             let keyboard_state = event_pump.keyboard_state();
             let mouse_state = event_pump.mouse_state();
-            imgui_io.mouse_down = [mouse_state.left(), mouse_state.right(), mouse_state.middle(), false, false];
+            imgui_io.mouse_down = [mouse_state.left(), mouse_state.right(), mouse_state.middle(), mouse_state.x1(), mouse_state.x2()];
             imgui_io.mouse_pos[0] = mouse_state.x() as f32;
             imgui_io.mouse_pos[1] = mouse_state.y() as f32;
 
             if let Some(controller) = &mut game_controllers[0] {
                 use sdl2::controller::{Axis};
+
+                fn get_normalized_axis(controller: &GameController, axis: Axis) -> f32 {
+                    controller.axis(axis) as f32 / i16::MAX as f32
+                }
+
                 if controller.button(Button::A) {
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                         println!("{}", e);
                     }
                 }
 
-                let left_trigger = controller.axis(Axis::TriggerLeft) as f32 / i16::MAX as f32;
+                let left_trigger = get_normalized_axis(&controller, Axis::TriggerLeft);
                 movement_multiplier = 9.0 * left_trigger + 1.0;
 
                 const JOYSTICK_DEADZONE: f32 = 0.15;
                 let left_joy_vector = {
-                    let x = controller.axis(Axis::LeftX) as f32 / i16::MAX as f32;
-                    let y = controller.axis(Axis::LeftY) as f32 / i16::MAX as f32;
+                    let x = get_normalized_axis(&controller, Axis::LeftX);
+                    let y = get_normalized_axis(&controller, Axis::LeftY);
                     let mut res = glm::vec3(x, -y, 0.0);
                     if glm::length(&res) < JOYSTICK_DEADZONE {
                         res = glm::zero();
@@ -1058,8 +1065,8 @@ fn main() {
                     res
                 };
                 let right_joy_vector = {
-                    let x = controller.axis(Axis::RightX) as f32 / i16::MAX as f32;
-                    let y = controller.axis(Axis::RightY) as f32 / i16::MAX as f32;
+                    let x = get_normalized_axis(&controller, Axis::LeftX);
+                    let y = get_normalized_axis(&controller, Axis::LeftY);
                     let mut res = glm::vec2(x, -y);
                     if glm::length(&res) < JOYSTICK_DEADZONE {
                         res = glm::zero();
@@ -1397,6 +1404,7 @@ fn main() {
             vk.device.cmd_draw_indexed(vk_command_buffer, atmosphere_geometry.index_count, 1, 0, 0, 0);
 
             //Record Dear ImGUI drawing commands
+            let mut prev_tex_id = u32::MAX;
             vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);
             for i in 0..imgui_cmd_lists.len() {
                 let cmd_list = &imgui_cmd_lists[i];
@@ -1407,7 +1415,6 @@ fn main() {
                             let v_offset = cmd_params.vtx_offset;
                             let v_buffer = imgui_geometries[i].vertex_buffer;
                             let i_buffer = imgui_geometries[i].index_buffer;
-                            let tex_id = cmd_params.texture_id.id() as u32;
 
                             let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
                             let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
@@ -1427,7 +1434,12 @@ fn main() {
                             };
                             vk.device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_rect]);
                             
-                            vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &tex_id.to_le_bytes());
+                            let tex_id = cmd_params.texture_id.id() as u32;
+                            if tex_id != prev_tex_id {
+                                prev_tex_id = tex_id;
+                                vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &tex_id.to_le_bytes());
+                            }
+
                             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[v_buffer.backing_buffer()], &[v_buffer.offset()]);
                             vk.device.cmd_bind_index_buffer(vk_command_buffer, i_buffer.backing_buffer(), i_buffer.offset(), vk::IndexType::UINT32);
                             vk.device.cmd_draw_indexed(vk_command_buffer, *count as u32, 1, i_offset as u32, v_offset as i32, 0);
