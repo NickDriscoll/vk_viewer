@@ -56,6 +56,48 @@ fn push_matrix_to_vec(vec: &mut Vec<f32>, matrix: &[f32]) {
     }
 }
 
+fn generate_plane_vertices(plane_width: usize, plane_height: usize) -> Vec<f32> {
+    let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+    let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
+    ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, move |x, y| {
+        use noise::NoiseFn;
+
+        let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
+        let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
+        let x_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
+        let y_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
+
+        let mut z = 0.0;
+
+        //Apply each level of noise with the appropriate offset, frequency, and amplitude
+        let mut amplitude_sum = 0.0;
+        for i in 0..amps.len() {
+            let xi = x_offsets[i]  + x * freqs[i];
+            let yi = y_offsets[i] + y * freqs[i];
+            z += amps[i] * simplex_generator.get([xi, yi]);
+            amplitude_sum += amps[i];
+        }
+        z /= amplitude_sum;
+
+        let amplitude = 4.0;
+        z *= amplitude;
+
+        //Apply exponent to flatten. Branch is for exponentiating a negative
+        let z = if z < 0.0 {
+            -f64::powf(f64::abs(z), 2.2)
+        } else {
+            f64::powf(z, 2.2)
+        };
+
+        z
+    })
+}
+
+fn regenerate_plane_vertices(plane_width: usize, plane_height: usize, plane_geometry: &vkutil::VirtualGeometry) {
+    let plane_vertices = generate_plane_vertices(plane_width, plane_height);
+    plane_geometry.vertex_buffer.upload_buffer(&plane_vertices);
+}
+
 //Entry point
 fn main() {
     //Create the window using SDL
@@ -820,39 +862,7 @@ fn main() {
 
     let plane_width = 256;
     let plane_height = 256;
-    let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-    let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
-    let plane_vertices = ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, move |x, y| {
-        use noise::NoiseFn;
-
-        let mut amplitude_sum = 0.0;
-        let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
-        let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
-        let x_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
-        let y_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
-
-        let mut z = 0.0;
-
-        //Apply each level of noise with the appropriate offset, frequency, and amplitude
-        for i in 0..amps.len() {
-            let xi = x_offsets[i]  + x * freqs[i];
-            let yi = y_offsets[i] + y * freqs[i];
-            z += amps[i] * simplex_generator.get([xi, yi]);
-            amplitude_sum += amps[i];
-        }
-        z /= amplitude_sum;
-
-        let amplitude = 4.0;
-        z *= amplitude;
-
-		let z = if z < 0.0 {
-		    -f64::powf(f64::abs(z), 2.2)
-		} else {
-			f64::powf(z, 2.2)
-		};
-
-        z
-    });
+    let plane_vertices = generate_plane_vertices(plane_width, plane_height);
     let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
 
     //Create collision data from terrain mesh
@@ -1103,7 +1113,8 @@ fn main() {
                     movement_vector += glm::vec3(0.0, 0.0, 1.0);                    
                 }
 
-                if controller.button(Button::A) {
+                if controller.button(Button::Y) {
+                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry);
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                         println!("{}", e);
                     }
@@ -1169,43 +1180,7 @@ fn main() {
         if do_imgui && do_terrain_window {
             if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) {
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
-                    let plane_width = 256;
-                    let plane_height = 256;
-                    let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-                    let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
-                    let plane_vertices = ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, move |x, y| {
-                        use noise::NoiseFn;
-
-                        let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
-                        let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
-                        let x_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
-                        let y_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
-
-                        let mut z = 0.0;
-
-                        //Apply each level of noise with the appropriate offset, frequency, and amplitude
-                        let mut amplitude_sum = 0.0;
-                        for i in 0..amps.len() {
-                            let xi = x_offsets[i]  + x * freqs[i];
-                            let yi = y_offsets[i] + y * freqs[i];
-                            z += amps[i] * simplex_generator.get([xi, yi]);
-                            amplitude_sum += amps[i];
-                        }
-                        z /= amplitude_sum;
-
-                        let amplitude = 4.0;
-                        z *= amplitude;
-
-                        let z = if z < 0.0 {
-                            -f64::powf(f64::abs(z), 2.2)
-                        } else {
-                            f64::powf(z, 2.2)
-                        };
-
-                        z
-                    });
-
-                    plane_geometry.vertex_buffer.upload_buffer(&plane_vertices);
+                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry);
                 }
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { do_terrain_window = false; }
