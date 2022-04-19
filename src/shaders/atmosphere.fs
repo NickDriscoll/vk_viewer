@@ -21,6 +21,7 @@ layout(set = 0, binding = 1) uniform sampler2D global_textures[];
 
 layout(push_constant) uniform TexIndices {
     uint sunzenith_idx;
+    uint viewzenith_idx;
     uint sunview_idx;
     //uint sunzenith_idx;
     //uint sunzenith_idx;
@@ -28,14 +29,19 @@ layout(push_constant) uniform TexIndices {
 
 void main() {
     vec3 view_direction = normalize(f_view_direction);
-    float sunzenith_dot = max(0.0, sun_direction.z);
-    float sunview_dot = max(0.0, dot(sun_direction, view_direction));
-    float viewzenith_dot = max(0.0, view_direction.z);
+    float sunzenith_dot = sun_direction.z * 0.5 + 0.5;
+    float sunview_dot = dot(sun_direction, view_direction) * 0.5 + 0.5;
+    float viewzenith_dot = view_direction.z * 0.5 + 0.5;
 
     vec3 base_color = texture(global_textures[sunzenith_idx], vec2(sunzenith_dot, 0.5)).rgb;
-    vec3 sunview_color = texture(global_textures[sunview_idx], vec2(sunview_dot, 0.5)).rgb;
+
+    vec3 viewzenith_color = texture(global_textures[viewzenith_idx], vec2(sunzenith_dot, 0.5)).rgb;
+    viewzenith_color *= pow(1.0 - viewzenith_dot, 2.0);
+
+    vec3 sunview_color = texture(global_textures[sunview_idx], vec2(sunzenith_dot, 0.5)).rgb;
+    sunview_color *= pow(sunview_dot, 2.0);
     
-    vec3 final_color = base_color + sunview_color;
+    vec3 final_color = base_color + viewzenith_color + sunview_color;
 
     float sun_likeness = max(0.0, dot(view_direction, sun_direction));
     final_color += smoothstep(mix(1.0, 0.99, 0.5), 1.0, sun_likeness);

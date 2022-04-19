@@ -208,6 +208,16 @@ fn main() {
         let sunzenith_index = global_texture_free_list.insert(descriptor_info) as u32;
         global_texture_update = true;
 
+        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/viewzenith_gradient.dds");
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: vim.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let viewzenith_index = global_texture_free_list.insert(descriptor_info) as u32;
+        global_texture_update = true;
+
         let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/sunview_gradient.dds");
 
         let descriptor_info = vk::DescriptorImageInfo {
@@ -218,7 +228,7 @@ fn main() {
         let sunview_index = global_texture_free_list.insert(descriptor_info) as u32;
         global_texture_update = true;
 
-        [sunzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
+        [sunzenith_index.to_le_bytes(), viewzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
     };
 
     //Create and upload Dear IMGUI font atlas
