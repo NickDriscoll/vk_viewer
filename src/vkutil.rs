@@ -10,8 +10,8 @@ pub const MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
 
 pub const COLOR_CLEAR: vk::ClearValue = {
     let color = vk::ClearColorValue {
-        //float32: [0.0, 0.0, 0.0, 1.0]
-        float32: [0.26, 0.4, 0.46, 1.0]
+        float32: [0.0, 0.0, 0.0, 1.0]
+        //float32: [0.26, 0.4, 0.46, 1.0]
     };
     vk::ClearValue {
         color

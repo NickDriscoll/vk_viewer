@@ -781,11 +781,46 @@ fn main() {
         [pipelines[0], pipelines[1], pipelines[2], pipelines[3]]
     };
 
-    let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-    let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
     let plane_width = 256;
     let plane_height = 256;
-    let plane_vertices = ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, &simplex_generator);
+    let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+    let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
+    let plane_vertices = ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, move |x, y| {
+        use noise::NoiseFn;
+
+        let amplitude = 4.0;
+
+        let mut z = 0.0;
+        let mut amplitude_sum = 0.0;
+        let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
+        let freqs = [0.5, 0.5, 0.5, 2.0, 4.0];
+        let x_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
+        let y_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
+        for i in 0..amps.len() {
+            let xi = x_offsets[i]  + x * freqs[i];
+            let yi = y_offsets[i] + y * freqs[i];
+            z += amps[i] * simplex_generator.get([xi, yi]);
+            amplitude_sum += amps[i];
+        }
+        z /= amplitude_sum;
+        z *= amplitude;
+
+
+		// let z =     simplex_generator.get([x / 2.0, y / 2.0]);
+		// let z = z + 0.5 * simplex_generator.get([40.0 + x / 2.0, 40.0 + y / 2.0]);
+		// let z = z + 0.25 * simplex_generator.get([80.0 + x / 2.0, 80.0 + y / 2.0]);
+		// let z = z + 0.125 * simplex_generator.get([120.0 + x * 2.0, 120.0 + y * 2.0]);
+		// let z = z + 0.0625 * simplex_generator.get([240.0 + x * 4.0, 240.0 + y * 4.0]);
+		// let z = z / (1.0 + 0.5 + 0.25 + 0.125 + 0.0625);
+		// let z = amplitude * z;
+		// let z = if z < 0.0 {
+		// 	-f64::powf(f64::abs(z), 2.2)
+		// } else {
+		// 	f64::powf(z, 2.2)
+		// };
+
+        z
+    });
     let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
 
     //Load UV sphere OzyMesh
@@ -799,10 +834,6 @@ fn main() {
     //Load dragon model
     let dragon_mesh = OzyMesh::load("./data/models/dragon.ozy").unwrap();
     let dragon_mesh_indices: Vec<u32> = dragon_mesh.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
-
-    //Load atmosphere cube
-    let atmosphere_vertices = ozy::prims::skybox_cube_vertex_buffer();
-    let atmosphere_indices = ozy::prims::skybox_cube_index_buffer();
 
     //Allocate and distribute memory to buffer objects
     let plane_geometry;
@@ -844,7 +875,7 @@ fn main() {
         sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
         totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh_indices).unwrap();
         dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh_indices).unwrap();
-        atmosphere_geometry = scene_geo_allocator.allocate_geometry(&atmosphere_vertices, &atmosphere_indices).unwrap();
+        atmosphere_geometry = scene_geo_allocator.allocate_geometry(&ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer()).unwrap();
 
         vk.device.unmap_memory(buffer_memory);
     }
@@ -876,6 +907,7 @@ fn main() {
 
     let vk_submission_fence = unsafe { vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
     
+    let mut sun_speed = 0.05;
     let mut sun_pitch = 0.637;
     let mut sun_yaw = 0.783;
 
@@ -1079,7 +1111,7 @@ fn main() {
         let dc = vkutil::VirtualDrawCall::new(&plane_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         
-        let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 1.0));
+        let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         push_matrix_to_vec(&mut host_transform_buffer, plane_model_matrix.as_slice());
 
         //Camera orientation based on user input
@@ -1121,12 +1153,13 @@ fn main() {
             imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
             imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
             imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
-            imgui::Slider::new("Sun pitch", 0.0, glm::pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
+            imgui::Slider::new("Sun speed", 0.0, 1.0).build(&imgui_ui, &mut sun_speed);
+            imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
         }
 
         let sphere_count = sphere_width as usize * sphere_height as usize;
-        let dc = vkutil::VirtualDrawCall::new(&sphere_geometry, main_pipeline, [grass_global_index, 0, 0], sphere_count as u32, host_transform_buffer.len() as u32 / 16);
+        let dc = vkutil::VirtualDrawCall::new(&sphere_geometry, main_pipeline, [steel_plate_global_index, 0, 0], sphere_count as u32, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         for i in 0..sphere_width {
             for j in 0..sphere_height {
@@ -1144,6 +1177,11 @@ fn main() {
         vk_draw_calls.push(dc);
         push_matrix_to_vec(&mut host_transform_buffer, glm::translation(&glm::vec3(20.0, 300.0, 10.0)).as_slice());
         
+        //Update sun's position
+        sun_pitch += sun_speed * timer.delta_time;
+        if sun_pitch > glm::two_pi() {
+            sun_pitch -= glm::two_pi::<f32>();
+        }
 
         if let Some(t) = imgui_window_token {
             if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
@@ -1222,7 +1260,7 @@ fn main() {
             //that the sky is infinitely far away
             let skybox_view_projection = projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_matrix));
 
-            let mut uniform_buffer = [
+            let uniform_buffer = [
                 clip_from_screen.as_slice(),
                 view_projection.as_slice(),
                 projection_matrix.as_slice(),
@@ -1426,7 +1464,9 @@ fn main() {
                 p_image_indices: &(current_framebuffer_index as u32),
                 ..Default::default()
             };
-            unwrap_result(vk_ext_swapchain.queue_present(queue, &present_info));
+            if let Err(e) = vk_ext_swapchain.queue_present(queue, &present_info) {
+                println!("{}", e);
+            }
         }
     }
 }

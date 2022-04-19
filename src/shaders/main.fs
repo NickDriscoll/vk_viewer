@@ -1,8 +1,9 @@
 #version 430 core
 #extension GL_EXT_nonuniform_qualifier: enable
 
-layout (location = 0) in vec3 f_normal;
-layout (location = 1) in vec2 f_uv;
+layout (location = 0) in vec3 f_position;
+layout (location = 1) in vec3 f_normal;
+layout (location = 2) in vec2 f_uv;
 
 layout (location = 0) out vec4 frag_color;
 
@@ -24,8 +25,10 @@ layout(push_constant) uniform Indices {
 
 void main() {
     vec3 normal = normalize(f_normal);
-    float sun_contribution = max(0.0, dot(normal, sun_direction));
+    float sun_contribution = max(0.05, dot(normal, sun_direction));
 
+    vec3 base_color = texture(global_textures[color_map_index], f_uv).rgb;
     vec3 norm_color = normal * 0.5 + 0.5;
-    frag_color = vec4(sun_contribution * texture(global_textures[color_map_index], f_uv).rgb, 1.0);
+
+    frag_color = vec4(sun_contribution * base_color, 1.0);
 }
