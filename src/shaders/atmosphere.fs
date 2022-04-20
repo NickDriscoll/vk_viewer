@@ -37,7 +37,7 @@ void main() {
     viewzenith_color *= pow(1.0 - viewzenith_dot, 4.0);
 
     vec3 sunview_color = texture(global_textures[sunview_idx], vec2(sunzenith_dot, 0.5)).rgb;
-    sunview_color *= pow(sunview_dot, 4.0);
+    sunview_color *= pow(sunview_dot, 1.0);
     
     vec3 final_color = base_color + viewzenith_color + sunview_color;
 

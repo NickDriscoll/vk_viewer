@@ -56,45 +56,49 @@ fn push_matrix_to_vec(vec: &mut Vec<f32>, matrix: &[f32]) {
     }
 }
 
-fn generate_plane_vertices(plane_width: usize, plane_height: usize) -> Vec<f32> {
+struct NoiseParameters {
+    pub amplitude: f64,
+    pub frequency: f64,
+    pub offset: f64
+}
+
+fn generate_plane_vertices(plane_width: usize, plane_height: usize, noise_parameter_list: &[NoiseParameters], amplitude: f64, exponent: f64) -> Vec<f32> {
     let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
     let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
     ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, move |x, y| {
         use noise::NoiseFn;
 
-        let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
-        let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
-        let x_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
-        let y_offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
+        //let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
+        //let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
+        //let offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
 
         let mut z = 0.0;
 
         //Apply each level of noise with the appropriate offset, frequency, and amplitude
         let mut amplitude_sum = 0.0;
-        for i in 0..amps.len() {
-            let xi = x_offsets[i]  + x * freqs[i];
-            let yi = y_offsets[i] + y * freqs[i];
-            z += amps[i] * simplex_generator.get([xi, yi]);
-            amplitude_sum += amps[i];
+        for parameters in noise_parameter_list {
+            let xi = parameters.offset + x * parameters.frequency;
+            let yi = parameters.offset + y * parameters.frequency;
+            z += parameters.amplitude * simplex_generator.get([xi, yi]);
+            amplitude_sum += parameters.amplitude;
         }
         z /= amplitude_sum;
 
-        let amplitude = 4.0;
         z *= amplitude;
 
         //Apply exponent to flatten. Branch is for exponentiating a negative
         let z = if z < 0.0 {
-            -f64::powf(f64::abs(z), 2.2)
+            -f64::powf(f64::abs(z), exponent)
         } else {
-            f64::powf(z, 2.2)
+            f64::powf(z, exponent)
         };
 
         z
     })
 }
 
-fn regenerate_plane_vertices(plane_width: usize, plane_height: usize, plane_geometry: &vkutil::VirtualGeometry) {
-    let plane_vertices = generate_plane_vertices(plane_width, plane_height);
+fn regenerate_plane_vertices(plane_width: usize, plane_height: usize, plane_geometry: &vkutil::VirtualGeometry, noise_parameter_list: &[NoiseParameters], amplitude: f64, exponent: f64) {
+    let plane_vertices = generate_plane_vertices(plane_width, plane_height, noise_parameter_list, amplitude, exponent);
     plane_geometry.vertex_buffer.upload_buffer(&plane_vertices);
 }
 
@@ -861,8 +865,18 @@ fn main() {
     };
 
     let plane_width = 256;
-    let plane_height = 256;
-    let plane_vertices = generate_plane_vertices(plane_width, plane_height);
+    let plane_height = plane_width;
+    let mut plane_noise_params = vec![
+        NoiseParameters { amplitude: 1.0, frequency: 0.5, offset: 0.0 },
+        NoiseParameters { amplitude: 0.5, frequency: 0.5, offset: 40.0 },
+        NoiseParameters { amplitude: 0.25, frequency: 0.5, offset: 80.0 },
+        NoiseParameters { amplitude: 0.125, frequency: 2.0, offset: 120.0 },
+        NoiseParameters { amplitude: 0.0625, frequency: 8.0, offset: 240.0 },
+    ];
+    let mut plane_amplitude = 4.0;
+    let mut plane_exponent = 2.2;
+
+    let plane_vertices = generate_plane_vertices(plane_width, plane_height, &plane_noise_params, plane_amplitude, plane_exponent);
     let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
 
     //Create collision data from terrain mesh
@@ -901,7 +915,7 @@ fn main() {
     let dragon_geometry;
     let atmosphere_geometry;
     unsafe {
-        let scene_geo_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE;
+        let scene_geo_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE * 4;
         let scene_geo_buffer = {
             //Buffer creation
             let buffer_create_info = vk::BufferCreateInfo {
@@ -1114,7 +1128,7 @@ fn main() {
                 }
 
                 if controller.button(Button::Y) {
-                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry);
+                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry, &plane_noise_params, plane_amplitude, plane_exponent);
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                         println!("{}", e);
                     }
@@ -1180,7 +1194,7 @@ fn main() {
         if do_imgui && do_terrain_window {
             if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) {
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
-                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry);
+                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry, &plane_noise_params, plane_amplitude, plane_exponent);
                 }
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { do_terrain_window = false; }
