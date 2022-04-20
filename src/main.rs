@@ -875,6 +875,7 @@ fn main() {
     ];
     let mut plane_amplitude = 4.0;
     let mut plane_exponent = 2.2;
+    let mut plane_interactive_generation = false;
 
     let plane_vertices = generate_plane_vertices(plane_width, plane_height, &plane_noise_params, plane_amplitude, plane_exponent);
     let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
@@ -1192,8 +1193,20 @@ fn main() {
         //Update
         let imgui_ui = imgui_context.frame();
         if do_imgui && do_terrain_window {
-            if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) {
+            if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) { 
+                let mut interacted = false;
+
+                interacted |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut plane_amplitude);
+                interacted |= imgui::Slider::new("Exponent", 0.0, 4.0).build(&imgui_ui, &mut plane_exponent);
+                for i in 0..plane_noise_params.len() {
+                    imgui_ui.text(format!("Noise sample #{}", i));
+                }
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
+                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry, &plane_noise_params, plane_amplitude, plane_exponent);
+                }
+                imgui_ui.checkbox("Interactive mode", &mut plane_interactive_generation);
+
+                if plane_interactive_generation && interacted {
                     regenerate_plane_vertices(plane_width, plane_height, &plane_geometry, &plane_noise_params, plane_amplitude, plane_exponent);
                 }
 
@@ -1305,6 +1318,7 @@ fn main() {
                 }
             }
     
+            imgui_ui.text(format!("Camera is at ({}, {}, {})", camera.position.x, camera.position.y, camera.position.z));
             imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
             if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
                 break 'running;
