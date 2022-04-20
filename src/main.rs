@@ -1200,6 +1200,12 @@ fn main() {
                 interacted |= imgui::Slider::new("Exponent", 0.0, 4.0).build(&imgui_ui, &mut plane_exponent);
                 for i in 0..plane_noise_params.len() {
                     imgui_ui.text(format!("Noise sample #{}", i));
+
+                    interacted |= imgui::Slider::new(format!("Amp##{}", i), 0.0, 2.0).build(&imgui_ui, &mut plane_noise_params[i].amplitude);
+                    interacted |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 10.0).build(&imgui_ui, &mut plane_noise_params[i].frequency);
+                    interacted |= imgui::Slider::new(format!("Offset##{}", i), 0.0, 300.0).build(&imgui_ui, &mut plane_noise_params[i].offset);
+
+                    imgui_ui.separator();
                 }
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
                     regenerate_plane_vertices(plane_width, plane_height, &plane_geometry, &plane_noise_params, plane_amplitude, plane_exponent);
