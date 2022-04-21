@@ -16,6 +16,7 @@ use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
 use structs::FreeCam;
+use vkutil::VirtualGeometry;
 use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
@@ -56,16 +57,28 @@ fn push_matrix_to_vec(vec: &mut Vec<f32>, matrix: &[f32]) {
     }
 }
 
+fn time_from_epoch_ms() -> u128 {
+    SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+}
+
 struct NoiseParameters {
     pub amplitude: f64,
     pub frequency: f64,
     pub offset: f64
 }
 
-fn generate_plane_vertices(plane_width: usize, plane_height: usize, noise_parameter_list: &[NoiseParameters], amplitude: f64, exponent: f64) -> Vec<f32> {
-    let time = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-    let simplex_generator = noise::OpenSimplex::new().set_seed(time as u32);
-    ozy::prims::perturbed_plane_vertex_buffer(plane_width, plane_height, 15.0, move |x, y| {
+struct TerrainSpec {
+    vertex_width: usize,
+    vertex_height: usize,
+    noise_parameters: Vec<NoiseParameters>,
+    amplitude: f64,
+    exponent: f64,
+    seed: u128
+}
+
+fn generate_plane_vertices(spec: &TerrainSpec) -> Vec<f32> {
+    let simplex_generator = noise::OpenSimplex::new().set_seed(spec.seed as u32);
+    ozy::prims::perturbed_plane_vertex_buffer(spec.vertex_width, spec.vertex_height, 15.0, move |x, y| {
         use noise::NoiseFn;
 
         //let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
@@ -76,7 +89,7 @@ fn generate_plane_vertices(plane_width: usize, plane_height: usize, noise_parame
 
         //Apply each level of noise with the appropriate offset, frequency, and amplitude
         let mut amplitude_sum = 0.0;
-        for parameters in noise_parameter_list {
+        for parameters in spec.noise_parameters.iter() {
             let xi = parameters.offset + x * parameters.frequency;
             let yi = parameters.offset + y * parameters.frequency;
             z += parameters.amplitude * simplex_generator.get([xi, yi]);
@@ -84,22 +97,23 @@ fn generate_plane_vertices(plane_width: usize, plane_height: usize, noise_parame
         }
         z /= amplitude_sum;
 
-        z *= amplitude;
-
         //Apply exponent to flatten. Branch is for exponentiating a negative
-        let z = if z < 0.0 {
-            -f64::powf(f64::abs(z), exponent)
+        z = if z < 0.0 {
+            -f64::powf(f64::abs(z), spec.exponent)
         } else {
-            f64::powf(z, exponent)
+            f64::powf(z, spec.exponent)
         };
+
+        //Apply global amplitude
+        z *= spec.amplitude;
 
         z
     })
 }
 
-fn regenerate_plane_vertices(plane_width: usize, plane_height: usize, plane_geometry: &vkutil::VirtualGeometry, noise_parameter_list: &[NoiseParameters], amplitude: f64, exponent: f64) {
-    let plane_vertices = generate_plane_vertices(plane_width, plane_height, noise_parameter_list, amplitude, exponent);
-    plane_geometry.vertex_buffer.upload_buffer(&plane_vertices);
+fn regenerate_terrain_vertices(spec: &TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry) {
+    let plane_vertices = generate_plane_vertices(spec);
+    terrain_geometry.vertex_buffer.upload_buffer(&plane_vertices);
 }
 
 //Entry point
@@ -864,21 +878,26 @@ fn main() {
         [pipelines[0], pipelines[1], pipelines[2], pipelines[3]]
     };
 
-    let plane_width = 256;
-    let plane_height = plane_width;
-    let mut plane_noise_params = vec![
-        NoiseParameters { amplitude: 1.0, frequency: 0.5, offset: 0.0 },
-        NoiseParameters { amplitude: 0.5, frequency: 0.5, offset: 40.0 },
-        NoiseParameters { amplitude: 0.25, frequency: 0.5, offset: 80.0 },
-        NoiseParameters { amplitude: 0.125, frequency: 2.0, offset: 120.0 },
-        NoiseParameters { amplitude: 0.0625, frequency: 8.0, offset: 240.0 },
-    ];
-    let mut plane_amplitude = 4.0;
-    let mut plane_exponent = 2.2;
-    let mut plane_interactive_generation = false;
+    let terrain_width_height = 256;
+    let mut terrain_fixed_seed = false;
+    let mut terrain_interactive_generation = false;
+    let mut terrain = TerrainSpec {
+        vertex_width: terrain_width_height,
+        vertex_height: terrain_width_height,
+        noise_parameters: vec![
+                NoiseParameters { amplitude: 1.0, frequency: 0.5, offset: 0.0 },
+                NoiseParameters { amplitude: 0.5, frequency: 0.5, offset: 40.0 },
+                NoiseParameters { amplitude: 0.25, frequency: 0.5, offset: 80.0 },
+                NoiseParameters { amplitude: 0.125, frequency: 2.0, offset: 120.0 },
+                NoiseParameters { amplitude: 0.0625, frequency: 8.0, offset: 240.0 },
+            ],
+        amplitude: 4.0,
+        exponent: 2.2,
+        seed: time_from_epoch_ms()
+    };
 
-    let plane_vertices = generate_plane_vertices(plane_width, plane_height, &plane_noise_params, plane_amplitude, plane_exponent);
-    let plane_indices = ozy::prims::plane_index_buffer(plane_width, plane_height);
+    let plane_vertices = generate_plane_vertices(&terrain);
+    let plane_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
 
     //Create collision data from terrain mesh
     /*/
@@ -910,7 +929,7 @@ fn main() {
     let dragon_mesh_indices: Vec<u32> = dragon_mesh.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
     //Allocate and distribute memory to buffer objects
-    let plane_geometry;
+    let terrain_geometry;
     let sphere_geometry;
     let totoro_geometry;
     let dragon_geometry;
@@ -945,7 +964,7 @@ fn main() {
         //Create virtual bump allocator
         let mut scene_geo_allocator = vkutil::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
-        plane_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
+        terrain_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
         sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
         totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh_indices).unwrap();
         dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh_indices).unwrap();
@@ -989,7 +1008,7 @@ fn main() {
     let mut sphere_height = 8 as u32;
     let mut sphere_spacing = 5.0;
     let mut sphere_amplitude = 3.0;
-    let mut sphere_z_offset = 2.0;
+    let mut sphere_z_offset = 20.0;
     let mut sphere_rotation = 3.0;
     
     //Load and play bgm
@@ -1129,7 +1148,7 @@ fn main() {
                 }
 
                 if controller.button(Button::Y) {
-                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry, &plane_noise_params, plane_amplitude, plane_exponent);
+                    regenerate_terrain_vertices(&terrain, &terrain_geometry);
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                         println!("{}", e);
                     }
@@ -1191,29 +1210,36 @@ fn main() {
         }
 
         //Update
-        let imgui_ui = imgui_context.frame();
+        let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
         if do_imgui && do_terrain_window {
             if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) { 
                 let mut interacted = false;
 
-                interacted |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut plane_amplitude);
-                interacted |= imgui::Slider::new("Exponent", 0.0, 4.0).build(&imgui_ui, &mut plane_exponent);
-                for i in 0..plane_noise_params.len() {
+                for i in 0..terrain.noise_parameters.len() {
                     imgui_ui.text(format!("Noise sample #{}", i));
 
-                    interacted |= imgui::Slider::new(format!("Amp##{}", i), 0.0, 2.0).build(&imgui_ui, &mut plane_noise_params[i].amplitude);
-                    interacted |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 10.0).build(&imgui_ui, &mut plane_noise_params[i].frequency);
-                    interacted |= imgui::Slider::new(format!("Offset##{}", i), 0.0, 300.0).build(&imgui_ui, &mut plane_noise_params[i].offset);
+                    interacted |= imgui::Slider::new(format!("Amplitude##{}", i), 0.0, 2.0).build(&imgui_ui, &mut terrain.noise_parameters[i].amplitude);
+                    interacted |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 10.0).build(&imgui_ui, &mut terrain.noise_parameters[i].frequency);
+                    interacted |= imgui::Slider::new(format!("Offset##{}", i), 0.0, 300.0).build(&imgui_ui, &mut terrain.noise_parameters[i].offset);
 
                     imgui_ui.separator();
                 }
-                if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
-                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry, &plane_noise_params, plane_amplitude, plane_exponent);
-                }
-                imgui_ui.checkbox("Interactive mode", &mut plane_interactive_generation);
+                
+                imgui_ui.text("Global amplitude and exponent:");
+                interacted |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut terrain.amplitude);
+                interacted |= imgui::Slider::new("Exponent", 0.0, 4.0).build(&imgui_ui, &mut terrain.exponent);
+                imgui_ui.separator();
 
-                if plane_interactive_generation && interacted {
-                    regenerate_plane_vertices(plane_width, plane_height, &plane_geometry, &plane_noise_params, plane_amplitude, plane_exponent);
+                imgui_ui.text(format!("Using seed {}", terrain.seed));
+                imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
+                if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
+                    regenerate_terrain_vertices(&terrain, &terrain_geometry);
+                }
+
+                imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
+
+                if terrain_interactive_generation && interacted {
+                    regenerate_terrain_vertices(&terrain, &terrain_geometry);
                 }
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { do_terrain_window = false; }
@@ -1222,9 +1248,13 @@ fn main() {
             }
         }
 
+        if !terrain_fixed_seed {
+            terrain.seed = time_from_epoch_ms();
+        }
+
         movement_vector *= movement_multiplier;
 
-        let dc = vkutil::VirtualDrawCall::new(&plane_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        let dc = vkutil::VirtualDrawCall::new(&terrain_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
@@ -1233,7 +1263,7 @@ fn main() {
         let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [steel_plate_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
         
-        let model_matrix = glm::translation(&glm::vec3(-10.0, 5.0, 3.0)) * glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
+        let model_matrix = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
         //Camera orientation based on user input
@@ -1283,7 +1313,7 @@ fn main() {
             imgui::Slider::new("Sphere spacing", 0.0, 20.0).build(&imgui_ui, &mut sphere_spacing);
             imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
             imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
-            imgui::Slider::new("Sphere Z offset", 0.0, 20.0).build(&imgui_ui, &mut sphere_z_offset);
+            imgui::Slider::new("Sphere Z offset", 0.0, 50.0).build(&imgui_ui, &mut sphere_z_offset);
             imgui::Slider::new("Sun speed", 0.0, 1.0).build(&imgui_ui, &mut sun_speed);
             imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
@@ -1370,7 +1400,7 @@ fn main() {
 
             let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.2, 50.0);
     
-            //Relative to GL clip space, Vulkan has negative Y and half Z.
+            //Relative to OpenGL clip space, Vulkan has negative Y and half Z.
             let projection_matrix = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
