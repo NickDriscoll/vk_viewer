@@ -76,30 +76,23 @@ struct TerrainSpec {
     seed: u128
 }
 
-fn generate_plane_vertices(spec: &TerrainSpec) -> Vec<f32> {
+fn generate_terrain_vertices(spec: &TerrainSpec) -> Vec<f32> {
     let simplex_generator = noise::OpenSimplex::new().set_seed(spec.seed as u32);
     ozy::prims::perturbed_plane_vertex_buffer(spec.vertex_width, spec.vertex_height, 15.0, move |x, y| {
         use noise::NoiseFn;
 
-        //let amps = [1.0, 0.5, 0.25, 0.125, 0.0625];
-        //let freqs = [0.5, 0.5, 0.5, 2.0, 8.0];
-        //let offsets = [0.0, 40.0, 80.0, 120.0, 240.0];
-
         let mut z = 0.0;
 
         //Apply each level of noise with the appropriate offset, frequency, and amplitude
-        let mut amplitude_sum = 0.0;
         for parameters in spec.noise_parameters.iter() {
             let xi = parameters.offset + x * parameters.frequency;
             let yi = parameters.offset + y * parameters.frequency;
             z += parameters.amplitude * simplex_generator.get([xi, yi]);
-            amplitude_sum += parameters.amplitude;
         }
-        z /= amplitude_sum;
 
         //Apply exponent to flatten. Branch is for exponentiating a negative
         z = if z < 0.0 {
-            -f64::powf(f64::abs(z), spec.exponent)
+            -f64::powf(-z, spec.exponent)
         } else {
             f64::powf(z, spec.exponent)
         };
@@ -112,7 +105,7 @@ fn generate_plane_vertices(spec: &TerrainSpec) -> Vec<f32> {
 }
 
 fn regenerate_terrain_vertices(spec: &TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry) {
-    let plane_vertices = generate_plane_vertices(spec);
+    let plane_vertices = generate_terrain_vertices(spec);
     terrain_geometry.vertex_buffer.upload_buffer(&plane_vertices);
 }
 
@@ -885,10 +878,10 @@ fn main() {
         vertex_width: terrain_width_height,
         vertex_height: terrain_width_height,
         noise_parameters: vec![
-                NoiseParameters { amplitude: 1.0, frequency: 0.5, offset: 0.0 },
-                NoiseParameters { amplitude: 0.5, frequency: 0.5, offset: 40.0 },
+                NoiseParameters { amplitude: 1.0, frequency: 0.15, offset: 0.0 },
+                NoiseParameters { amplitude: 0.5, frequency: 0.25, offset: 40.0 },
                 NoiseParameters { amplitude: 0.25, frequency: 0.5, offset: 80.0 },
-                NoiseParameters { amplitude: 0.125, frequency: 2.0, offset: 120.0 },
+                NoiseParameters { amplitude: 0.125, frequency: 1.0, offset: 120.0 },
                 NoiseParameters { amplitude: 0.0625, frequency: 8.0, offset: 240.0 },
             ],
         amplitude: 4.0,
@@ -896,7 +889,7 @@ fn main() {
         seed: time_from_epoch_ms()
     };
 
-    let plane_vertices = generate_plane_vertices(&terrain);
+    let plane_vertices = generate_terrain_vertices(&terrain);
     let plane_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
 
     //Create collision data from terrain mesh
