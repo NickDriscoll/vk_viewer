@@ -10,12 +10,10 @@ mod structs;
 use ash::vk;
 use ash::vk::Handle;
 use imgui::{DrawCmd, FontAtlasRefMut};
-use noise::Seedable;
 use sdl2::controller::GameController;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
-use structs::FreeCam;
 use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
@@ -26,7 +24,8 @@ use std::time::SystemTime;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
-use crate::vkutil::VirtualImage;
+use vkutil::VirtualImage;
+use structs::{FreeCam, NoiseParameters, TerrainSpec};
 
 fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
@@ -52,56 +51,11 @@ fn time_from_epoch_ms() -> u128 {
     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
 }
 
-#[derive(Default)]
-struct NoiseParameters {
-    pub amplitude: f64,
-    pub frequency: f64
-}
-
-struct TerrainSpec {
-    vertex_width: usize,
-    vertex_height: usize,
-    noise_parameters: Vec<NoiseParameters>,
-    amplitude: f64,
-    exponent: f64,
-    seed: u128
-}
-
-fn generate_terrain_vertices(spec: &mut TerrainSpec) -> Vec<f32> {
-    let simplex_generator = noise::OpenSimplex::new().set_seed(spec.seed as u32);
-    ozy::prims::perturbed_plane_vertex_buffer(spec.vertex_width, spec.vertex_height, 15.0, move |x, y| {
-        use noise::NoiseFn;
-
-        let mut z = 0.0;
-
-        //Apply each level of noise with the appropriate offset, frequency, and amplitude
-        let mut offset = 0.0;
-        for parameters in spec.noise_parameters.iter() {
-            let xi = offset + x * parameters.frequency;
-            let yi = offset + y * parameters.frequency;
-            z += parameters.amplitude * simplex_generator.get([xi, yi]);
-            offset += 50.0;
-        }
-
-        //Apply exponent to flatten. Branch is for exponentiating a negative
-        z = if z < 0.0 {
-            -f64::powf(-z, spec.exponent)
-        } else {
-            f64::powf(z, spec.exponent)
-        };
-
-        //Apply global amplitude
-        z *= spec.amplitude;
-
-        z
-    })
-}
-
 fn regenerate_terrain_vertices(spec: &mut TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry, fixed_seed: bool) {
     if !fixed_seed {
         spec.seed = time_from_epoch_ms();
     }
-    let plane_vertices = generate_terrain_vertices(spec);
+    let plane_vertices = spec.generate_vertices();
     terrain_geometry.vertex_buffer.upload_buffer(&plane_vertices);
 }
 
@@ -880,7 +834,7 @@ fn main() {
         seed: time_from_epoch_ms()
     };
 
-    let plane_vertices = generate_terrain_vertices(&mut terrain);
+    let plane_vertices = terrain.generate_vertices();
     let plane_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
 
     //Load UV sphere OzyMesh
@@ -1084,11 +1038,6 @@ fn main() {
                     Event::MouseWheel { x, y, .. } => {
                         imgui_io.mouse_wheel_h = x as f32;
                         imgui_io.mouse_wheel = y as f32;
-                    }
-                    Event::ControllerButtonDown { button: Button::A, which, .. } => {
-                        if let Some(controller) = &mut game_controllers[which as usize] {
-                            println!("Rumbling controller {}", which);
-                        }
                     }
                     _ => {  }
                 }
