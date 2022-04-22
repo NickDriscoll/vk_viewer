@@ -28,13 +28,6 @@ use ozy::structs::{FrameTimer, OptionVec};
 
 use crate::vkutil::VirtualImage;
 
-const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
-    r: vk::ComponentSwizzle::R,
-    g: vk::ComponentSwizzle::G,
-    b: vk::ComponentSwizzle::B,
-    a: vk::ComponentSwizzle::A,
-};
-
 fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
     panic!("{}", message);
@@ -74,7 +67,7 @@ struct TerrainSpec {
     seed: u128
 }
 
-fn generate_terrain_vertices(spec: &TerrainSpec) -> Vec<f32> {
+fn generate_terrain_vertices(spec: &mut TerrainSpec) -> Vec<f32> {
     let simplex_generator = noise::OpenSimplex::new().set_seed(spec.seed as u32);
     ozy::prims::perturbed_plane_vertex_buffer(spec.vertex_width, spec.vertex_height, 15.0, move |x, y| {
         use noise::NoiseFn;
@@ -104,7 +97,10 @@ fn generate_terrain_vertices(spec: &TerrainSpec) -> Vec<f32> {
     })
 }
 
-fn regenerate_terrain_vertices(spec: &TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry) {
+fn regenerate_terrain_vertices(spec: &mut TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry, fixed_seed: bool) {
+    if !fixed_seed {
+        spec.seed = time_from_epoch_ms();
+    }
     let plane_vertices = generate_terrain_vertices(spec);
     terrain_geometry.vertex_buffer.upload_buffer(&plane_vertices);
 }
@@ -336,7 +332,7 @@ fn main() {
                 image: vk_font_image,
                 format: atlas_format,
                 view_type: vk::ImageViewType::TYPE_2D,
-                components: COMPONENT_MAPPING_DEFAULT,
+                components: vkutil::COMPONENT_MAPPING_DEFAULT,
                 subresource_range: sampler_subresource_range,
                 ..Default::default()
             };
@@ -615,6 +611,12 @@ fn main() {
             [v, f]
         };
         
+        let terrain_shader_stages = {
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main.vs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/terrain.fs.spv");
+            [v, f]
+        };
+        
         let atmosphere_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/atmosphere.vs.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/atmosphere.fs.spv");
@@ -869,36 +871,17 @@ fn main() {
         vertex_width: terrain_width_height,
         vertex_height: terrain_width_height,
         noise_parameters: vec![
-                NoiseParameters { amplitude: 1.0, frequency: 0.15 },
-                NoiseParameters { amplitude: 0.5, frequency: 0.25 },
-                NoiseParameters { amplitude: 0.25, frequency: 0.5 },
-                NoiseParameters { amplitude: 0.125, frequency: 1.0 },
-                NoiseParameters { amplitude: 0.0625, frequency: 8.0 },
+                NoiseParameters { amplitude: 2.0, frequency: 0.15 },
+                NoiseParameters { amplitude: 1.0, frequency: 0.20 },
+                NoiseParameters { amplitude: 0.0125, frequency: 8.0 },
             ],
         amplitude: 4.0,
         exponent: 2.2,
         seed: time_from_epoch_ms()
     };
 
-    let plane_vertices = generate_terrain_vertices(&terrain);
+    let plane_vertices = generate_terrain_vertices(&mut terrain);
     let plane_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
-
-    //Create collision data from terrain mesh
-    /*/
-    let terrain_collision = {
-        let mut vertices = Vec::with_capacity(plane_width * plane_height);
-        for i in (0..plane_vertices.len()).step_by(14) {
-            let vertex = glm::vec3(plane_vertices[i], plane_vertices[i + 1], plane_vertices[i + 2]);
-            vertices.push(vertex);
-        }
-
-        collision::MeshCollision {
-            vertices,
-            indices: plane_indices,
-
-        }
-    };
-    */
 
     //Load UV sphere OzyMesh
     let uv_sphere = OzyMesh::load("./data/models/sphere.ozy").unwrap();
@@ -1110,6 +1093,7 @@ fn main() {
                     _ => {  }
                 }
             }
+
             let keyboard_state = event_pump.keyboard_state();
             let mouse_state = event_pump.mouse_state();
             imgui_io.mouse_down = [mouse_state.left(), mouse_state.right(), mouse_state.middle(), mouse_state.x1(), mouse_state.x2()];
@@ -1132,7 +1116,7 @@ fn main() {
                 }
 
                 if controller.button(Button::Y) {
-                    regenerate_terrain_vertices(&terrain, &terrain_geometry);
+                    regenerate_terrain_vertices(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                         println!("{}", e);
                     }
@@ -1202,7 +1186,7 @@ fn main() {
                 let mut num_deleted = 0;
                 for i in 0..terrain.noise_parameters.len() {
                     let idx = i - num_deleted;
-                    imgui_ui.text(format!("Noise sample #{}", i));
+                    imgui_ui.text(format!("Noise sample {}", i));
 
                     interacted |= imgui::Slider::new(format!("Amplitude##{}", i), 0.0, 2.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].amplitude);
                     interacted |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 5.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].frequency);
@@ -1228,23 +1212,19 @@ fn main() {
                 imgui_ui.text(format!("Using seed {}", terrain.seed));
                 imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
-                    regenerate_terrain_vertices(&terrain, &terrain_geometry);
+                    regenerate_terrain_vertices(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                 }
 
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
 
                 if terrain_interactive_generation && interacted {
-                    regenerate_terrain_vertices(&terrain, &terrain_geometry);
+                    regenerate_terrain_vertices(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                 }
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { do_terrain_window = false; }
 
                 token.end();
             }
-        }
-
-        if !terrain_fixed_seed {
-            terrain.seed = time_from_epoch_ms();
         }
 
         movement_vector *= movement_multiplier;
@@ -1284,7 +1264,7 @@ fn main() {
         if let Some(_) = imgui_window_token {
             if let Some(mb) = imgui_ui.begin_menu_bar() {
                 if let Some(mt) = imgui_ui.begin_menu("Environment") {
-                    if imgui::MenuItem::new("Terrain").build(&imgui_ui) {
+                    if imgui::MenuItem::new("Terrain builder").build(&imgui_ui) {
                         do_terrain_window = true;
                     }
                     mt.end();
@@ -1330,7 +1310,7 @@ fn main() {
         let dc = vkutil::VirtualDrawCall::new(&dragon_geometry, main_pipeline, [dragon_color_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
 
-        let model_matrix = glm::translation(&glm::vec3(20.0, 300.0, 10.0)) * glm::rotation(glm::half_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
+        let model_matrix = glm::translation(&glm::vec3(-200.0, 300.0, 2.0 * f32::sin(timer.elapsed_time) + 11.0)) * glm::rotation(glm::quarter_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
         
         //Update sun's position

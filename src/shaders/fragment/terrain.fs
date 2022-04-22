@@ -21,7 +21,7 @@ layout(set = 0, binding = 1) uniform sampler2D global_textures[];
 
 struct Material {
     uint color_map_index;
-    
+    uint normal_map_index;    
 };
 
 layout (set = 0, binding = 2) readonly buffer MaterialData {
@@ -29,22 +29,24 @@ layout (set = 0, binding = 2) readonly buffer MaterialData {
 };
 
 layout(push_constant) uniform Indices {
-    uint color_map_index;
+    uint material_idx;
 };
 
 void main() {
     vec3 normal = normalize(f_normal);
     float sun_contribution = max(0.05, dot(normal, sun_direction));
 
-    vec3 base_color = texture(global_textures[color_map_index], f_uv).rgb;
+    Material my_mat = global_materials[material_idx];
+    vec3 base_color = texture(global_textures[my_mat.color_map_index], f_uv).rgb;
     vec3 norm_color = normal * 0.5 + 0.5;
+
+    vec3 final_color = sun_contribution * base_color;
 
     for (int i = 0; i < 4; i++) {
         if (f_position.z < 10.0 * (i + 1)) {
-            
-            break;
+            final_color *= 0.9;
         }
     }
 
-    frag_color = vec4(sun_contribution * base_color, 1.0);
+    frag_color = vec4(final_color, 1.0);
 }
