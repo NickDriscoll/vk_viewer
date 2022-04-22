@@ -2,3 +2,4 @@
 /shaders
 /redist
 imgui.ini
+*.log

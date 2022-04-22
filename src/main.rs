@@ -16,7 +16,6 @@ use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
 use structs::FreeCam;
-use vkutil::VirtualGeometry;
 use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
@@ -24,7 +23,6 @@ use std::mem::size_of;
 use std::ptr;
 use std::time::SystemTime;
 
-use ozy::collision;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
@@ -61,10 +59,10 @@ fn time_from_epoch_ms() -> u128 {
     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
 }
 
+#[derive(Default)]
 struct NoiseParameters {
     pub amplitude: f64,
-    pub frequency: f64,
-    pub offset: f64
+    pub frequency: f64
 }
 
 struct TerrainSpec {
@@ -84,10 +82,12 @@ fn generate_terrain_vertices(spec: &TerrainSpec) -> Vec<f32> {
         let mut z = 0.0;
 
         //Apply each level of noise with the appropriate offset, frequency, and amplitude
+        let mut offset = 0.0;
         for parameters in spec.noise_parameters.iter() {
-            let xi = parameters.offset + x * parameters.frequency;
-            let yi = parameters.offset + y * parameters.frequency;
+            let xi = offset + x * parameters.frequency;
+            let yi = offset + y * parameters.frequency;
             z += parameters.amplitude * simplex_generator.get([xi, yi]);
+            offset += 50.0;
         }
 
         //Apply exponent to flatten. Branch is for exponentiating a negative
@@ -610,20 +610,20 @@ fn main() {
     let [vk_3D_graphics_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/main_frag.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main.vs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/main.fs.spv");
             [v, f]
         };
         
         let atmosphere_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/atmosphere_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/atmosphere_frag.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/atmosphere.vs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/atmosphere.fs.spv");
             [v, f]
         };
 
         let imgui_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui_frag.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui.vs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui.fs.spv");
             [v, f]
         };
 
@@ -796,19 +796,10 @@ fn main() {
         };
 
         let atmosphere_pipeline_info = vk::GraphicsPipelineCreateInfo {
-            layout: vk_pipeline_layout,
             p_vertex_input_state: &atmosphere_vertex_input_state,
-            p_input_assembly_state: &input_assembly_state,
-            p_rasterization_state: &rasterization_state,
-            p_color_blend_state: &color_blend_pipeline_state,
-            p_multisample_state: &multisample_state,
-            p_dynamic_state: &dynamic_state,
-            p_viewport_state: &viewport_state,
-            p_depth_stencil_state: &depth_stencil_state,
             p_stages: atmosphere_shader_stages.as_ptr(),
             stage_count: atmosphere_shader_stages.len() as u32,
-            render_pass: vk_render_pass,
-            ..Default::default()
+            ..main_graphics_pipeline_info
         };
 
         let im_vert_binding = vk::VertexInputBindingDescription {
@@ -878,11 +869,11 @@ fn main() {
         vertex_width: terrain_width_height,
         vertex_height: terrain_width_height,
         noise_parameters: vec![
-                NoiseParameters { amplitude: 1.0, frequency: 0.15, offset: 0.0 },
-                NoiseParameters { amplitude: 0.5, frequency: 0.25, offset: 40.0 },
-                NoiseParameters { amplitude: 0.25, frequency: 0.5, offset: 80.0 },
-                NoiseParameters { amplitude: 0.125, frequency: 1.0, offset: 120.0 },
-                NoiseParameters { amplitude: 0.0625, frequency: 8.0, offset: 240.0 },
+                NoiseParameters { amplitude: 1.0, frequency: 0.15 },
+                NoiseParameters { amplitude: 0.5, frequency: 0.25 },
+                NoiseParameters { amplitude: 0.25, frequency: 0.5 },
+                NoiseParameters { amplitude: 0.125, frequency: 1.0 },
+                NoiseParameters { amplitude: 0.0625, frequency: 8.0 },
             ],
         amplitude: 4.0,
         exponent: 2.2,
@@ -1208,19 +1199,30 @@ fn main() {
             if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) { 
                 let mut interacted = false;
 
+                let mut num_deleted = 0;
                 for i in 0..terrain.noise_parameters.len() {
+                    let idx = i - num_deleted;
                     imgui_ui.text(format!("Noise sample #{}", i));
 
-                    interacted |= imgui::Slider::new(format!("Amplitude##{}", i), 0.0, 2.0).build(&imgui_ui, &mut terrain.noise_parameters[i].amplitude);
-                    interacted |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 10.0).build(&imgui_ui, &mut terrain.noise_parameters[i].frequency);
-                    interacted |= imgui::Slider::new(format!("Offset##{}", i), 0.0, 300.0).build(&imgui_ui, &mut terrain.noise_parameters[i].offset);
+                    interacted |= imgui::Slider::new(format!("Amplitude##{}", i), 0.0, 2.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].amplitude);
+                    interacted |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 5.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].frequency);
+
+                    if imgui_ui.button_with_size(format!("Remove this layer##{}", i), [0.0, 32.0]) {
+                        terrain.noise_parameters.remove(idx);
+                        num_deleted += 1;
+                        interacted = true;
+                    }
 
                     imgui_ui.separator();
                 }
                 
+                if imgui_ui.button_with_size("Add noise layer", [0.0, 32.0]) {
+                    terrain.noise_parameters.push(NoiseParameters::default());
+                }
+
                 imgui_ui.text("Global amplitude and exponent:");
                 interacted |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut terrain.amplitude);
-                interacted |= imgui::Slider::new("Exponent", 0.0, 4.0).build(&imgui_ui, &mut terrain.exponent);
+                interacted |= imgui::Slider::new("Exponent", 1.0, 5.0).build(&imgui_ui, &mut terrain.exponent);
                 imgui_ui.separator();
 
                 imgui_ui.text(format!("Using seed {}", terrain.seed));
@@ -1248,14 +1250,12 @@ fn main() {
         movement_vector *= movement_multiplier;
 
         let dc = vkutil::VirtualDrawCall::new(&terrain_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
-        vk_draw_calls.push(dc);
-        
+        vk_draw_calls.push(dc);        
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         push_matrix_to_vec(&mut host_transform_buffer, plane_model_matrix.as_slice());
         
-        let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [steel_plate_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
-        vk_draw_calls.push(dc);
-        
+        let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [imgui_font_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        vk_draw_calls.push(dc);        
         let model_matrix = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
@@ -1329,7 +1329,9 @@ fn main() {
         
         let dc = vkutil::VirtualDrawCall::new(&dragon_geometry, main_pipeline, [dragon_color_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
-        push_matrix_to_vec(&mut host_transform_buffer, glm::translation(&glm::vec3(20.0, 300.0, 10.0)).as_slice());
+
+        let model_matrix = glm::translation(&glm::vec3(20.0, 300.0, 10.0)) * glm::rotation(glm::half_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
+        push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
         
         //Update sun's position
         sun_pitch += sun_speed * timer.delta_time;

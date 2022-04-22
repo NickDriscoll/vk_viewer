@@ -1,42 +1,41 @@
-use std::process::Command;
+use std::{process::Command, fs::OpenOptions};
+use std::io::Write;
 
 fn main() {
-    println!("Starting");
-    /*
-    for entry in std::fs::read_dir("./shaders").unwrap() {
-        let entry = entry.unwrap();
-        let name = entry.file_name().into_string().unwrap();
-    }
-    */
-        
+    let mut build_log = OpenOptions::new().write(true).create(true).open("./build_output.log").unwrap();
+    write!(build_log, "Starting compilation...\n").unwrap();
+    
     if let Err(e) = std::fs::create_dir("./shaders") {
         println!("{}", e);
     }
 
-    let out = Command::new("glslangValidator").args(["-V", "-S", "vert", "-o" , "./shaders/main_vert.spv", "./src/shaders/main.vs"]).output().unwrap();
-    println!("{:?}", out);
-    let out = Command::new("glslangValidator").args(["-V", "-S", "frag", "-o" , "./shaders/main_frag.spv", "./src/shaders/main.fs"]).output().unwrap();
-    println!("{:?}", out);
-    let out = Command::new("glslangValidator").args(["-V", "-S", "vert", "-o" , "./shaders/atmosphere_vert.spv", "./src/shaders/atmosphere.vs"]).output().unwrap();
-    println!("{:?}", out);
-    let out = Command::new("glslangValidator").args(["-V", "-S", "frag", "-o" , "./shaders/atmosphere_frag.spv", "./src/shaders/atmosphere.fs"]).output().unwrap();
-    println!("{:?}", out);
-    let out = Command::new("glslangValidator").args(["-V", "-S", "vert", "-o" , "./shaders/imgui_vert.spv", "./src/shaders/imgui.vs"]).output().unwrap();
-    println!("{:?}", out);
-    let out = Command::new("glslangValidator").args(["-V", "-S", "frag", "-o" , "./shaders/imgui_frag.spv", "./src/shaders/imgui.fs"]).output().unwrap();
-    println!("{:?}", out);
+    let path = "./src/shaders/vertex";
+    for entry in std::fs::read_dir(path).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        let out = Command::new("glslc").args(["-fshader-stage=vert", "-o" , &format!("./shaders/{}.spv", name), &format!("{}/{}", path, name)]).output().unwrap();
+        write!(build_log, "{:?}\n", out).unwrap();
+    }
+
+    let path = "./src/shaders/fragment";
+    for entry in std::fs::read_dir(path).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        let out = Command::new("glslc").args(["-fshader-stage=frag", "-o" , &format!("./shaders/{}.spv", name), &format!("{}/{}", path, name)]).output().unwrap();
+        write!(build_log, "{:?}\n", out).unwrap();
+    }
 
     //Copy SDL2 dlls to target directory
     if let Err(e) = std::fs::copy("./redist/SDL2_mixer.dll", "./target/release/SDL2_mixer.dll") {
-        println!("{}", e);
+        write!(build_log, "{}\n", e).unwrap();
     }
     if let Err(e) = std::fs::copy("./redist/libmpg123-0.dll", "./target/release/libmpg123-0.dll") {
-        println!("{}", e);            
+        write!(build_log, "{}\n", e).unwrap();            
     }
     if let Err(e) = std::fs::copy("./redist/SDL2_mixer.dll", "./target/debug/SDL2_mixer.dll") {
-        println!("{}", e);
+        write!(build_log, "{}\n", e).unwrap();
     }
     if let Err(e) = std::fs::copy("./redist/libmpg123-0.dll", "./target/debug/libmpg123-0.dll") {
-        println!("{}", e);            
+        write!(build_log, "{}\n", e).unwrap();            
     }
 }
