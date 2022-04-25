@@ -606,12 +606,6 @@ fn main() {
             ..Default::default()
         };
 
-        let imgui_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
-            polygon_mode: vk::PolygonMode::FILL,
-            cull_mode: vk::CullModeFlags::NONE,
-            ..rasterization_state
-        };
-
         let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
             color_write_mask: vk::ColorComponentFlags::from_raw(0xF),   //All components
             blend_enable: vk::TRUE,
@@ -649,15 +643,20 @@ fn main() {
             ..Default::default()
         };
 
+        let multisample_state = vk::PipelineMultisampleStateCreateInfo {
+            rasterization_samples: vk::SampleCountFlags::TYPE_1,
+            ..Default::default()
+        };
+
+        let imgui_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+            cull_mode: vk::CullModeFlags::NONE,
+            ..rasterization_state
+        };
+
         let imgui_depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: vk::FALSE,
             depth_write_enable: vk::FALSE,
             ..depth_stencil_state
-        };
-
-        let multisample_state = vk::PipelineMultisampleStateCreateInfo {
-            rasterization_samples: vk::SampleCountFlags::TYPE_1,
-            ..Default::default()
         };
 
         let vert_binding = vk::VertexInputBindingDescription {
@@ -856,7 +855,7 @@ fn main() {
     let dragon_geometry;
     let atmosphere_geometry;
     unsafe {
-        let scene_geo_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE * 4;
+        let scene_geo_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE;
         let scene_geo_buffer = {
             //Buffer creation
             let buffer_create_info = vk::BufferCreateInfo {
@@ -1158,13 +1157,12 @@ fn main() {
                 interacted |= imgui::Slider::new("Exponent", 1.0, 5.0).build(&imgui_ui, &mut terrain.exponent);
                 imgui_ui.separator();
 
-                imgui_ui.text(format!("Using seed {}", terrain.seed));
+                imgui_ui.text(format!("Last seed used: {}", terrain.seed));
                 imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
+                imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
                     regenerate_terrain_vertices(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                 }
-
-                imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
 
                 if terrain_interactive_generation && interacted {
                     regenerate_terrain_vertices(&mut terrain, &terrain_geometry, terrain_fixed_seed);

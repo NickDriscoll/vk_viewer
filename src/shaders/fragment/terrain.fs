@@ -24,7 +24,7 @@ struct Material {
     uint normal_map_index;    
 };
 
-layout (set = 0, binding = 2) readonly buffer MaterialData {
+layout (set = 0, binding = 3) readonly buffer MaterialData {
     Material global_materials[];
 };
 
