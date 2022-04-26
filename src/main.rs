@@ -556,7 +556,7 @@ fn main() {
         vk.device.update_descriptor_sets(&[uniform_write, storage_write], &[]);
     }
 
-    //Create graphics pipelines
+    //Create pipelines
     let [vk_3D_graphics_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
@@ -571,93 +571,19 @@ fn main() {
             [v, f]
         };
         
-        let atmosphere_shader_stages = {
+        let atm_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/atmosphere.vs.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/atmosphere.fs.spv");
             [v, f]
         };
 
-        let imgui_shader_stages = {
+        let im_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui.vs.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui.fs.spv");
             [v, f]
         };
 
-        let dynamic_state_enables = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state = vk::PipelineDynamicStateCreateInfo {
-            p_dynamic_states: dynamic_state_enables.as_ptr(),
-            dynamic_state_count: dynamic_state_enables.len() as u32,
-            ..Default::default()
-        };
-
-        let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo {
-            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-            ..Default::default()
-        };
-
-        let rasterization_state = vk::PipelineRasterizationStateCreateInfo {
-            polygon_mode: vk::PolygonMode::FILL,
-            cull_mode: vk::CullModeFlags::BACK,
-            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-            depth_clamp_enable: vk::FALSE,
-            rasterizer_discard_enable: vk::FALSE,
-            depth_bias_enable: vk::TRUE,
-            line_width: 1.0,
-            ..Default::default()
-        };
-
-        let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
-            color_write_mask: vk::ColorComponentFlags::from_raw(0xF),   //All components
-            blend_enable: vk::TRUE,
-            alpha_blend_op: vk::BlendOp::ADD,
-            color_blend_op: vk::BlendOp::ADD,
-            src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
-            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-            src_alpha_blend_factor: vk::BlendFactor::SRC_ALPHA,
-            dst_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA
-        };
-
-        let color_blend_pipeline_state = vk::PipelineColorBlendStateCreateInfo {
-            attachment_count: 1,
-            p_attachments: &color_blend_attachment_state,
-            logic_op_enable: vk::FALSE,
-            logic_op: vk::LogicOp::NO_OP,
-            blend_constants: [0.0; 4],
-            ..Default::default()
-        };
-
-        let viewport_state = vk::PipelineViewportStateCreateInfo {
-            viewport_count: 1,
-            scissor_count: 1,
-            p_scissors: ptr::null(),
-            p_viewports: ptr::null(),
-            ..Default::default()
-        };
-
-        let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable: vk::TRUE,
-            depth_write_enable: vk::TRUE,
-            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-            depth_bounds_test_enable: vk::FALSE,
-            stencil_test_enable: vk::FALSE,
-            ..Default::default()
-        };
-
-        let multisample_state = vk::PipelineMultisampleStateCreateInfo {
-            rasterization_samples: vk::SampleCountFlags::TYPE_1,
-            ..Default::default()
-        };
-
-        let imgui_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
-            cull_mode: vk::CullModeFlags::NONE,
-            ..rasterization_state
-        };
-
-        let imgui_depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable: vk::FALSE,
-            depth_write_enable: vk::FALSE,
-            ..depth_stencil_state
-        };
+        let pipeline_creator = vkutil::PipelineCreator::init(vk_pipeline_layout);
 
         let vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
@@ -702,34 +628,23 @@ fn main() {
 
         let bindings = [vert_binding];
         let attrs = [position_attribute, tangent_attribute, bitangent_attribute, normal_attribute, uv_attribute];
-        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
-            vertex_binding_description_count: bindings.len() as u32,
-            p_vertex_binding_descriptions: bindings.as_ptr(),
-            vertex_attribute_description_count: attrs.len() as u32,
-            p_vertex_attribute_descriptions: attrs.as_ptr(),
-            ..Default::default()
+        let main_vertex_config = vkutil::VertexInputConfiguration {
+            binding_descriptions: &bindings,
+            attribute_descriptions: &attrs
         };
+        let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, main_vertex_config, &main_shader_stages);
+        let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
 
-        let main_graphics_pipeline_info = vk::GraphicsPipelineCreateInfo {
-            layout: vk_pipeline_layout,
-            p_vertex_input_state: &vertex_input_state,
-            p_input_assembly_state: &input_assembly_state,
-            p_rasterization_state: &rasterization_state,
-            p_color_blend_state: &color_blend_pipeline_state,
-            p_multisample_state: &multisample_state,
-            p_dynamic_state: &dynamic_state,
-            p_viewport_state: &viewport_state,
-            p_depth_stencil_state: &depth_stencil_state,
-            p_stages: main_shader_stages.as_ptr(),
-            stage_count: main_shader_stages.len() as u32,
-            render_pass: vk_render_pass,
-            ..Default::default()
-        };
+        main_create_info.rasterization_state = Some(vk::PipelineRasterizationStateCreateInfo {
+            polygon_mode: vk::PolygonMode::LINE,
+            ..pipeline_creator.default_rasterization_state
+        });
+        let wire_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
+        main_create_info.rasterization_state = None;
 
-        let atmosphere_stride = 3;
         let atmosphere_vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
-            stride: atmosphere_stride * size_of::<f32>() as u32,
+            stride: 3 * size_of::<f32>() as u32,
             input_rate: vk::VertexInputRate::VERTEX
         };
 
@@ -740,22 +655,14 @@ fn main() {
             offset: 0
         };
 
-        let atm_bindings = [atmosphere_vert_binding];
-        let atm_attrs = [atmosphere_position_attribute];
-        let atmosphere_vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
-            vertex_binding_description_count: atm_bindings.len() as u32,
-            p_vertex_binding_descriptions: atm_bindings.as_ptr(),
-            vertex_attribute_description_count: atm_attrs.len() as u32,
-            p_vertex_attribute_descriptions: atm_attrs.as_ptr(),
-            ..Default::default()
+        let bindings = [atmosphere_vert_binding];
+        let attrs = [atmosphere_position_attribute];
+        let atm_vertex_config = vkutil::VertexInputConfiguration {
+            binding_descriptions: &bindings,
+            attribute_descriptions: &attrs
         };
-
-        let atmosphere_pipeline_info = vk::GraphicsPipelineCreateInfo {
-            p_vertex_input_state: &atmosphere_vertex_input_state,
-            p_stages: atmosphere_shader_stages.as_ptr(),
-            stage_count: atmosphere_shader_stages.len() as u32,
-            ..main_graphics_pipeline_info
-        };
+        let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, atm_vertex_config, &atm_shader_stages);
+        let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
 
         let im_vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
@@ -786,35 +693,26 @@ fn main() {
 
         let im_bindings = [im_vert_binding];
         let im_attrs = [im_position_attribute, im_uv_attribute, im_color_attribute];
-        let im_vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
-            vertex_binding_description_count: im_bindings.len() as u32,
-            p_vertex_binding_descriptions: im_bindings.as_ptr(),
-            vertex_attribute_description_count: im_attrs.len() as u32,
-            p_vertex_attribute_descriptions: im_attrs.as_ptr(),
-            ..Default::default()
+        let im_vertex_config = vkutil::VertexInputConfiguration {
+            binding_descriptions: &im_bindings,
+            attribute_descriptions: &im_attrs
         };
+        let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, im_vertex_config, &im_shader_stages);
 
-        let imgui_pipeline_info = vk::GraphicsPipelineCreateInfo {
-            p_vertex_input_state: &im_vertex_input_state,
-            p_rasterization_state: &imgui_rasterization_state,
-            p_depth_stencil_state: &imgui_depth_stencil_state,
-            p_stages: imgui_shader_stages.as_ptr(),
-            stage_count: imgui_shader_stages.len() as u32,
-            ..main_graphics_pipeline_info
+        let im_depthstencil = vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: vk::FALSE,
+            depth_write_enable: vk::FALSE,
+            ..pipeline_creator.default_depthstencil_state
         };
+        let im_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+            cull_mode: vk::CullModeFlags::NONE,
+            ..pipeline_creator.default_rasterization_state
+        };
+        im_create_info.depthstencil_state = Some(im_depthstencil);
+        im_create_info.rasterization_state = Some(im_rasterization_state);
+        let im_pipeline = pipeline_creator.create_pipeline(&vk, &im_create_info);
 
-        let wire_raster_state = vk::PipelineRasterizationStateCreateInfo {
-            polygon_mode: vk::PolygonMode::LINE,
-            ..rasterization_state
-        };
-        let wireframe_pipeline_info = vk::GraphicsPipelineCreateInfo {
-            p_rasterization_state: &wire_raster_state,
-            ..main_graphics_pipeline_info
-        };
-
-        let pipeline_infos = [main_graphics_pipeline_info, atmosphere_pipeline_info, imgui_pipeline_info, wireframe_pipeline_info];
-        let pipelines = vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, vkutil::MEMORY_ALLOCATOR).unwrap();
-        [pipelines[0], pipelines[1], pipelines[2], pipelines[3]]
+        [main_pipeline, atm_pipeline, im_pipeline, wire_pipeline]
     };
 
     let terrain_width_height = 256;
@@ -824,10 +722,10 @@ fn main() {
         vertex_width: terrain_width_height,
         vertex_height: terrain_width_height,
         noise_parameters: vec![
-                NoiseParameters { amplitude: 2.0, frequency: 0.15 },
-                NoiseParameters { amplitude: 1.0, frequency: 0.20 },
-                NoiseParameters { amplitude: 0.0125, frequency: 8.0 },
-            ],
+            NoiseParameters { amplitude: 2.0, frequency: 0.15 },
+            NoiseParameters { amplitude: 1.0, frequency: 0.20 },
+            NoiseParameters { amplitude: 0.0125, frequency: 8.0 },
+        ],
         amplitude: 4.0,
         exponent: 2.2,
         seed: time_from_epoch_ms()
