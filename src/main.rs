@@ -24,7 +24,7 @@ use std::time::SystemTime;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
-use vkutil::VirtualImage;
+use vkutil::{VirtualBuffer, VirtualImage};
 use structs::{FreeCam, NoiseParameters, TerrainSpec};
 
 fn crash_with_error_dialog(message: &str) -> ! {
@@ -391,44 +391,20 @@ fn main() {
     let mut vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
 
     //Allocate buffer for frame-constant uniforms
-    let vk_uniform_buffer;
     let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
-    let uniform_buffer_size = size_to_alignment!(uniform_buffer_size, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
-    let vk_uniform_buffer_ptr = unsafe {        
-        let buffer_create_info = vk::BufferCreateInfo {
-            usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-            size: uniform_buffer_size,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
-        };
-        vk_uniform_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-
-        let uniform_buffer_memory = vkutil::allocate_buffer_memory(&vk, vk_uniform_buffer);
-        vk.device.bind_buffer_memory(vk_uniform_buffer, uniform_buffer_memory, 0).unwrap();
-
-        vk.device.map_memory(uniform_buffer_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()).unwrap()
-    };
-
+    let frame_uniform_buffer = VirtualBuffer::new(&vk, uniform_buffer_size, vk::BufferUsageFlags::UNIFORM_BUFFER);
+    
+    //Allocate buffer for object transforms
     let global_transform_slots = 4 * 1024 * 1024;
-    let mut host_transform_buffer = Vec::with_capacity(16 * global_transform_slots);
-    let vk_transform_storage_buffer;
-    let vk_scene_transform_buffer_ptr = unsafe {
-        let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
-        let buffer_size = size_to_alignment!(buffer_size, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
+    let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
+    let transform_storage_buffer = VirtualBuffer::new(&vk, buffer_size, vk::BufferUsageFlags::STORAGE_BUFFER);
 
-        let buffer_create_info = vk::BufferCreateInfo {
-            usage: vk::BufferUsageFlags::STORAGE_BUFFER,
-            size: buffer_size,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
-        };
-        vk_transform_storage_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-        
-        let transform_buffer_memory = vkutil::allocate_buffer_memory(&vk, vk_transform_storage_buffer);
-        vk.device.bind_buffer_memory(vk_transform_storage_buffer, transform_buffer_memory, 0).unwrap();
-        let transform_ptr = vk.device.map_memory(transform_buffer_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()).unwrap();
-        transform_ptr
-    };
+    //Allocate material buffer
+    let global_material_slots = 1024;
+    let material_size = 2 * size_of::<u32>() as u64;
+    let material_storage_buffer = VirtualBuffer::new(&vk, material_size * global_material_slots, vk::BufferUsageFlags::STORAGE_BUFFER);
+
+    let mut host_transform_buffer = Vec::with_capacity(16 * global_transform_slots);
     
     //Set up descriptors
     let vk_descriptor_set_layout;
@@ -470,8 +446,20 @@ fn main() {
             descriptor_count: 1
         };
 
-        let bindings = [uniform_binding, texture_binding, transforms_binding];
-        let pool_sizes = [uniform_pool_size, sampler_pool_size, transforms_pool_size];
+        let materials_binding = vk::DescriptorSetLayoutBinding {
+            binding: 3,
+            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            ..Default::default()
+        };
+        let materials_pool_size = vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::STORAGE_BUFFER,
+            descriptor_count: 1
+        };
+
+        let bindings = [uniform_binding, texture_binding, transforms_binding, materials_binding];
+        let pool_sizes = [uniform_pool_size, sampler_pool_size, transforms_pool_size, materials_pool_size];
 
         let total_set_count = 1;
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
@@ -498,7 +486,57 @@ fn main() {
         };
         vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap()
     };
-    println!("There are {} descriptor sets", vk_descriptor_sets.len());
+
+    //Write initial values to buffer descriptors
+    unsafe {
+        let uniform_infos = [
+            vk::DescriptorBufferInfo {
+                buffer: frame_uniform_buffer.backing_buffer(),
+                offset: 0,
+                range: uniform_buffer_size
+            }
+        ];
+        let storage_info = vk::DescriptorBufferInfo {
+            buffer: transform_storage_buffer.backing_buffer(),
+            offset: 0,
+            range: (global_transform_slots * size_of::<glm::TMat4<f32>>()) as vk::DeviceSize
+        };
+        let materials_info = vk::DescriptorBufferInfo {
+            buffer: material_storage_buffer.backing_buffer(),
+            offset: 0,
+            range: material_storage_buffer.length()
+        };
+
+        let uniform_write = vk::WriteDescriptorSet {
+            dst_set: vk_descriptor_sets[0],
+            descriptor_count: uniform_infos.len() as u32,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            p_buffer_info: uniform_infos.as_ptr(),
+            dst_array_element: 0,
+            dst_binding: 0,
+            ..Default::default()
+        };
+        let storage_write = vk::WriteDescriptorSet {
+            dst_set: vk_descriptor_sets[0],
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            p_buffer_info: &storage_info,
+            dst_array_element: 0,
+            dst_binding: 2,
+            ..Default::default()
+        };
+        let material_write = vk::WriteDescriptorSet {
+            dst_set: vk_descriptor_sets[0],
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            p_buffer_info: &storage_info,
+            dst_array_element: 0,
+            dst_binding: 3,
+            ..Default::default()
+        };
+
+        vk.device.update_descriptor_sets(&[uniform_write, storage_write, material_write], &[]);
+    }
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let vk_pipeline_layout = unsafe {
@@ -517,44 +555,6 @@ fn main() {
         
         vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
-
-    //Write initial values to buffer descriptors
-    unsafe {
-        let uniform_infos = [
-            vk::DescriptorBufferInfo {
-                buffer: vk_uniform_buffer,
-                offset: 0,
-                range: uniform_buffer_size
-            }
-        ];
-
-        let storage_info = vk::DescriptorBufferInfo {
-            buffer: vk_transform_storage_buffer,
-            offset: 0,
-            range: (global_transform_slots * size_of::<glm::TMat4<f32>>()) as vk::DeviceSize
-        };
-
-        let uniform_write = vk::WriteDescriptorSet {
-            dst_set: vk_descriptor_sets[0],
-            descriptor_count: uniform_infos.len() as u32,
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-            p_buffer_info: uniform_infos.as_ptr(),
-            dst_array_element: 0,
-            dst_binding: 0,
-            ..Default::default()
-        };
-
-        let storage_write = vk::WriteDescriptorSet {
-            dst_set: vk_descriptor_sets[0],
-            descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            p_buffer_info: &storage_info,
-            dst_array_element: 0,
-            dst_binding: 2,
-            ..Default::default()
-        };
-        vk.device.update_descriptor_sets(&[uniform_write, storage_write], &[]);
-    }
 
     //Create pipelines
     let [vk_3D_graphics_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
@@ -746,7 +746,6 @@ fn main() {
     let dragon_mesh = OzyMesh::load("./data/models/dragon.ozy").unwrap();
     let dragon_mesh_indices: Vec<u32> = dragon_mesh.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
-    //Allocate and distribute memory to buffer objects
     let terrain_geometry;
     let sphere_geometry;
     let totoro_geometry;
@@ -1251,11 +1250,11 @@ fn main() {
                 sun_direction.as_slice()
             ].concat();
 
-            let uniform_ptr = vk_uniform_buffer_ptr as *mut f32;
+            let uniform_ptr = frame_uniform_buffer.ptr() as *mut f32;
             ptr::copy_nonoverlapping(uniform_buffer.as_ptr() as *mut _, uniform_ptr, uniform_buffer.len() * size_of::<f32>());
 
             //Update model matrix storage buffer
-            let transform_ptr = vk_scene_transform_buffer_ptr as *mut f32;
+            let transform_ptr = transform_storage_buffer.ptr() as *mut f32;
             ptr::copy_nonoverlapping(host_transform_buffer.as_ptr(), transform_ptr, host_transform_buffer.len());
         };
 

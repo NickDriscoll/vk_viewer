@@ -481,24 +481,40 @@ pub struct VirtualBuffer {
 impl VirtualBuffer {
     //Read-only access to fields
     pub fn backing_buffer(&self) -> vk::Buffer { self.backing_buffer }
+    pub fn ptr(&self) -> *mut c_void { self.buffer_ptr }
     pub fn offset(&self) -> u64 { self.offset }
     pub fn length(&self) -> u64 { self.length }
+
+    pub fn new(vk: &VulkanAPI, size: vk::DeviceSize, usage_flags: vk::BufferUsageFlags) -> Self {
+        let vk_buffer;
+        let actual_size = size_to_alignment!(size, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
+        let vk_buffer_ptr = unsafe {        
+            let buffer_create_info = vk::BufferCreateInfo {
+                usage: usage_flags,
+                size: actual_size,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            vk_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+            let buffer_memory = vkutil::allocate_buffer_memory(&vk, vk_buffer);
+            vk.device.bind_buffer_memory(vk_buffer, buffer_memory, 0).unwrap();
+
+            vk.device.map_memory(buffer_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()).unwrap()
+        };
+
+        VirtualBuffer {
+            backing_buffer: vk_buffer,
+            buffer_ptr: vk_buffer_ptr,
+            offset: 0,
+            length: actual_size
+        }
+    }
 
     pub fn upload_buffer<T>(&self, in_buffer: &[T]) {
         unsafe {
             let dst_ptr = self.buffer_ptr.offset(self.offset.try_into().unwrap());
             ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut T, in_buffer.len());
-        }
-    }
-}
-
-impl Default for VirtualBuffer {
-    fn default() -> VirtualBuffer {
-        VirtualBuffer {
-            backing_buffer: vk::Buffer::null(),
-            buffer_ptr: ptr::null_mut(),
-            offset: 0,
-            length: 0
         }
     }
 }
@@ -516,6 +532,7 @@ impl VirtualBumpAllocator {
     //pub fn backing_buffer(&self) -> vk::Buffer { self.backing_buffer }
     //pub fn current_offset(&self) -> u64 { self.current_offset }
     //pub fn max_size(&self) -> u64 { self.max_size }
+    pub fn ptr(&self) -> *mut c_void { self.buffer_ptr }
 
     pub fn new(backing_buffer: vk::Buffer, ptr: *mut c_void, max_size: u64) -> Self {
         VirtualBumpAllocator {

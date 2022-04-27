@@ -19,15 +19,27 @@ layout (std140, set = 0, binding = 0) readonly uniform FrameData {
 
 layout(set = 0, binding = 1) uniform sampler2D global_textures[];
 
+struct Material {
+    uint color_map_index;
+    uint normal_map_index;    
+};
+
+layout (set = 0, binding = 3) readonly buffer MaterialData {
+    Material global_materials[];
+};
+
 layout(push_constant) uniform Indices {
     uint color_map_index;
+    uint material_idx;
 };
 
 void main() {
     vec3 normal = normalize(f_normal);
     float sun_contribution = max(0.05, dot(normal, sun_direction));
 
-    vec3 base_color = texture(global_textures[color_map_index], f_uv).rgb;
+    Material my_mat = global_materials[material_idx];
+
+    vec3 base_color = texture(global_textures[my_mat.color_map_index], f_uv).rgb;
     vec3 norm_color = normal * 0.5 + 0.5;
 
     frag_color = vec4(sun_contribution * base_color, 1.0);
