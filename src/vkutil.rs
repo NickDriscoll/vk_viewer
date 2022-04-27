@@ -142,7 +142,7 @@ pub struct VirtualImage {
 
 impl VirtualImage {
     pub unsafe fn from_bc7(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str) -> Self {
-        let mut file = unwrap_result(File::open(path));
+        let mut file = unwrap_result(File::open(path), &format!("Error opening image {}", path));
         let dds_header = DDSHeader::from_file(&mut file);
 
         let width = dds_header.width;

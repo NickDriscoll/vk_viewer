@@ -13,7 +13,7 @@ fn main() {
     for entry in std::fs::read_dir(path).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name().into_string().unwrap();
-        let out = Command::new("glslc").args(["-fshader-stage=vert", "-o" , &format!("./shaders/{}.spv", name), &format!("{}/{}", path, name)]).output().unwrap();
+        let out = Command::new("glslc").args(["-I ..", "-fshader-stage=vert", "-o" , &format!("./shaders/{}.spv", name), &format!("{}/{}", path, name)]).output().unwrap();
         write!(build_log, "{:?}\n", out).unwrap();
     }
 
@@ -21,7 +21,7 @@ fn main() {
     for entry in std::fs::read_dir(path).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name().into_string().unwrap();
-        let out = Command::new("glslc").args(["-fshader-stage=frag", "-o" , &format!("./shaders/{}.spv", name), &format!("{}/{}", path, name)]).output().unwrap();
+        let out = Command::new("glslc").args(["-I ..", "-fshader-stage=frag", "-o" , &format!("./shaders/{}.spv", name), &format!("{}/{}", path, name)]).output().unwrap();
         write!(build_log, "{:?}\n", out).unwrap();
     }
 

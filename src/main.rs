@@ -32,11 +32,11 @@ fn crash_with_error_dialog(message: &str) -> ! {
     panic!("{}", message);
 }
 
-fn unwrap_result<T, E: Display>(res: Result<T, E>) -> T {
+fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
     match res {
         Ok(t) => { t }
         Err(e) => {
-            crash_with_error_dialog(&format!("{}", e));
+            crash_with_error_dialog(&format!("{}\n{}", msg, e));
         }
     }
 }
@@ -62,12 +62,12 @@ fn regenerate_terrain_vertices(spec: &mut TerrainSpec, terrain_geometry: &vkutil
 //Entry point
 fn main() {
     //Create the window using SDL
-    let sdl_context = unwrap_result(sdl2::init());
-    let mut event_pump = unwrap_result(sdl_context.event_pump());
-    let video_subsystem = unwrap_result(sdl_context.video());
-    let controller_subsystem = unwrap_result(sdl_context.game_controller());
+    let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
+    let mut event_pump = unwrap_result(sdl_context.event_pump(), "Error initializing SDL event pump");
+    let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
+    let controller_subsystem = unwrap_result(sdl_context.game_controller(), "Error initializing SDL controller subsystem");
     let mut window_size = glm::vec2(1280, 720);
-    let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build());
+    let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
     let mut music_volume = 0;
@@ -829,7 +829,7 @@ fn main() {
     let mut sphere_rotation = 3.0;
     
     //Load and play bgm
-    let bgm = unwrap_result(Music::from_file("./data/music/nmwi.flac"));
+    let bgm = unwrap_result(Music::from_file("./data/music/nmwi.flac"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
     let mut do_imgui = true;
@@ -866,8 +866,8 @@ fn main() {
             for i in 0..game_controllers.len() {
                 match &mut game_controllers[i] {
                     None => {
-                        if i < unwrap_result(controller_subsystem.num_joysticks()) as usize {
-                            let controller = unwrap_result(controller_subsystem.open(i as u32));
+                        if i < unwrap_result(controller_subsystem.num_joysticks(), "Error getting number of controllers") as usize {
+                            let controller = unwrap_result(controller_subsystem.open(i as u32), "Error opening controller");
                             game_controllers[i] = Some(controller);
                         }
                     }
