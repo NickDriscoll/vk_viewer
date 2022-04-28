@@ -10,15 +10,7 @@ layout (location = 0) out vec3 f_position;
 layout (location = 1) out vec3 f_normal;
 layout (location = 2) out vec2 f_uv;
 
-layout (std140, set = 0, binding = 0) readonly uniform FrameData {
-    mat4 clip_from_screen;
-    mat4 clip_from_world;
-    mat4 clip_from_view;
-    mat4 view_from_world;
-    mat4 clip_from_skybox;
-    vec3 sun_direction;
-    float time;
-};
+#include "../frame_uniforms.sl"
 
 layout (std140, set = 0, binding = 2) readonly buffer InstanceData {
     mat4 model_matrices[];

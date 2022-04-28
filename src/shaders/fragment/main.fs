@@ -7,29 +7,13 @@ layout (location = 2) in vec2 f_uv;
 
 layout (location = 0) out vec4 frag_color;
 
-layout (std140, set = 0, binding = 0) readonly uniform FrameData {
-    mat4 clip_from_screen;
-    mat4 clip_from_world;
-    mat4 clip_from_view;
-    mat4 view_from_world;
-    mat4 clip_from_skybox;
-    vec3 sun_direction;
-    float time;
-};
+#include "../frame_uniforms.sl"
 
 layout(set = 0, binding = 1) uniform sampler2D global_textures[];
 
-struct Material {
-    uint color_map_index;
-    uint normal_map_index;    
-};
-
-layout (set = 0, binding = 3) readonly buffer MaterialData {
-    Material global_materials[];
-};
+#include "../material_buffer.sl"
 
 layout(push_constant) uniform Indices {
-    uint color_map_index;
     uint material_idx;
 };
 
@@ -39,8 +23,11 @@ void main() {
 
     Material my_mat = global_materials[material_idx];
 
+    //vec3 base_color = texture(global_textures[color_map_index], f_uv).rgb;
     vec3 base_color = texture(global_textures[my_mat.color_map_index], f_uv).rgb;
     vec3 norm_color = normal * 0.5 + 0.5;
 
-    frag_color = vec4(sun_contribution * base_color, 1.0);
+    vec3 final_color = sun_contribution * base_color;
+
+    frag_color = vec4(final_color, 1.0);
 }

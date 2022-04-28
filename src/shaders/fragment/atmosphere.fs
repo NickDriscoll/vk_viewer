@@ -5,17 +5,7 @@ layout (location = 0) in vec3 f_view_direction;
 
 layout (location = 0) out vec4 frag_color;
 
-layout (std140, set = 0, binding = 0) readonly uniform FrameData {
-    mat4 clip_from_screen;
-    mat4 clip_from_world;
-    mat4 clip_from_view;
-    mat4 view_from_world;
-    mat4 clip_from_skybox;
-    vec3 sun_direction;
-    float pad0;
-    vec3 sun_color;
-    float time;
-};
+#include "../frame_uniforms.sl"
 
 layout(set = 0, binding = 1) uniform sampler2D global_textures[];
 

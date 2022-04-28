@@ -8,7 +8,6 @@ mod vkutil;
 mod structs;
 
 use ash::vk;
-use ash::vk::Handle;
 use imgui::{DrawCmd, FontAtlasRefMut};
 use sdl2::controller::GameController;
 use sdl2::event::Event;
@@ -24,7 +23,7 @@ use std::time::SystemTime;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
-use vkutil::{VirtualBuffer, VirtualImage};
+use vkutil::{FreeList, Material, VirtualBuffer, VirtualImage};
 use structs::{FreeCam, NoiseParameters, TerrainSpec};
 
 fn crash_with_error_dialog(message: &str) -> ! {
@@ -138,23 +137,12 @@ fn main() {
     };
 
     //Maintain free list for texture allocation
-    let global_texture_slots = 1024;
-    let mut global_texture_free_list = OptionVec::with_capacity(global_texture_slots);
-    let mut global_texture_update;
+    let mut global_textures = FreeList::with_capacity(1024);
+
     let default_texture_sampler;
 
-    //Load grass billboard texture
-    let grass_billboard_global_index = unsafe {
-        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/billboard_grass.dds");
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let index = global_texture_free_list.insert(descriptor_info);
-        global_texture_update = true;
-
-        index as u32
+    let default_normal_index = unsafe {
+        
     };
 
     let grass_global_index = unsafe {
@@ -165,8 +153,7 @@ fn main() {
             image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
-        let index = global_texture_free_list.insert(descriptor_info);
-        global_texture_update = true;
+        let index = global_textures.insert(descriptor_info);
 
         index as u32
     };
@@ -180,8 +167,7 @@ fn main() {
             image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
-        let index = global_texture_free_list.insert(descriptor_info);
-        global_texture_update = true;
+        let index = global_textures.insert(descriptor_info);
 
         index as u32
     };
@@ -194,8 +180,20 @@ fn main() {
             image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
-        let index = global_texture_free_list.insert(descriptor_info);
-        global_texture_update = true;
+        let index = global_textures.insert(descriptor_info);
+
+        index as u32
+    };
+
+    let dragon_normal_global_index = unsafe {
+        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/dragon/normal.dds");
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: vim.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let index = global_textures.insert(descriptor_info);
 
         index as u32
     };
@@ -209,8 +207,7 @@ fn main() {
             image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
-        let sunzenith_index = global_texture_free_list.insert(descriptor_info) as u32;
-        global_texture_update = true;
+        let sunzenith_index = global_textures.insert(descriptor_info) as u32;
 
         let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/viewzenith_gradient.dds");
 
@@ -219,8 +216,7 @@ fn main() {
             image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
-        let viewzenith_index = global_texture_free_list.insert(descriptor_info) as u32;
-        global_texture_update = true;
+        let viewzenith_index = global_textures.insert(descriptor_info) as u32;
 
         let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/sunview_gradient.dds");
 
@@ -229,8 +225,7 @@ fn main() {
             image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
-        let sunview_index = global_texture_free_list.insert(descriptor_info) as u32;
-        global_texture_update = true;
+        let sunview_index = global_textures.insert(descriptor_info) as u32;
 
         [sunzenith_index.to_le_bytes(), viewzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
     };
@@ -297,8 +292,7 @@ fn main() {
                 image_view: font_view,
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
             };
-            let sampler_index = global_texture_free_list.insert(image_info);
-            global_texture_update = true;
+            let sampler_index = global_textures.insert(image_info);
             
             default_texture_sampler = image_info;
             atlas.tex_id = imgui::TextureId::new(sampler_index);    //Giving Dear Imgui a reference to the font atlas GPU texture
@@ -308,6 +302,24 @@ fn main() {
             panic!("Not dealing with this case.");
         }
     };
+
+    //Create free list for materials
+    let mut global_materials = FreeList::with_capacity(256);
+
+    let terrain_matidx = global_materials.insert(Material {
+        color_idx: grass_global_index,
+        normal_idx: 0
+    }) as u32;
+
+    let dragon_matidx = global_materials.insert(Material {
+        color_idx: dragon_normal_global_index,
+        normal_idx: 0
+    }) as u32;
+
+    let totoro_matidx = global_materials.insert(Material {
+        color_idx: imgui_font_global_index,
+        normal_idx: 0
+    }) as u32;
 
     //Create swapchain extension object
     let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk.instance, &vk.device);
@@ -425,13 +437,13 @@ fn main() {
         let texture_binding = vk::DescriptorSetLayoutBinding {
             binding: 1,
             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: global_texture_slots as u32,
+            descriptor_count: global_textures.size() as u32,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             ..Default::default()
         };
         let sampler_pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: global_texture_slots as u32,
+            descriptor_count: global_textures.size() as u32,
         };
 
         let transforms_binding = vk::DescriptorSetLayoutBinding {
@@ -529,7 +541,7 @@ fn main() {
             dst_set: vk_descriptor_sets[0],
             descriptor_count: 1,
             descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            p_buffer_info: &storage_info,
+            p_buffer_info: &materials_info,
             dst_array_element: 0,
             dst_binding: 3,
             ..Default::default()
@@ -560,26 +572,26 @@ fn main() {
     let [vk_3D_graphics_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main.vs.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/main.fs.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/main.vs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/main.fs.spv");
             [v, f]
         };
         
         let terrain_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/main.vs.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/terrain.fs.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/main.vs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/terrain.fs.spv");
             [v, f]
         };
         
         let atm_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/atmosphere.vs.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/atmosphere.fs.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/atmosphere.vs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/atmosphere.fs.spv");
             [v, f]
         };
 
         let im_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./shaders/imgui.vs.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./shaders/imgui.fs.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/imgui.vs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui.fs.spv");
             [v, f]
         };
 
@@ -723,10 +735,11 @@ fn main() {
         vertex_height: terrain_width_height,
         noise_parameters: vec![
             NoiseParameters { amplitude: 2.0, frequency: 0.15 },
-            NoiseParameters { amplitude: 1.0, frequency: 0.20 },
+            NoiseParameters { amplitude: 2.0, frequency: 0.20 },
+            NoiseParameters { amplitude: 0.25, frequency: 1.5 },
             NoiseParameters { amplitude: 0.0125, frequency: 8.0 },
         ],
-        amplitude: 4.0,
+        amplitude: 2.0,
         exponent: 2.2,
         seed: time_from_epoch_ms()
     };
@@ -736,15 +749,13 @@ fn main() {
 
     //Load UV sphere OzyMesh
     let uv_sphere = OzyMesh::load("./data/models/sphere.ozy").unwrap();
-    let uv_sphere_indices: Vec<u32> = uv_sphere.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
     //Load totoro model
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
-    let totoro_mesh_indices: Vec<u32> = totoro_mesh.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
 
     //Load dragon model
     let dragon_mesh = OzyMesh::load("./data/models/dragon.ozy").unwrap();
-    let dragon_mesh_indices: Vec<u32> = dragon_mesh.vertex_array.indices.iter().map(|&n|{n as u32}).collect();
+    //let dragon_mesh = OzyMesh::load_32bit_idx("./data/models/dragonhd.ozy").unwrap();
 
     let terrain_geometry;
     let sphere_geometry;
@@ -752,7 +763,7 @@ fn main() {
     let dragon_geometry;
     let atmosphere_geometry;
     unsafe {
-        let scene_geo_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE;
+        let scene_geo_buffer_size = 2 * vkutil::DEFAULT_ALLOCATION_SIZE;
         let scene_geo_buffer = {
             //Buffer creation
             let buffer_create_info = vk::BufferCreateInfo {
@@ -782,9 +793,9 @@ fn main() {
         let mut scene_geo_allocator = vkutil::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
         terrain_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
-        sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere_indices).unwrap();
-        totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh_indices).unwrap();
-        dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh_indices).unwrap();
+        sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere.vertex_array.indices).unwrap();
+        totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices).unwrap();
+        dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices).unwrap();
         atmosphere_geometry = scene_geo_allocator.allocate_geometry(&ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer()).unwrap();
 
         vk.device.unmap_memory(buffer_memory);
@@ -820,16 +831,9 @@ fn main() {
     let mut sun_speed = 0.003;
     let mut sun_pitch = 0.118;
     let mut sun_yaw = 0.783;
-
-    let mut sphere_width = 10 as u32;
-    let mut sphere_height = 8 as u32;
-    let mut sphere_spacing = 5.0;
-    let mut sphere_amplitude = 3.0;
-    let mut sphere_z_offset = 20.0;
-    let mut sphere_rotation = 3.0;
     
     //Load and play bgm
-    let bgm = unwrap_result(Music::from_file("./data/music/nmwi.flac"), "Error loading bgm");
+    let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
     let mut do_imgui = true;
@@ -1073,12 +1077,12 @@ fn main() {
 
         movement_vector *= movement_multiplier;
 
-        let dc = vkutil::VirtualDrawCall::new(&terrain_geometry, main_pipeline, [grass_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        let dc = vkutil::VirtualDrawCall::new(&terrain_geometry, main_pipeline, [terrain_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);        
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         push_matrix_to_vec(&mut host_transform_buffer, plane_model_matrix.as_slice());
         
-        let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [imgui_font_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [totoro_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);        
         let model_matrix = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
@@ -1125,33 +1129,12 @@ fn main() {
             let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
             imgui_ui.text(message);
             color_token.pop();
-            imgui::Slider::new("Sphere width", 1, 150).build(&imgui_ui, &mut sphere_width);
-            imgui::Slider::new("Sphere height", 1, 150).build(&imgui_ui, &mut sphere_height);
-            imgui::Slider::new("Sphere spacing", 0.0, 20.0).build(&imgui_ui, &mut sphere_spacing);
-            imgui::Slider::new("Sphere amplitude", 0.0, 20.0).build(&imgui_ui, &mut sphere_amplitude);
-            imgui::Slider::new("Sphere rotation speed", 0.0, 20.0).build(&imgui_ui, &mut sphere_rotation);
-            imgui::Slider::new("Sphere Z offset", 0.0, 50.0).build(&imgui_ui, &mut sphere_z_offset);
             imgui::Slider::new("Sun speed", 0.0, 1.0).build(&imgui_ui, &mut sun_speed);
             imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
         }
 
-        let sphere_count = sphere_width as usize * sphere_height as usize;
-        let dc = vkutil::VirtualDrawCall::new(&sphere_geometry, main_pipeline, [steel_plate_global_index, 0, 0], sphere_count as u32, host_transform_buffer.len() as u32 / 16);
-        vk_draw_calls.push(dc);
-        for i in 0..sphere_width {
-            for j in 0..sphere_height {
-                let sphere_matrix = glm::translation(&glm::vec3(
-                    i as f32 * sphere_spacing,
-                    j as f32 * sphere_spacing,
-                    sphere_z_offset + sphere_amplitude * f32::sin(timer.elapsed_time * (i + 7) as f32) + 5.0)
-                ) * glm::rotation(sphere_rotation * timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
-
-                push_matrix_to_vec(&mut host_transform_buffer, sphere_matrix.as_slice());
-            }
-        }
-        
-        let dc = vkutil::VirtualDrawCall::new(&dragon_geometry, main_pipeline, [dragon_color_global_index, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        let dc = vkutil::VirtualDrawCall::new(&dragon_geometry, main_pipeline, [dragon_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
 
         let model_matrix = glm::translation(&glm::vec3(-200.0, 300.0, 2.0 * f32::sin(timer.elapsed_time) + 11.0)) * glm::rotation(glm::quarter_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
@@ -1174,7 +1157,6 @@ fn main() {
             }
     
             imgui_ui.text(format!("Camera is at ({}, {}, {})", camera.position.x, camera.position.y, camera.position.z));
-            imgui_ui.text(format!("Drawing {} spheres every frame", sphere_count));
             if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
                 break 'running;
             }
@@ -1185,19 +1167,19 @@ fn main() {
         //Pre-render phase
 
         //Update bindless texture sampler descriptors
-        if global_texture_update {
-            global_texture_update = false;
+        if global_textures.updated {
+            global_textures.updated = false;
 
-            let mut image_infos = vec![default_texture_sampler; global_texture_slots];
-            for i in 0..global_texture_free_list.len() {
-                if let Some(info) = global_texture_free_list[i] {
+            let mut image_infos = vec![default_texture_sampler; global_textures.size() as usize];
+            for i in 0..global_textures.len() {
+                if let Some(info) = global_textures[i] {
                     image_infos[i] = info;
                 }
             }
 
             let sampler_write = vk::WriteDescriptorSet {
                 dst_set: vk_descriptor_sets[0],
-                descriptor_count: global_texture_slots as u32,
+                descriptor_count: global_textures.size() as u32,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 p_image_info: image_infos.as_ptr(),
                 dst_array_element: 0,
@@ -1205,6 +1187,21 @@ fn main() {
                 ..Default::default()
             };
             unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
+        }
+
+        if global_materials.updated {
+            global_materials.updated = false;
+
+            let mut upload_mats = Vec::with_capacity(global_materials.len());
+            for i in 0..global_materials.len() {
+                if let Some(mat) = &global_materials[i] {
+                    upload_mats.push(mat.color_idx);
+                    upload_mats.push(mat.normal_idx);
+                }
+            }
+
+            let material_ptr = material_storage_buffer.ptr() as *mut u32;
+            unsafe { ptr::copy_nonoverlapping(upload_mats.as_ptr(), material_ptr, upload_mats.len())} ;
         }
         
         //Update uniform/storage buffers
@@ -1441,8 +1438,10 @@ fn main() {
 
             let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
             vk.device.queue_submit(queue, &[submit_info], vk_submission_fence).unwrap();
-
-            vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+            
+            if let Err(e) = vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX) {
+                println!("Waiting for fence error: {}", e);
+            }
             vk.device.reset_fences(&[vk_submission_fence]).unwrap();
 
             let present_info = vk::PresentInfoKHR {

@@ -5,7 +5,8 @@ fn main() {
     let mut build_log = OpenOptions::new().write(true).create(true).open("./build_output.log").unwrap();
     write!(build_log, "Starting compilation...\n").unwrap();
     
-    if let Err(e) = std::fs::create_dir("./shaders") {
+    const SHADER_OUTPUT_DIR: &str = "./data/shaders";
+    if let Err(e) = std::fs::create_dir(SHADER_OUTPUT_DIR) {
         println!("{}", e);
     }
 
@@ -13,7 +14,7 @@ fn main() {
     for entry in std::fs::read_dir(path).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name().into_string().unwrap();
-        let out = Command::new("glslc").args(["-I ..", "-fshader-stage=vert", "-o" , &format!("./shaders/{}.spv", name), &format!("{}/{}", path, name)]).output().unwrap();
+        let out = Command::new("glslc").args(["-I ..", "-fshader-stage=vert", "-o" , &format!("{}/{}.spv", SHADER_OUTPUT_DIR, name), &format!("{}/{}", path, name)]).output().unwrap();
         write!(build_log, "{:?}\n", out).unwrap();
     }
 
@@ -21,7 +22,7 @@ fn main() {
     for entry in std::fs::read_dir(path).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name().into_string().unwrap();
-        let out = Command::new("glslc").args(["-I ..", "-fshader-stage=frag", "-o" , &format!("./shaders/{}.spv", name), &format!("{}/{}", path, name)]).output().unwrap();
+        let out = Command::new("glslc").args(["-I ..", "-fshader-stage=frag", "-o" , &format!("{}/{}.spv", SHADER_OUTPUT_DIR, name), &format!("{}/{}", path, name)]).output().unwrap();
         write!(build_log, "{:?}\n", out).unwrap();
     }
 

@@ -1,4 +1,4 @@
-use std::{ffi::c_void, io::Read, collections::HashMap};
+use std::{ffi::c_void, io::Read, collections::HashMap, ops::Index};
 
 use ash::vk;
 use ozy::io::DDSHeader;
@@ -377,6 +377,7 @@ impl VulkanAPI {
 
         //Use SDL to create the Vulkan surface
         let vk_surface = {
+            use ash::vk::Handle;
             let raw_surf = window.vulkan_create_surface(vk_instance.handle().as_raw() as usize).unwrap();
             vk::SurfaceKHR::from_raw(raw_surf)
         };
@@ -468,6 +469,11 @@ impl VulkanAPI {
 
         }
     }
+}
+
+pub struct Material {
+    pub color_idx: u32,
+    pub normal_idx: u32
 }
 
 #[derive(Clone, Copy)]
@@ -952,4 +958,41 @@ impl PipelineCreator {
         pipeline
     }
 
+}
+
+pub struct FreeList<T> {
+    list: OptionVec<T>,
+    size: u64,
+    pub updated: bool
+}
+
+impl<T> FreeList<T> {
+    pub fn with_capacity(size: usize) -> Self {
+        FreeList {
+            list: OptionVec::with_capacity(size),
+            size: size as u64,
+            updated: false
+        }
+    }
+
+    pub fn len(&self) -> usize { self.list.len() }
+
+    pub fn size(&self) -> u64 { self.size }
+
+    pub fn insert(&mut self, item: T) -> usize {
+        self.updated = true;
+        self.list.insert(item)
+    }
+}
+
+impl<T> Index<usize> for FreeList<T> {
+    type Output = Option<T>;
+
+    fn index(&self, idx: usize) -> &Self::Output {
+        &self.list[idx]
+    }
+}
+
+pub struct DrawList {
+    
 }
