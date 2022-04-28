@@ -23,7 +23,7 @@ use std::time::SystemTime;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
-use vkutil::{FreeList, Material, VirtualBuffer, VirtualImage};
+use vkutil::{FreeList, Material, VirtualBuffer, VirtualImage, VulkanAPI};
 use structs::{FreeCam, NoiseParameters, TerrainSpec};
 
 fn crash_with_error_dialog(message: &str) -> ! {
@@ -50,12 +50,27 @@ fn time_from_epoch_ms() -> u128 {
     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
 }
 
-fn regenerate_terrain_vertices(spec: &mut TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry, fixed_seed: bool) {
+fn regenerate_terrain(spec: &mut TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry, fixed_seed: bool) {
     if !fixed_seed {
         spec.seed = time_from_epoch_ms();
     }
     let plane_vertices = spec.generate_vertices();
     terrain_geometry.vertex_buffer.upload_buffer(&plane_vertices);
+}
+
+fn load_global_bc7(vk: &VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, command_buffer: vk::CommandBuffer, path: &str) -> u32 {
+    unsafe {
+        let vim = VirtualImage::from_bc7(&vk, command_buffer, path);
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler: sampler,
+            image_view: vim.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let index = global_textures.insert(descriptor_info);
+
+        index as u32
+    }
 }
 
 //Entry point
@@ -142,91 +157,22 @@ fn main() {
     let default_texture_sampler;
 
     let default_normal_index = unsafe {
-        
+
     };
 
-    let grass_global_index = unsafe {
-        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/grass/color.dds");
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let index = global_textures.insert(descriptor_info);
-
-        index as u32
-    };
-
-    //Load steel plate texture
-    let steel_plate_global_index = unsafe {
-        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/steel_plate/color.dds");
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let index = global_textures.insert(descriptor_info);
-
-        index as u32
-    };
-
-    let dragon_color_global_index = unsafe {
-        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/dragon/color.dds");
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let index = global_textures.insert(descriptor_info);
-
-        index as u32
-    };
-
-    let dragon_normal_global_index = unsafe {
-        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/dragon/normal.dds");
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let index = global_textures.insert(descriptor_info);
-
-        index as u32
-    };
+    //Global texture loading
+    let cartoon_grass_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/grass/color.dds");
+    let grass_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds");
+    let rock_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds");
+    let steel_plate_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/steel_plate/color.dds");
+    let dragon_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/color.dds");
+    let dragon_normal_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/normal.dds");
 
     //Load environment textures
-    let atmosphere_tex_indices = unsafe {
-        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/sunzenith_gradient.dds");
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let sunzenith_index = global_textures.insert(descriptor_info) as u32;
-
-        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/viewzenith_gradient.dds");
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let viewzenith_index = global_textures.insert(descriptor_info) as u32;
-
-        let vim = VirtualImage::from_bc7(&vk, vk_command_buffer, "./data/textures/sunview_gradient.dds");
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let sunview_index = global_textures.insert(descriptor_info) as u32;
-
+    let atmosphere_tex_indices = {
+        let sunzenith_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunzenith_gradient.dds");
+        let viewzenith_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/viewzenith_gradient.dds");
+        let sunview_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunview_gradient.dds");
         [sunzenith_index.to_le_bytes(), viewzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
     };
 
@@ -306,13 +252,18 @@ fn main() {
     //Create free list for materials
     let mut global_materials = FreeList::with_capacity(256);
 
-    let terrain_matidx = global_materials.insert(Material {
-        color_idx: grass_global_index,
+    let terrain_grass_matidx = global_materials.insert(Material {
+        color_idx: grass_color_global_index,
+        normal_idx: 0
+    }) as u32;
+
+    let terrain_rock_matidx = global_materials.insert(Material {
+        color_idx: rock_color_global_index,
         normal_idx: 0
     }) as u32;
 
     let dragon_matidx = global_materials.insert(Material {
-        color_idx: dragon_normal_global_index,
+        color_idx: dragon_color_global_index,
         normal_idx: 0
     }) as u32;
 
@@ -569,7 +520,7 @@ fn main() {
     };
 
     //Create pipelines
-    let [vk_3D_graphics_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
+    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/main.vs.spv");
@@ -654,6 +605,9 @@ fn main() {
         let wire_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
         main_create_info.rasterization_state = None;
 
+        main_create_info.shader_stages = &terrain_shader_stages;
+        let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
+
         let atmosphere_vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
             stride: 3 * size_of::<f32>() as u32,
@@ -724,7 +678,7 @@ fn main() {
         im_create_info.rasterization_state = Some(im_rasterization_state);
         let im_pipeline = pipeline_creator.create_pipeline(&vk, &im_create_info);
 
-        [main_pipeline, atm_pipeline, im_pipeline, wire_pipeline]
+        [main_pipeline, ter_pipeline, atm_pipeline, im_pipeline, wire_pipeline]
     };
 
     let terrain_width_height = 256;
@@ -747,18 +701,13 @@ fn main() {
     let plane_vertices = terrain.generate_vertices();
     let plane_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
 
-    //Load UV sphere OzyMesh
-    let uv_sphere = OzyMesh::load("./data/models/sphere.ozy").unwrap();
-
     //Load totoro model
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
 
     //Load dragon model
     let dragon_mesh = OzyMesh::load("./data/models/dragon.ozy").unwrap();
-    //let dragon_mesh = OzyMesh::load_32bit_idx("./data/models/dragonhd.ozy").unwrap();
 
     let terrain_geometry;
-    let sphere_geometry;
     let totoro_geometry;
     let dragon_geometry;
     let atmosphere_geometry;
@@ -793,7 +742,6 @@ fn main() {
         let mut scene_geo_allocator = vkutil::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
         terrain_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
-        sphere_geometry = scene_geo_allocator.allocate_geometry(&uv_sphere.vertex_array.vertices, &uv_sphere.vertex_array.indices).unwrap();
         totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices).unwrap();
         dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices).unwrap();
         atmosphere_geometry = scene_geo_allocator.allocate_geometry(&ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer()).unwrap();
@@ -824,6 +772,9 @@ fn main() {
     //State for freecam controls
     let mut camera = FreeCam::new(glm::vec3(0.0f32, -30.0, 15.0));
 
+    let mut totoro_lookat_pos = glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
+    let totoro_lookat_dist = 10.0;
+
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
     let vk_submission_fence = unsafe { vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -838,6 +789,7 @@ fn main() {
 
     let mut do_imgui = true;
     let mut do_terrain_window = false;
+    let mut do_freecam = false;
     
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
@@ -856,7 +808,7 @@ fn main() {
         //Abstracted input variables
         let mut movement_multiplier = 5.0f32;
         let mut movement_vector: glm::TVec3<f32> = glm::zero();
-        let mut orientation_vector: glm::TVec2<f32> = glm::zero();
+        let mut camera_orientation_vector: glm::TVec2<f32> = glm::zero();
 
         //Input
         let framerate;
@@ -932,7 +884,7 @@ fn main() {
                     Event::MouseMotion { xrel, yrel, .. } => {
                         if camera.cursor_captured {
                             const DAMPENING: f32 = 0.25 / 360.0;
-                            orientation_vector += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
+                            camera_orientation_vector += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
                         }
                     }
                     Event::MouseWheel { x, y, .. } => {
@@ -965,7 +917,7 @@ fn main() {
                 }
 
                 if controller.button(Button::Y) {
-                    regenerate_terrain_vertices(&mut terrain, &terrain_geometry, terrain_fixed_seed);
+                    regenerate_terrain(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                         println!("{}", e);
                     }
@@ -995,7 +947,7 @@ fn main() {
                 };
 
                 movement_vector += &left_joy_vector;
-                orientation_vector += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
+                camera_orientation_vector += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
             }
 
             if keyboard_state.is_scancode_pressed(Scancode::LShift) {
@@ -1062,11 +1014,11 @@ fn main() {
                 imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
-                    regenerate_terrain_vertices(&mut terrain, &terrain_geometry, terrain_fixed_seed);
+                    regenerate_terrain(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                 }
 
                 if terrain_interactive_generation && interacted {
-                    regenerate_terrain_vertices(&mut terrain, &terrain_geometry, terrain_fixed_seed);
+                    regenerate_terrain(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                 }
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { do_terrain_window = false; }
@@ -1077,7 +1029,7 @@ fn main() {
 
         movement_vector *= movement_multiplier;
 
-        let dc = vkutil::VirtualDrawCall::new(&terrain_geometry, main_pipeline, [terrain_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
+        let dc = vkutil::VirtualDrawCall::new(&terrain_geometry, terrain_pipeline, [terrain_grass_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);        
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         push_matrix_to_vec(&mut host_transform_buffer, plane_model_matrix.as_slice());
@@ -1087,8 +1039,12 @@ fn main() {
         let model_matrix = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
+        //Camera based on Totoro orientation
+        let tot_lookat = model_matrix * glm::vec4(model_matrix[12], model_matrix[13], model_matrix[14] + 0.75, 1.0);
+        let tot_camera = glm::look_at(&(totoro_lookat_dist * totoro_lookat_pos), &glm::vec4_to_vec3(&tot_lookat), &glm::vec3(0.0, 0.0, 1.0));
+
         //Camera orientation based on user input
-        camera.orientation += orientation_vector;
+        camera.orientation += camera_orientation_vector;
         camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
         let view_matrix = camera.make_view_matrix();
 
@@ -1155,8 +1111,9 @@ fn main() {
                     main_pipeline = vk_wireframe_graphics_pipeline;
                 }
             }
-    
-            imgui_ui.text(format!("Camera is at ({}, {}, {})", camera.position.x, camera.position.y, camera.position.z));
+            imgui_ui.checkbox("Freecam", &mut do_freecam);
+
+            imgui_ui.text(format!("Freecam is at ({}, {}, {})", camera.position.x, camera.position.y, camera.position.z));
             if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
                 break 'running;
             }
@@ -1223,6 +1180,12 @@ fn main() {
                 0.0, 0.0, 0.5, 0.0,
                 0.0, 0.0, 0.5, 1.0,
             ) * projection_matrix;
+
+            let view_matrix = if !do_freecam {
+                tot_camera
+            } else {
+                view_matrix
+            };
     
             let view_projection = projection_matrix * view_matrix;
             

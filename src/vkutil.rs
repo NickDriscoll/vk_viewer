@@ -810,7 +810,7 @@ pub struct VertexInputConfiguration<'a> {
 pub struct VirtualPipelineCreateInfo<'a> {
     render_pass: vk::RenderPass,
     vertex_config: VertexInputConfiguration<'a>,
-    shader_stages: &'a [vk::PipelineShaderStageCreateInfo],
+    pub shader_stages: &'a [vk::PipelineShaderStageCreateInfo],
     pub rasterization_state: Option<vk::PipelineRasterizationStateCreateInfo>,
     pub depthstencil_state: Option<vk::PipelineDepthStencilStateCreateInfo>
 }
@@ -994,5 +994,5 @@ impl<T> Index<usize> for FreeList<T> {
 }
 
 pub struct DrawList {
-    
+
 }

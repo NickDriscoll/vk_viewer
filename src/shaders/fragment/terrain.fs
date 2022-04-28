@@ -19,20 +19,18 @@ layout(push_constant) uniform Indices {
 
 void main() {
     vec3 normal = normalize(f_normal);
-    float sun_contribution = max(0.05, dot(normal, sun_direction));
+    float sun_contribution = max(0.1, dot(normal, sun_direction));
 
-    Material material1 = global_materials[material_idx];
-    Material material2 = global_materials[material_idx + 1];
-    vec3 base_color = texture(global_textures[my_mat.color_map_index], f_uv).rgb;
+    Material material1 = global_materials[first_material_idx];
+    Material material2 = global_materials[first_material_idx + 1];
+    vec3 base_color1 = texture(global_textures[material1.color_map_index], f_uv).rgb;
+    vec3 base_color2 = texture(global_textures[material2.color_map_index], f_uv).rgb;
     vec3 norm_color = normal * 0.5 + 0.5;
 
-    vec3 final_color = vec3(0.0);
-
-    for (int i = 0; i < 4; i++) {
-        if (f_position.z < 10.0 * (i + 1)) {
-            final_color += sun_contribution * base_color;
-        }
-    }
+    float mix_factor = max(0.0, dot(normal, vec3(0.0, 0.0, 1.0)));
+    mix_factor = smoothstep(0.60, 0.70, mix_factor);
+    vec3 final_color = mix(base_color2, base_color1, mix_factor);    
+    final_color *= sun_contribution;
 
     frag_color = vec4(final_color, 1.0);
 }
