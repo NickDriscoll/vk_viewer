@@ -23,12 +23,12 @@ void main() {
     vec3 tangent = normalize(f_tangent);
     vec3 bitangent = normalize(f_bitangent);
     vec3 normal = normalize(f_normal);
+    mat3 TBN = mat3(tangent, bitangent, normal);
 
     Material my_mat = global_materials[material_idx];
 
     vec3 base_color = texture(global_textures[my_mat.color_map_index], f_uv).rgb;
     vec3 sampled_normal = 2.0 * texture(global_textures[my_mat.normal_map_index], f_uv).xyz - 1.0;
-    mat3 TBN = mat3(tangent, bitangent, normal);
     vec3 world_normal = TBN * sampled_normal;
     float sun_contribution = max(0.1, dot(world_normal, sun_direction));
 

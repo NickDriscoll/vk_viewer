@@ -132,6 +132,11 @@ macro_rules! size_to_alignment {
     };
 }
 
+pub enum ColorSpace {
+    LINEAR,
+    SRGB
+}
+
 pub struct VirtualImage {
     pub vk_image: vk::Image,
     pub vk_view: vk::ImageView,
@@ -141,7 +146,7 @@ pub struct VirtualImage {
 }
 
 impl VirtualImage {
-    pub unsafe fn from_bc7(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str) -> Self {
+    pub unsafe fn from_bc7(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str, color_space: ColorSpace) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening image {}", path));
         let dds_header = DDSHeader::from_file(&mut file);
 
@@ -161,6 +166,15 @@ impl VirtualImage {
         let mut raw_bytes = vec![0u8; bytes_size as usize];
         file.read_exact(&mut raw_bytes).unwrap();
         
+        let format = match color_space {
+            ColorSpace::LINEAR => {
+                vk::Format::BC7_UNORM_BLOCK
+            }
+            ColorSpace::SRGB => {
+                vk::Format::BC7_SRGB_BLOCK
+            }
+        };
+
         let image_extent = vk::Extent3D {
             width,
             height,
@@ -168,7 +182,7 @@ impl VirtualImage {
         };
         let image_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
-            format: vk::Format::BC7_SRGB_BLOCK,
+            format,
             extent: image_extent,
             mip_levels: mipmap_count,
             array_layers: 1,
@@ -201,7 +215,7 @@ impl VirtualImage {
         };
         let grass_view_info = vk::ImageViewCreateInfo {
             image: image,
-            format: vk::Format::BC7_SRGB_BLOCK,
+            format,
             view_type: vk::ImageViewType::TYPE_2D,
             components: COMPONENT_MAPPING_DEFAULT,
             subresource_range: sampler_subresource_range,

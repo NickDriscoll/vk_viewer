@@ -23,7 +23,7 @@ use std::time::SystemTime;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
-use vkutil::{FreeList, Material, VirtualBuffer, VirtualImage, VulkanAPI};
+use vkutil::{ColorSpace, FreeList, Material, VirtualBuffer, VirtualImage, VulkanAPI};
 use structs::{FreeCam, NoiseParameters, TerrainSpec};
 
 fn crash_with_error_dialog(message: &str) -> ! {
@@ -58,9 +58,9 @@ fn regenerate_terrain(spec: &mut TerrainSpec, terrain_geometry: &vkutil::Virtual
     terrain_geometry.vertex_buffer.upload_buffer(&plane_vertices);
 }
 
-fn load_global_bc7(vk: &VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, command_buffer: vk::CommandBuffer, path: &str) -> u32 {
+fn load_global_bc7(vk: &VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, command_buffer: vk::CommandBuffer, path: &str, color_space: vkutil::ColorSpace) -> u32 {
     unsafe {
-        let vim = VirtualImage::from_bc7(&vk, command_buffer, path);
+        let vim = VirtualImage::from_bc7(&vk, command_buffer, path, color_space);
 
         let descriptor_info = vk::DescriptorImageInfo {
             sampler: sampler,
@@ -161,18 +161,20 @@ fn main() {
     };
 
     //Global texture loading
-    let cartoon_grass_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/grass/color.dds");
-    let grass_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds");
-    let rock_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds");
-    let steel_plate_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/steel_plate/color.dds");
-    let dragon_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/color.dds");
-    let dragon_normal_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/normal.dds");
+    let cartoon_grass_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/grass/color.dds", ColorSpace::SRGB);
+    let grass_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
+    let grass_normal_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
+    let rock_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
+    let rock_normal_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
+    let steel_plate_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/steel_plate/color.dds", ColorSpace::SRGB);
+    let dragon_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/color.dds", ColorSpace::SRGB);
+    let dragon_normal_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/normal.dds", ColorSpace::LINEAR);
 
     //Load environment textures
     let atmosphere_tex_indices = {
-        let sunzenith_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunzenith_gradient.dds");
-        let viewzenith_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/viewzenith_gradient.dds");
-        let sunview_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunview_gradient.dds");
+        let sunzenith_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
+        let viewzenith_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
+        let sunview_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
         [sunzenith_index.to_le_bytes(), viewzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
     };
 
@@ -254,12 +256,12 @@ fn main() {
 
     let terrain_grass_matidx = global_materials.insert(Material {
         color_idx: grass_color_global_index,
-        normal_idx: 0
+        normal_idx: grass_normal_global_index
     }) as u32;
 
     let terrain_rock_matidx = global_materials.insert(Material {
         color_idx: rock_color_global_index,
-        normal_idx: 0
+        normal_idx: rock_normal_global_index
     }) as u32;
 
     let dragon_matidx = global_materials.insert(Material {
