@@ -264,7 +264,7 @@ fn main() {
 
     let dragon_matidx = global_materials.insert(Material {
         color_idx: dragon_color_global_index,
-        normal_idx: 0
+        normal_idx: dragon_normal_global_index
     }) as u32;
 
     let totoro_matidx = global_materials.insert(Material {

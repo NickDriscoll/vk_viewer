@@ -19,7 +19,7 @@ layout(push_constant) uniform Indices {
 
 void main() {
     vec3 normal = normalize(f_normal);
-    float sun_contribution = max(0.1, dot(normal, sun_direction));
+    float sun_contribution = max(0.1, dot(normal, sun_direction) + 0.1);
 
     Material material1 = global_materials[first_material_idx];
     Material material2 = global_materials[first_material_idx + 1];

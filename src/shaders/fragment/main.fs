@@ -4,6 +4,8 @@
 layout (location = 0) in vec3 f_position;
 layout (location = 1) in vec3 f_normal;
 layout (location = 2) in vec2 f_uv;
+layout (location = 3) in vec3 f_tangent;
+layout (location = 4) in vec3 f_bitangent;
 
 layout (location = 0) out vec4 frag_color;
 
@@ -18,13 +20,17 @@ layout(push_constant) uniform Indices {
 };
 
 void main() {
+    vec3 tangent = normalize(f_tangent);
+    vec3 bitangent = normalize(f_bitangent);
     vec3 normal = normalize(f_normal);
-    float sun_contribution = max(0.1, dot(normal, sun_direction));
 
     Material my_mat = global_materials[material_idx];
 
     vec3 base_color = texture(global_textures[my_mat.color_map_index], f_uv).rgb;
-    vec3 norm_color = normal * 0.5 + 0.5;
+    vec3 sampled_normal = 2.0 * texture(global_textures[my_mat.normal_map_index], f_uv).xyz - 1.0;
+    mat3 TBN = mat3(tangent, bitangent, normal);
+    vec3 world_normal = TBN * sampled_normal;
+    float sun_contribution = max(0.1, dot(world_normal, sun_direction));
 
     vec3 final_color = sun_contribution * base_color;
 
