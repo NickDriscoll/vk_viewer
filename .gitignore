@@ -1,5 +1,5 @@
 /target
-/shaders
+/data/shaders
 /redist
 imgui.ini
 *.log

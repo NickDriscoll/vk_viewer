@@ -84,7 +84,7 @@ fn main() {
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
-    let mut music_volume = 0;
+    let mut music_volume = 8;
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
     mixer::open_audio(mixer::DEFAULT_FREQUENCY, mixer::DEFAULT_FORMAT, 2, 256).unwrap();
     Music::set_volume(music_volume);
@@ -271,7 +271,7 @@ fn main() {
 
     let totoro_matidx = global_materials.insert(Material {
         color_idx: imgui_font_global_index,
-        normal_idx: 0
+        normal_idx: rock_normal_global_index
     }) as u32;
 
     //Create swapchain extension object
@@ -772,14 +772,12 @@ fn main() {
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
-    let mut camera = FreeCam::new(glm::vec3(0.0f32, -30.0, 15.0));
+    let mut free_camera = FreeCam::new(glm::vec3(0.0f32, -30.0, 15.0));
 
     let mut totoro_lookat_pos = glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
     let totoro_lookat_dist = 10.0;
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
-
-    let vk_submission_fence = unsafe { vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
     
     let mut sun_speed = 0.003;
     let mut sun_pitch = 0.118;
@@ -791,7 +789,7 @@ fn main() {
 
     let mut do_imgui = true;
     let mut do_terrain_window = false;
-    let mut do_freecam = false;
+    let mut do_freecam = true;
     
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
@@ -800,6 +798,14 @@ fn main() {
 
     //Draw related lists that reset every frame
     let mut vk_draw_calls = Vec::with_capacity(64);
+
+    let vk_submission_fence = unsafe {
+        let create_info = vk::FenceCreateInfo {
+            flags: vk::FenceCreateFlags::SIGNALED,
+            ..Default::default()
+        };
+        vk.device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+    };
 
     //Main application loop
     'running: loop {
@@ -847,6 +853,8 @@ fn main() {
                     Event::Window { win_event, .. } => {
                         match win_event {
                             WindowEvent::Resized(_, _) => unsafe {
+                                vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+
                                 //Free the now-invalid swapchain data
                                 for framebuffer in vk_display.swapchain_framebuffers {
                                     vk.device.destroy_framebuffer(framebuffer, vkutil::MEMORY_ALLOCATOR);
@@ -873,10 +881,10 @@ fn main() {
                     Event::MouseButtonUp { mouse_btn, ..} => {
                         match mouse_btn {
                             MouseButton::Right => {
-                                camera.cursor_captured = !camera.cursor_captured;
+                                free_camera.cursor_captured = !free_camera.cursor_captured;
                                 let mouse_util = sdl_context.mouse();
-                                mouse_util.set_relative_mouse_mode(camera.cursor_captured);
-                                if !camera.cursor_captured {
+                                mouse_util.set_relative_mouse_mode(free_camera.cursor_captured);
+                                if !free_camera.cursor_captured {
                                     mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
                                 }
                             }
@@ -884,7 +892,7 @@ fn main() {
                         }
                     }
                     Event::MouseMotion { xrel, yrel, .. } => {
-                        if camera.cursor_captured {
+                        if free_camera.cursor_captured {
                             const DAMPENING: f32 = 0.25 / 360.0;
                             camera_orientation_vector += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
                         }
@@ -984,20 +992,20 @@ fn main() {
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
         if do_imgui && do_terrain_window {
             if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) { 
-                let mut interacted = false;
+                let mut parameters_changed = false;
 
                 let mut num_deleted = 0;
                 for i in 0..terrain.noise_parameters.len() {
                     let idx = i - num_deleted;
                     imgui_ui.text(format!("Noise sample {}", i));
 
-                    interacted |= imgui::Slider::new(format!("Amplitude##{}", i), 0.0, 2.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].amplitude);
-                    interacted |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 5.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].frequency);
+                    parameters_changed |= imgui::Slider::new(format!("Amplitude##{}", i), 0.0, 2.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].amplitude);
+                    parameters_changed |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 5.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].frequency);
 
                     if imgui_ui.button_with_size(format!("Remove this layer##{}", i), [0.0, 32.0]) {
                         terrain.noise_parameters.remove(idx);
                         num_deleted += 1;
-                        interacted = true;
+                        parameters_changed = true;
                     }
 
                     imgui_ui.separator();
@@ -1008,18 +1016,18 @@ fn main() {
                 }
 
                 imgui_ui.text("Global amplitude and exponent:");
-                interacted |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut terrain.amplitude);
-                interacted |= imgui::Slider::new("Exponent", 1.0, 5.0).build(&imgui_ui, &mut terrain.exponent);
+                parameters_changed |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut terrain.amplitude);
+                parameters_changed |= imgui::Slider::new("Exponent", 1.0, 5.0).build(&imgui_ui, &mut terrain.exponent);
                 imgui_ui.separator();
 
-                imgui_ui.text(format!("Last seed used: {}", terrain.seed));
+                imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
                 imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
                     regenerate_terrain(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                 }
 
-                if terrain_interactive_generation && interacted {
+                if terrain_interactive_generation && parameters_changed {
                     regenerate_terrain(&mut terrain, &terrain_geometry, terrain_fixed_seed);
                 }
 
@@ -1041,27 +1049,30 @@ fn main() {
         let model_matrix = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
-        //Camera based on Totoro orientation
-        let tot_lookat = model_matrix * glm::vec4(model_matrix[12], model_matrix[13], model_matrix[14] + 0.75, 1.0);
-        let tot_camera = glm::look_at(&(totoro_lookat_dist * totoro_lookat_pos), &glm::vec4_to_vec3(&tot_lookat), &glm::vec3(0.0, 0.0, 1.0));
+        let view_matrix = if do_freecam {
+            //Camera orientation based on user input
+            free_camera.orientation += camera_orientation_vector;
+            free_camera.orientation.y = free_camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
+            free_camera.make_view_matrix()
+        } else {
+            let tot_lookat = model_matrix * glm::vec4(model_matrix[12], model_matrix[13], model_matrix[14] + 0.75, 1.0);
+            glm::look_at(&(totoro_lookat_dist * totoro_lookat_pos), &glm::vec4_to_vec3(&tot_lookat), &glm::vec3(0.0, 0.0, 1.0))
+        };
 
-        //Camera orientation based on user input
-        camera.orientation += camera_orientation_vector;
-        camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
-        let view_matrix = camera.make_view_matrix();
+        if do_freecam {
+            const FREECAM_SPEED: f32 = 3.0;
+            let view_movement_vector = glm::mat4(
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, -1.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            ) * glm::vec3_to_vec4(&movement_vector);
+            let view_movement_vector = glm::vec4_to_vec3(&view_movement_vector);
+            let delta_pos = FREECAM_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
+            free_camera.position += glm::vec4_to_vec3(&delta_pos);
+        }
 
-        const CAMERA_SPEED: f32 = 3.0;
-        let view_movement_vector = glm::mat4(
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-            0.0, -1.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 1.0
-        ) * glm::vec3_to_vec4(&movement_vector);
-        let view_movement_vector = glm::vec4_to_vec3(&view_movement_vector);
-        let delta_pos = CAMERA_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
-        camera.position += glm::vec4_to_vec3(&delta_pos);
-        
-        let imgui_window_token = if do_imgui { 
+        let imgui_window_token = if do_imgui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
         } else {
             None
@@ -1115,7 +1126,7 @@ fn main() {
             }
             imgui_ui.checkbox("Freecam", &mut do_freecam);
 
-            imgui_ui.text(format!("Freecam is at ({}, {}, {})", camera.position.x, camera.position.y, camera.position.z));
+            imgui_ui.text(format!("Freecam is at ({}, {}, {})", free_camera.position.x, free_camera.position.y, free_camera.position.z));
             if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
                 break 'running;
             }
@@ -1182,12 +1193,6 @@ fn main() {
                 0.0, 0.0, 0.5, 0.0,
                 0.0, 0.0, 0.5, 1.0,
             ) * projection_matrix;
-
-            let view_matrix = if !do_freecam {
-                tot_camera
-            } else {
-                view_matrix
-            };
     
             let view_projection = projection_matrix * view_matrix;
             
@@ -1212,6 +1217,8 @@ fn main() {
                 sun_direction.as_slice()
             ].concat();
 
+            vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+
             let uniform_ptr = frame_uniform_buffer.ptr() as *mut f32;
             ptr::copy_nonoverlapping(uniform_buffer.as_ptr() as *mut _, uniform_ptr, uniform_buffer.len() * size_of::<f32>());
 
@@ -1220,7 +1227,7 @@ fn main() {
             ptr::copy_nonoverlapping(host_transform_buffer.as_ptr(), transform_ptr, host_transform_buffer.len());
         };
 
-        //Dear ImGUI virtual allocations
+        //Dear ImGUI virtual geo allocations
         let (imgui_geometries, imgui_cmd_lists) = {
             let mut geos = Vec::with_capacity(16);
             let mut cmds = Vec::with_capacity(16);
@@ -1267,11 +1274,11 @@ fn main() {
 
         //Draw
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                p_inheritance_info: ptr::null(),
-                ..Default::default()
-            };
-            vk.device.begin_command_buffer(vk_command_buffer, &begin_info).unwrap();
+            //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
+            let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_display.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+
+            //Put command buffer in recording state
+            vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
             
             //Set the viewport for this frame
             let viewport = vk::Viewport {
@@ -1306,7 +1313,6 @@ fn main() {
             vk.device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_area]);
 
             let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
-            let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_display.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: vk_render_pass,
                 framebuffer: vk_display.swapchain_framebuffers[current_framebuffer_index],
@@ -1317,7 +1323,7 @@ fn main() {
             };
             vk.device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
-            //Once-per-frame descriptor binding
+            //Once-per-frame bindless descriptor binding
             vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
 
             //Iterate through draw calls
@@ -1401,13 +1407,9 @@ fn main() {
                 ..Default::default()
             };
 
+            vk.device.reset_fences(&[vk_submission_fence]).unwrap();
             let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
             vk.device.queue_submit(queue, &[submit_info], vk_submission_fence).unwrap();
-            
-            if let Err(e) = vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX) {
-                println!("Waiting for fence error: {}", e);
-            }
-            vk.device.reset_fences(&[vk_submission_fence]).unwrap();
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,

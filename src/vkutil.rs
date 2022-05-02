@@ -148,7 +148,7 @@ pub struct VirtualImage {
 impl VirtualImage {
     pub unsafe fn from_bc7(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str, color_space: ColorSpace) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening image {}", path));
-        let dds_header = DDSHeader::from_file(&mut file);
+        let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
 
         let width = dds_header.width;
         let height = dds_header.height;
@@ -441,11 +441,10 @@ impl VulkanAPI {
                         i += 1;
                     }
 
-                    let priorities = [1.0];
                     let queue_create_info = vk::DeviceQueueCreateInfo {
                         queue_family_index: vk_queue_family_index,
                         queue_count: 1,
-                        p_queue_priorities: priorities.as_ptr(),
+                        p_queue_priorities: [1.0].as_ptr(),
                         ..Default::default()
                     };
                     
