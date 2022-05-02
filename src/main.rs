@@ -1136,6 +1136,8 @@ fn main() {
         
         //Pre-render phase
 
+        unsafe { vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap(); }
+
         //Update bindless texture sampler descriptors
         if global_textures.updated {
             global_textures.updated = false;
@@ -1216,8 +1218,6 @@ fn main() {
                 skybox_view_projection.as_slice(),
                 sun_direction.as_slice()
             ].concat();
-
-            vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
 
             let uniform_ptr = frame_uniform_buffer.ptr() as *mut f32;
             ptr::copy_nonoverlapping(uniform_buffer.as_ptr() as *mut _, uniform_ptr, uniform_buffer.len() * size_of::<f32>());

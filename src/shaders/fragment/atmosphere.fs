@@ -8,7 +8,7 @@ layout (location = 0) out vec4 frag_color;
 #include "../frame_uniforms.sl"
 
 layout(set = 0, binding = 1) uniform sampler2D global_textures2D[];
-layout(set = 0, binding = 1) uniform sampler2D global_textures_cube[];
+layout(set = 0, binding = 1) uniform samplerCube global_cubemaps[];
 
 layout(push_constant) uniform TexIndices {
     uint sunzenith_idx;
@@ -34,6 +34,5 @@ void main() {
 
     final_color += smoothstep(mix(1.0, 0.99, 0.25), 1.0, sunview_dot);
 
-    //frag_color = vec4(final_color, 1.0);
-    frag_color = vec4(vec3(sunzenith_dot), 1.0);
+    frag_color = vec4(final_color, 1.0);
 }
