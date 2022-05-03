@@ -84,7 +84,7 @@ fn main() {
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
-    let mut music_volume = 8;
+    let mut music_volume = 0;
     let _sdl_mixer = mixer::init(mixer::InitFlag::FLAC | mixer::InitFlag::MP3).unwrap();
     mixer::open_audio(mixer::DEFAULT_FREQUENCY, mixer::DEFAULT_FORMAT, 2, 256).unwrap();
     Music::set_volume(music_volume);
@@ -770,6 +770,7 @@ fn main() {
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
+    let vk_rendercomplete_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
     let mut free_camera = FreeCam::new(glm::vec3(0.0f32, -30.0, 15.0));
@@ -1136,7 +1137,10 @@ fn main() {
         
         //Pre-render phase
 
-        unsafe { vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap(); }
+        unsafe {
+            vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+            vk.device.reset_fences(&[vk_submission_fence]).unwrap();
+        }
 
         //Update bindless texture sampler descriptors
         if global_textures.updated {
@@ -1400,14 +1404,15 @@ fn main() {
             let pipeline_stage_flags = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
             let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: 1,
-                p_wait_semaphores: [vk_swapchain_semaphore].as_ptr(),
+                p_wait_semaphores: &vk_swapchain_semaphore,
                 p_wait_dst_stage_mask: &pipeline_stage_flags,
+                signal_semaphore_count: 1,
+                p_signal_semaphores: &vk_rendercomplete_semaphore,
                 command_buffer_count: 1,
                 p_command_buffers: &vk_command_buffer,
                 ..Default::default()
             };
 
-            vk.device.reset_fences(&[vk_submission_fence]).unwrap();
             let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
             vk.device.queue_submit(queue, &[submit_info], vk_submission_fence).unwrap();
 
@@ -1415,6 +1420,8 @@ fn main() {
                 swapchain_count: 1,
                 p_swapchains: &vk_display.swapchain,
                 p_image_indices: &(current_framebuffer_index as u32),
+                wait_semaphore_count: 1,
+                p_wait_semaphores: &vk_rendercomplete_semaphore,
                 ..Default::default()
             };
             if let Err(e) = vk_ext_swapchain.queue_present(queue, &present_info) {
