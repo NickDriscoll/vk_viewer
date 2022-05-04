@@ -817,7 +817,7 @@ fn main() {
         //Abstracted input variables
         let mut movement_multiplier = 5.0f32;
         let mut movement_vector: glm::TVec3<f32> = glm::zero();
-        let mut camera_orientation_vector: glm::TVec2<f32> = glm::zero();
+        let mut camera_orientation_delta: glm::TVec2<f32> = glm::zero();
 
         //Input
         let framerate;
@@ -895,7 +895,7 @@ fn main() {
                     Event::MouseMotion { xrel, yrel, .. } => {
                         if free_camera.cursor_captured {
                             const DAMPENING: f32 = 0.25 / 360.0;
-                            camera_orientation_vector += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
+                            camera_orientation_delta += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
                         }
                     }
                     Event::MouseWheel { x, y, .. } => {
@@ -958,7 +958,7 @@ fn main() {
                 };
 
                 movement_vector += &left_joy_vector;
-                camera_orientation_vector += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
+                camera_orientation_delta += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
             }
 
             if keyboard_state.is_scancode_pressed(Scancode::LShift) {
@@ -1052,11 +1052,14 @@ fn main() {
 
         let view_matrix = if do_freecam {
             //Camera orientation based on user input
-            free_camera.orientation += camera_orientation_vector;
+            free_camera.orientation += camera_orientation_delta;
             free_camera.orientation.y = free_camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
             free_camera.make_view_matrix()
         } else {
             let tot_lookat = model_matrix * glm::vec4(model_matrix[12], model_matrix[13], model_matrix[14] + 0.75, 1.0);
+            let new_pos = glm::rotation(camera_orientation_delta.x, &glm::vec3(0.0, 0.0, 1.0)) * glm::vec3_to_vec4(&totoro_lookat_pos);
+            let new_pos =  glm::rotation(camera_orientation_delta.y, &glm::vec3(1.0, 0.0, 0.0)) * new_pos;
+            totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
             glm::look_at(&(totoro_lookat_dist * totoro_lookat_pos), &glm::vec4_to_vec3(&tot_lookat), &glm::vec3(0.0, 0.0, 1.0))
         };
 
