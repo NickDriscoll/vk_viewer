@@ -157,7 +157,62 @@ fn main() {
     let default_texture_sampler;
 
     let default_normal_index = unsafe {
+        let format = vk::Format::R8G8B8A8_UNORM;
+        let image_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::TYPE_2D,
+            format,
+            extent: vk::Extent3D {
+                width: 1,
+                height: 1,
+                depth: 1
+            },
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SampleCountFlags::TYPE_1,
+            tiling: vk::ImageTiling::OPTIMAL,
+            usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            queue_family_index_count: 1,
+            p_queue_family_indices: &vk.queue_family_index,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            ..Default::default()
+        };
+        let normal_image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
 
+        let vim = vkutil::VirtualImage {
+            vk_image: normal_image,
+            vk_view: vk::ImageView::default(),
+            width: 1,
+            height: 1,
+            mip_count: 1
+        };
+        let data = [0x80, 0x80, 0xFF, 0xFF];
+        vkutil::upload_image(&vk, vk_command_buffer, &vim, &data);
+
+        //Then create the image view
+        let sampler_subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1
+        };
+        let font_view_info = vk::ImageViewCreateInfo {
+            image: normal_image,
+            format,
+            view_type: vk::ImageViewType::TYPE_2D,
+            components: vkutil::COMPONENT_MAPPING_DEFAULT,
+            subresource_range: sampler_subresource_range,
+            ..Default::default()
+        };
+        let font_view = vk.device.create_image_view(&font_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+        
+        let image_info = vk::DescriptorImageInfo {
+            sampler: font_sampler,
+            image_view: font_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        global_textures.insert(image_info) as u32
     };
 
     //Global texture loading
@@ -270,8 +325,8 @@ fn main() {
     }) as u32;
 
     let totoro_matidx = global_materials.insert(Material {
-        color_idx: imgui_font_global_index,
-        normal_idx: rock_normal_global_index
+        color_idx: grass_color_global_index,
+        normal_idx: default_normal_index
     }) as u32;
 
     //Create swapchain extension object
@@ -775,8 +830,9 @@ fn main() {
     //State for freecam controls
     let mut free_camera = FreeCam::new(glm::vec3(0.0f32, -30.0, 15.0));
 
-    let mut totoro_lookat_pos = glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
-    let totoro_lookat_dist = 10.0;
+    let mut totoro_position = glm::zero();
+    let mut totoro_lookat_dist = 7.5;
+    let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
     
@@ -818,6 +874,7 @@ fn main() {
         let mut movement_multiplier = 5.0f32;
         let mut movement_vector: glm::TVec3<f32> = glm::zero();
         let mut camera_orientation_delta: glm::TVec2<f32> = glm::zero();
+        let mut scroll_amount = 0.0;
 
         //Input
         let framerate;
@@ -876,8 +933,13 @@ fn main() {
                             _ => {}
                         }
                     }
-                    Event::KeyDown { scancode: Some(Scancode::Escape), repeat: false, .. } => {
-                        do_imgui = !do_imgui;
+                    Event::KeyDown { scancode: Some(sc), repeat: false, .. } => {
+                        match sc {
+                            Scancode::Escape => {
+                                do_imgui = !do_imgui;
+                            }
+                            _ => {}
+                        }
                     }
                     Event::MouseButtonUp { mouse_btn, ..} => {
                         match mouse_btn {
@@ -901,6 +963,7 @@ fn main() {
                     Event::MouseWheel { x, y, .. } => {
                         imgui_io.mouse_wheel_h = x as f32;
                         imgui_io.mouse_wheel = y as f32;
+                        scroll_amount = imgui_io.mouse_wheel;
                     }
                     _ => {  }
                 }
@@ -1046,21 +1109,51 @@ fn main() {
         push_matrix_to_vec(&mut host_transform_buffer, plane_model_matrix.as_slice());
         
         let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [totoro_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
-        vk_draw_calls.push(dc);        
-        let model_matrix = glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(3.0);
+        vk_draw_calls.push(dc);
+        let model_matrix = glm::translation(&totoro_position);
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
-        let view_matrix = if do_freecam {
+        let view_from_world = if do_freecam {
             //Camera orientation based on user input
-            free_camera.orientation += camera_orientation_delta;
             free_camera.orientation.y = free_camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
             free_camera.make_view_matrix()
         } else {
-            let tot_lookat = model_matrix * glm::vec4(model_matrix[12], model_matrix[13], model_matrix[14] + 0.75, 1.0);
-            let new_pos = glm::rotation(camera_orientation_delta.x, &glm::vec3(0.0, 0.0, 1.0)) * glm::vec3_to_vec4(&totoro_lookat_pos);
-            let new_pos =  glm::rotation(camera_orientation_delta.y, &glm::vec3(1.0, 0.0, 0.0)) * new_pos;
-            totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
-            glm::look_at(&(totoro_lookat_dist * totoro_lookat_pos), &glm::vec4_to_vec3(&tot_lookat), &glm::vec3(0.0, 0.0, 1.0))
+            totoro_lookat_dist -= scroll_amount;
+            totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&totoro_lookat_pos);
+
+            let lookat_target = glm::vec4(totoro_position.x, totoro_position.y, totoro_position.z + 0.75, 1.0);
+            let camera_pos = glm::vec3_to_vec4(&totoro_lookat_pos) + lookat_target;
+            
+
+
+            glm::look_at(&glm::vec4_to_vec3(&camera_pos), &glm::vec4_to_vec3(&lookat_target), &glm::vec3(0.0, 0.0, 1.0))
+            // let lookat = glm::look_at(&totoro_lookat_pos, &glm::vec4_to_vec3(&tot_center), &glm::vec3(0.0, 0.0, 1.0));
+            // let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-camera_orientation_delta.x, camera_orientation_delta.y, 0.0, 0.0);
+
+            // totoro_lookat_pos += totoro_lookat_dist * glm::vec4_to_vec3(&world_space_offset);
+            // totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&(totoro_lookat_pos - totoro_position));
+
+            // let lookat_vec = glm::normalize(&(totoro_lookat_pos - totoro_position));
+            // let lookat_dot = glm::dot(&lookat_vec, &glm::vec3(0.0, 0.0, 1.0));
+            // if lookat_dot > 0.95 {
+            //     let rotation_vector = -glm::cross(&lookat_vec, &glm::vec3(0.0, 0.0, 1.0));
+            //     let current_angle = f32::acos(lookat_dot);
+            //     let amount = f32::acos(0.95) - current_angle;
+
+            //     totoro_lookat_pos -= totoro_position;
+            //     let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);
+            //     totoro_lookat_pos = totoro_position + glm::vec4_to_vec3(&new_pos);
+            // } else if lookat_dot < 0.05 {
+            //     let rotation_vector = -glm::cross(&lookat_vec, &glm::vec3(0.0, 0.0, 1.0));
+            //     let current_angle = f32::acos(lookat_dot);
+            //     let amount = f32::acos(0.05) - current_angle;
+
+            //     totoro_lookat_pos -= totoro_position;                
+            //     let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);                
+            //     totoro_lookat_pos = totoro_position + glm::vec4_to_vec3(&new_pos);
+            // }
+
+            // glm::look_at(&totoro_lookat_pos, &glm::vec4_to_vec3(&tot_center), &glm::vec3(0.0, 0.0, 1.0))
         };
 
         if do_freecam {
@@ -1072,8 +1165,19 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             ) * glm::vec3_to_vec4(&movement_vector);
             let view_movement_vector = glm::vec4_to_vec3(&view_movement_vector);
-            let delta_pos = FREECAM_SPEED * glm::affine_inverse(view_matrix) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
+            let delta_pos = FREECAM_SPEED * glm::affine_inverse(view_from_world) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
             free_camera.position += glm::vec4_to_vec3(&delta_pos);
+            free_camera.orientation += camera_orientation_delta;
+        } else {
+            let view_movement_vector = glm::mat4(
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, -1.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            ) * glm::vec3_to_vec4(&movement_vector);
+
+            let delta_pos = 0.01 * glm::affine_inverse(view_from_world) * view_movement_vector;
+            totoro_position += glm::vec4_to_vec3(&delta_pos);
         }
 
         let imgui_window_token = if do_imgui {
@@ -1203,7 +1307,7 @@ fn main() {
                 0.0, 0.0, 0.5, 1.0,
             ) * projection_matrix;
     
-            let view_projection = projection_matrix * view_matrix;
+            let view_projection = projection_matrix * view_from_world;
             
             //Compute sun direction from pitch and yaw
             let sun_direction = glm::vec4_to_vec3(&(
@@ -1215,13 +1319,13 @@ fn main() {
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
             //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
             //that the sky is infinitely far away
-            let skybox_view_projection = projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_matrix));
+            let skybox_view_projection = projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_from_world));
 
             let uniform_buffer = [
                 clip_from_screen.as_slice(),
                 view_projection.as_slice(),
                 projection_matrix.as_slice(),
-                view_matrix.as_slice(),
+                view_from_world.as_slice(),
                 skybox_view_projection.as_slice(),
                 sun_direction.as_slice()
             ].concat();
@@ -1368,7 +1472,7 @@ fn main() {
 
                             let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
                             let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
-                            let scissor_rect = {        
+                            let scissor_rect = {
                                 let offset = vk::Offset2D {
                                     x: cmd_params.clip_rect[0] as i32,
                                     y: cmd_params.clip_rect[1] as i32
