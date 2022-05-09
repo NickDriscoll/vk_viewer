@@ -1119,41 +1119,35 @@ fn main() {
             free_camera.make_view_matrix()
         } else {
             totoro_lookat_dist -= scroll_amount;
-            totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&totoro_lookat_pos);
-
-            let lookat_target = glm::vec4(totoro_position.x, totoro_position.y, totoro_position.z + 0.75, 1.0);
-            let camera_pos = glm::vec3_to_vec4(&totoro_lookat_pos) + lookat_target;
             
+            let lookat = glm::look_at(&totoro_lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+            let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-camera_orientation_delta.x, camera_orientation_delta.y, 0.0, 0.0);
 
+            totoro_lookat_pos += totoro_lookat_dist * glm::vec4_to_vec3(&world_space_offset);
+            let camera_pos = glm::normalize(&totoro_lookat_pos);
+            totoro_lookat_pos = totoro_lookat_dist * camera_pos;
+            
+            let lookat_dot = glm::dot(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+            if lookat_dot > 0.95 {
+                let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+                let current_angle = f32::acos(lookat_dot);
+                let amount = f32::acos(0.95) - current_angle;
 
-            glm::look_at(&glm::vec4_to_vec3(&camera_pos), &glm::vec4_to_vec3(&lookat_target), &glm::vec3(0.0, 0.0, 1.0))
-            // let lookat = glm::look_at(&totoro_lookat_pos, &glm::vec4_to_vec3(&tot_center), &glm::vec3(0.0, 0.0, 1.0));
-            // let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-camera_orientation_delta.x, camera_orientation_delta.y, 0.0, 0.0);
+                totoro_lookat_pos -= totoro_position;
+                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);
+                totoro_lookat_pos = totoro_position + glm::vec4_to_vec3(&new_pos);
+            } else if lookat_dot < 0.05 {
+                let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+                let current_angle = f32::acos(lookat_dot);
+                let amount = f32::acos(0.05) - current_angle;
 
-            // totoro_lookat_pos += totoro_lookat_dist * glm::vec4_to_vec3(&world_space_offset);
-            // totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&(totoro_lookat_pos - totoro_position));
+                totoro_lookat_pos -= totoro_position;                
+                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);                
+                totoro_lookat_pos = totoro_position + glm::vec4_to_vec3(&new_pos);
+            }
 
-            // let lookat_vec = glm::normalize(&(totoro_lookat_pos - totoro_position));
-            // let lookat_dot = glm::dot(&lookat_vec, &glm::vec3(0.0, 0.0, 1.0));
-            // if lookat_dot > 0.95 {
-            //     let rotation_vector = -glm::cross(&lookat_vec, &glm::vec3(0.0, 0.0, 1.0));
-            //     let current_angle = f32::acos(lookat_dot);
-            //     let amount = f32::acos(0.95) - current_angle;
-
-            //     totoro_lookat_pos -= totoro_position;
-            //     let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);
-            //     totoro_lookat_pos = totoro_position + glm::vec4_to_vec3(&new_pos);
-            // } else if lookat_dot < 0.05 {
-            //     let rotation_vector = -glm::cross(&lookat_vec, &glm::vec3(0.0, 0.0, 1.0));
-            //     let current_angle = f32::acos(lookat_dot);
-            //     let amount = f32::acos(0.05) - current_angle;
-
-            //     totoro_lookat_pos -= totoro_position;                
-            //     let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);                
-            //     totoro_lookat_pos = totoro_position + glm::vec4_to_vec3(&new_pos);
-            // }
-
-            // glm::look_at(&totoro_lookat_pos, &glm::vec4_to_vec3(&tot_center), &glm::vec3(0.0, 0.0, 1.0))
+            let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 0.75);
+            glm::look_at(&(totoro_lookat_pos + lookat_target), &lookat_target, &glm::vec3(0.0, 0.0, 1.0))
         };
 
         if do_freecam {
@@ -1164,8 +1158,7 @@ fn main() {
                 0.0, -1.0, 0.0, 0.0,
                 0.0, 0.0, 0.0, 1.0
             ) * glm::vec3_to_vec4(&movement_vector);
-            let view_movement_vector = glm::vec4_to_vec3(&view_movement_vector);
-            let delta_pos = FREECAM_SPEED * glm::affine_inverse(view_from_world) * glm::vec3_to_vec4(&view_movement_vector) * timer.delta_time;
+            let delta_pos = FREECAM_SPEED * glm::affine_inverse(view_from_world) * view_movement_vector * timer.delta_time;
             free_camera.position += glm::vec4_to_vec3(&delta_pos);
             free_camera.orientation += camera_orientation_delta;
         } else {
@@ -1176,7 +1169,7 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             ) * glm::vec3_to_vec4(&movement_vector);
 
-            let delta_pos = 0.01 * glm::affine_inverse(view_from_world) * view_movement_vector;
+            let delta_pos = 2.0 * glm::affine_inverse(view_from_world) * view_movement_vector * timer.delta_time;
             totoro_position += glm::vec4_to_vec3(&delta_pos);
         }
 
