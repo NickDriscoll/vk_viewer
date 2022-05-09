@@ -1110,7 +1110,7 @@ fn main() {
         
         let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [totoro_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
         vk_draw_calls.push(dc);
-        let model_matrix = glm::translation(&totoro_position);
+        let model_matrix: glm::TMat4<f32> = glm::translation(&totoro_position) * ozy::routines::uniform_scale(2.0);
         push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
 
         let view_from_world = if do_freecam {
@@ -1133,17 +1133,15 @@ fn main() {
                 let current_angle = f32::acos(lookat_dot);
                 let amount = f32::acos(0.95) - current_angle;
 
-                totoro_lookat_pos -= totoro_position;
                 let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);
-                totoro_lookat_pos = totoro_position + glm::vec4_to_vec3(&new_pos);
+                totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
             } else if lookat_dot < 0.05 {
                 let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
                 let current_angle = f32::acos(lookat_dot);
                 let amount = f32::acos(0.05) - current_angle;
 
-                totoro_lookat_pos -= totoro_position;                
-                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);                
-                totoro_lookat_pos = totoro_position + glm::vec4_to_vec3(&new_pos);
+                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(totoro_lookat_pos));                
+                totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
             }
 
             let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 0.75);
