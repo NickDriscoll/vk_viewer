@@ -3,9 +3,11 @@ extern crate nalgebra_glm as glm;
 extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
+mod render;
+mod structs;
+
 #[macro_use]
 mod vkutil;
-mod structs;
 
 use ash::vk;
 use imgui::{DrawCmd, FontAtlasRefMut};
@@ -24,7 +26,8 @@ use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use vkutil::{ColorSpace, FreeList, Material, VirtualBuffer, VirtualImage, VulkanAPI};
-use structs::{FreeCam, NoiseParameters, TerrainSpec};
+use structs::{Camera, NoiseParameters, TerrainSpec};
+use render::{DrawData, DrawSystem};
 
 fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
@@ -423,8 +426,6 @@ fn main() {
     let global_material_slots = 1024;
     let material_size = 2 * size_of::<u32>() as u64;
     let material_storage_buffer = VirtualBuffer::new(&vk, material_size * global_material_slots, vk::BufferUsageFlags::STORAGE_BUFFER);
-
-    let mut host_transform_buffer = Vec::with_capacity(16 * global_transform_slots);
     
     //Set up descriptors
     let vk_descriptor_set_layout;
@@ -507,7 +508,7 @@ fn main() {
         vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap()
     };
 
-    //Write initial values to buffer descriptors
+    //Write constant values to buffer descriptors
     unsafe {
         let uniform_infos = [
             vk::DescriptorBufferInfo {
@@ -755,8 +756,8 @@ fn main() {
         seed: time_from_epoch_ms()
     };
 
-    let plane_vertices = terrain.generate_vertices();
-    let plane_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
+    let terrain_vertices = terrain.generate_vertices();
+    let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
 
     //Load totoro model
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
@@ -798,13 +799,30 @@ fn main() {
         //Create virtual bump allocator
         let mut scene_geo_allocator = vkutil::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
 
-        terrain_geometry = scene_geo_allocator.allocate_geometry(&plane_vertices, &plane_indices).unwrap();
+        terrain_geometry = scene_geo_allocator.allocate_geometry(&terrain_vertices, &terrain_indices).unwrap();
         totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices).unwrap();
         dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices).unwrap();
         atmosphere_geometry = scene_geo_allocator.allocate_geometry(&ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer()).unwrap();
 
-        vk.device.unmap_memory(buffer_memory);
+        drop(terrain_vertices);
+        drop(terrain_indices);
+        drop(totoro_mesh);
+        drop(dragon_mesh);
     }
+
+    let mut draw_system = DrawSystem::new();
+    let terrain_model_idx = draw_system.add_model(DrawData {
+        geometry: terrain_geometry,
+        material_idx: terrain_grass_matidx
+    });
+    let totoro_model_idx = draw_system.add_model(DrawData{
+        geometry: totoro_geometry,
+        material_idx: totoro_matidx
+    });
+    let dragon_model_idx = draw_system.add_model(DrawData{
+        geometry: dragon_geometry,
+        material_idx: dragon_matidx
+    });
 
     let mut imgui_geo_allocator = unsafe {
         let imgui_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE;
@@ -828,7 +846,7 @@ fn main() {
     let vk_rendercomplete_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
-    let mut free_camera = FreeCam::new(glm::vec3(0.0f32, -30.0, 15.0));
+    let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
 
     let mut totoro_position = glm::zero();
     let mut totoro_lookat_dist = 7.5;
@@ -847,14 +865,12 @@ fn main() {
     let mut do_imgui = true;
     let mut do_terrain_window = false;
     let mut do_freecam = true;
+    let mut cursor_captured = false;
     
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
 
     let mut game_controllers = [None, None, None, None];
-
-    //Draw related lists that reset every frame
-    let mut vk_draw_calls = Vec::with_capacity(64);
 
     let vk_submission_fence = unsafe {
         let create_info = vk::FenceCreateInfo {
@@ -867,8 +883,9 @@ fn main() {
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
-        vk_draw_calls.clear();
-        host_transform_buffer.clear();
+
+        //Reset renderer
+        draw_system.reset();
 
         //Abstracted input variables
         let mut movement_multiplier = 5.0f32;
@@ -944,10 +961,10 @@ fn main() {
                     Event::MouseButtonUp { mouse_btn, ..} => {
                         match mouse_btn {
                             MouseButton::Right => {
-                                free_camera.cursor_captured = !free_camera.cursor_captured;
+                                cursor_captured = !cursor_captured;
                                 let mouse_util = sdl_context.mouse();
-                                mouse_util.set_relative_mouse_mode(free_camera.cursor_captured);
-                                if !free_camera.cursor_captured {
+                                mouse_util.set_relative_mouse_mode(cursor_captured);
+                                if !cursor_captured {
                                     mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
                                 }
                             }
@@ -955,7 +972,7 @@ fn main() {
                         }
                     }
                     Event::MouseMotion { xrel, yrel, .. } => {
-                        if free_camera.cursor_captured {
+                        if cursor_captured {
                             const DAMPENING: f32 = 0.25 / 360.0;
                             camera_orientation_delta += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
                         }
@@ -991,7 +1008,9 @@ fn main() {
                 }
 
                 if controller.button(Button::Y) {
-                    regenerate_terrain(&mut terrain, &terrain_geometry, terrain_fixed_seed);
+                    if let Some(terrain_model) = draw_system.get_model(terrain_model_idx) {
+                        regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
+                    }
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                         println!("{}", e);
                     }
@@ -1088,11 +1107,15 @@ fn main() {
                 imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
-                    regenerate_terrain(&mut terrain, &terrain_geometry, terrain_fixed_seed);
+                    if let Some(terrain_model) = draw_system.get_model(terrain_model_idx) {
+                        regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
+                    }
                 }
 
                 if terrain_interactive_generation && parameters_changed {
-                    regenerate_terrain(&mut terrain, &terrain_geometry, terrain_fixed_seed);
+                    if let Some(terrain_model) = draw_system.get_model(terrain_model_idx) {
+                        regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
+                    }
                 }
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { do_terrain_window = false; }
@@ -1103,22 +1126,23 @@ fn main() {
 
         movement_vector *= movement_multiplier;
 
-        let dc = vkutil::VirtualDrawCall::new(&terrain_geometry, terrain_pipeline, [terrain_grass_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
-        vk_draw_calls.push(dc);        
+        //I want to be able to say:
+        //Draw a model with a pipeline with this many instances starting at this index in the global transform buffer
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
-        push_matrix_to_vec(&mut host_transform_buffer, plane_model_matrix.as_slice());
-        
-        let dc = vkutil::VirtualDrawCall::new(&totoro_geometry, main_pipeline, [totoro_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
-        vk_draw_calls.push(dc);
-        let model_matrix: glm::TMat4<f32> = glm::translation(&totoro_position) * ozy::routines::uniform_scale(2.0);
-        push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
+        draw_system.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
+
+        let totoro_model_matrix = glm::translation(&totoro_position) * ozy::routines::uniform_scale(2.0);
+        draw_system.queue_drawcall(totoro_model_idx, main_pipeline, &[totoro_model_matrix]);
 
         let view_from_world = if do_freecam {
             //Camera orientation based on user input
-            free_camera.orientation.y = free_camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
-            free_camera.make_view_matrix()
+            camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
+            camera.make_view_matrix()
         } else {
-            totoro_lookat_dist -= scroll_amount;
+            let min = 3.0;
+            let max = 200.0;
+            totoro_lookat_dist -= 0.1 * totoro_lookat_dist * scroll_amount;
+            totoro_lookat_dist = f32::clamp(totoro_lookat_dist, min, max);
             
             let lookat = glm::look_at(&totoro_lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
             let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-camera_orientation_delta.x, camera_orientation_delta.y, 0.0, 0.0);
@@ -1127,18 +1151,20 @@ fn main() {
             let camera_pos = glm::normalize(&totoro_lookat_pos);
             totoro_lookat_pos = totoro_lookat_dist * camera_pos;
             
+            let min = -0.95;
+            let max = 0.95;
             let lookat_dot = glm::dot(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
-            if lookat_dot > 0.95 {
+            if lookat_dot > max {
                 let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
                 let current_angle = f32::acos(lookat_dot);
-                let amount = f32::acos(0.95) - current_angle;
+                let amount = f32::acos(max) - current_angle;
 
                 let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);
                 totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
-            } else if lookat_dot < 0.05 {
+            } else if lookat_dot < min {
                 let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
                 let current_angle = f32::acos(lookat_dot);
-                let amount = f32::acos(0.05) - current_angle;
+                let amount = f32::acos(min) - current_angle;
 
                 let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(totoro_lookat_pos));                
                 totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
@@ -1157,8 +1183,8 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             ) * glm::vec3_to_vec4(&movement_vector);
             let delta_pos = FREECAM_SPEED * glm::affine_inverse(view_from_world) * view_movement_vector * timer.delta_time;
-            free_camera.position += glm::vec4_to_vec3(&delta_pos);
-            free_camera.orientation += camera_orientation_delta;
+            camera.position += glm::vec4_to_vec3(&delta_pos);
+            camera.orientation += camera_orientation_delta;
         } else {
             let view_movement_vector = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
@@ -1202,11 +1228,10 @@ fn main() {
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
         }
 
-        let dc = vkutil::VirtualDrawCall::new(&dragon_geometry, main_pipeline, [dragon_matidx, 0, 0], 1, host_transform_buffer.len() as u32 / 16);
-        vk_draw_calls.push(dc);
-
-        let model_matrix = glm::translation(&glm::vec3(-200.0, 300.0, 2.0 * f32::sin(timer.elapsed_time) + 11.0)) * glm::rotation(glm::quarter_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
-        push_matrix_to_vec(&mut host_transform_buffer, model_matrix.as_slice());
+        let dragon_model_matrix = glm::translation(&glm::vec3(-200.0, 300.0, 2.0 *
+                                  f32::sin(timer.elapsed_time) + 11.0)) *
+                                  glm::rotation(glm::quarter_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
+        draw_system.queue_drawcall(dragon_model_idx, main_pipeline, &[dragon_model_matrix]);
         
         //Update sun's position
         sun_pitch += sun_speed * timer.delta_time;
@@ -1225,7 +1250,7 @@ fn main() {
             }
             imgui_ui.checkbox("Freecam", &mut do_freecam);
 
-            imgui_ui.text(format!("Freecam is at ({}, {}, {})", free_camera.position.x, free_camera.position.y, free_camera.position.z));
+            imgui_ui.text(format!("Freecam is at ({}, {}, {})", camera.position.x, camera.position.y, camera.position.z));
             if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
                 break 'running;
             }
@@ -1235,6 +1260,7 @@ fn main() {
         
         //Pre-render phase
 
+        //We need to wait until it's safe to write GPU data
         unsafe {
             vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
             vk.device.reset_fences(&[vk_submission_fence]).unwrap();
@@ -1325,8 +1351,8 @@ fn main() {
             ptr::copy_nonoverlapping(uniform_buffer.as_ptr() as *mut _, uniform_ptr, uniform_buffer.len() * size_of::<f32>());
 
             //Update model matrix storage buffer
-            let transform_ptr = transform_storage_buffer.ptr() as *mut f32;
-            ptr::copy_nonoverlapping(host_transform_buffer.as_ptr(), transform_ptr, host_transform_buffer.len());
+            let transform_ptr = transform_storage_buffer.ptr() as *mut glm::TMat4<f32>;
+            ptr::copy_nonoverlapping(draw_system.get_transforms().as_ptr(), transform_ptr, draw_system.get_transforms().len());
         };
 
         //Dear ImGUI virtual geo allocations
@@ -1430,15 +1456,18 @@ fn main() {
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
-            for virtual_draw in vk_draw_calls.iter() {
-                if virtual_draw.pipeline != last_bound_pipeline {
-                    vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, virtual_draw.pipeline);
-                    last_bound_pipeline = virtual_draw.pipeline;
+            for drawcall in draw_system.drawlist_iter() {
+                if drawcall.pipeline != last_bound_pipeline {
+                    vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
+                    last_bound_pipeline = drawcall.pipeline;
                 }
-                vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &virtual_draw.push_constants);
-                vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[virtual_draw.geometry.vertex_buffer.backing_buffer()], &[virtual_draw.geometry.vertex_buffer.offset() as u64]);
-                vk.device.cmd_bind_index_buffer(vk_command_buffer, virtual_draw.geometry.index_buffer.backing_buffer(), (virtual_draw.geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
-                vk.device.cmd_draw_indexed(vk_command_buffer, virtual_draw.geometry.index_count, virtual_draw.instance_count, 0, 0, virtual_draw.first_instance);
+                if let Some(model) = draw_system.get_model(drawcall.geometry_idx) {
+                    let pcs = [model.material_idx.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
+                    vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                    vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[model.geometry.vertex_buffer.backing_buffer()], &[model.geometry.vertex_buffer.offset() as u64]);
+                    vk.device.cmd_bind_index_buffer(vk_command_buffer, model.geometry.index_buffer.backing_buffer(), (model.geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+                    vk.device.cmd_draw_indexed(vk_command_buffer, model.geometry.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                }
             }
 
             //Record atmosphere rendering commands

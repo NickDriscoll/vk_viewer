@@ -1,17 +1,15 @@
 use crate::*;
 
-pub struct FreeCam {
+pub struct Camera {
     pub position: glm::TVec3<f32>,
     pub orientation: glm::TVec2<f32>,
-    pub cursor_captured: bool,
 }
 
-impl FreeCam {
+impl Camera {
     pub fn new(pos: glm::TVec3<f32>) -> Self {
-        FreeCam {
+        Camera {
             position: pos,
             orientation: glm::zero(),
-            cursor_captured: false
         }
     }
 

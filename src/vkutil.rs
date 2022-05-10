@@ -612,36 +612,6 @@ pub struct VirtualGeometry {
     pub index_count: u32
 }
 
-pub struct VirtualDrawCall<'a> {
-    pub geometry: &'a VirtualGeometry,
-    pub pipeline: vk::Pipeline,
-    pub push_constants: [u8; 12],        //Assuming you get 12 fast bytes
-    pub instance_count: u32,
-    pub first_instance: u32
-}
-
-impl<'a> VirtualDrawCall<'a> {
-    pub fn new(geometry: &'a VirtualGeometry, pipeline: vk::Pipeline, push_constants: [u32; 3], instance_count: u32, first_instance: u32) -> Self {
-        let pcs = [push_constants[0].to_le_bytes(), push_constants[1].to_le_bytes(), push_constants[2].to_le_bytes()].concat();
-        VirtualDrawCall {
-            geometry,
-            pipeline,
-            push_constants: pcs.try_into().unwrap(),
-            instance_count,
-            first_instance
-        }
-    }
-}
-
-pub struct FrameUniforms {
-    pub clip_from_screen: glm::TMat4<f32>,
-    pub clip_from_world: glm::TMat4<f32>,
-    pub clip_from_view: glm::TMat4<f32>,
-    pub view_from_world: glm::TMat4<f32>,
-    pub sun_direction: glm::TVec3<f32>,
-    pub time: f32
-}
-
 pub struct Display {
     pub swapchain: vk::SwapchainKHR,
     pub extent: vk::Extent2D,
@@ -1004,8 +974,4 @@ impl<T> Index<usize> for FreeList<T> {
     fn index(&self, idx: usize) -> &Self::Output {
         &self.list[idx]
     }
-}
-
-pub struct DrawList {
-
 }
