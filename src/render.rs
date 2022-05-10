@@ -2,6 +2,11 @@ use core::slice::Iter;
 use crate::vkutil::VirtualGeometry;
 use crate::*;
 
+pub struct Material {
+    pub color_idx: u32,
+    pub normal_idx: u32
+}
+
 pub struct DrawCall {
     pub geometry_idx: usize,
     pub pipeline: vk::Pipeline,
@@ -53,7 +58,7 @@ impl DrawSystem {
 
     pub fn queue_drawcall(&mut self, model_idx: usize, pipeline: vk::Pipeline, transforms: &[glm::TMat4<f32>]) {
         match &self.models[model_idx] {
-            Some(model) => {
+            Some(_) => {
                 let instance_count = transforms.len() as u32;
                 let first_instance = self.transforms.len() as u32;
 

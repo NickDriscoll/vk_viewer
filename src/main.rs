@@ -25,9 +25,9 @@ use std::time::SystemTime;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
-use vkutil::{ColorSpace, FreeList, Material, VirtualBuffer, VirtualImage, VulkanAPI};
+use vkutil::{ColorSpace, FreeList, VirtualBuffer, VirtualImage, VulkanAPI};
 use structs::{Camera, NoiseParameters, TerrainSpec};
-use render::{DrawData, DrawSystem};
+use render::{DrawData, DrawSystem, Material};
 
 fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
@@ -40,12 +40,6 @@ fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
         Err(e) => {
             crash_with_error_dialog(&format!("{}\n{}", msg, e));
         }
-    }
-}
-
-fn push_matrix_to_vec(vec: &mut Vec<f32>, matrix: &[f32]) {
-    for k in 0..16 {
-        vec.push(matrix[k]);
     }
 }
 
@@ -200,7 +194,7 @@ fn main() {
             base_array_layer: 0,
             layer_count: 1
         };
-        let font_view_info = vk::ImageViewCreateInfo {
+        let view_info = vk::ImageViewCreateInfo {
             image: normal_image,
             format,
             view_type: vk::ImageViewType::TYPE_2D,
@@ -208,11 +202,11 @@ fn main() {
             subresource_range: sampler_subresource_range,
             ..Default::default()
         };
-        let font_view = vk.device.create_image_view(&font_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+        let view = vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
         
         let image_info = vk::DescriptorImageInfo {
             sampler: font_sampler,
-            image_view: font_view,
+            image_view: view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
         global_textures.insert(image_info) as u32
@@ -1257,7 +1251,7 @@ fn main() {
             }
             imgui_ui.checkbox("Freecam", &mut do_freecam);
 
-            imgui_ui.text(format!("Freecam is at ({}, {}, {})", camera.position.x, camera.position.y, camera.position.z));
+            imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
             if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
                 break 'running;
             }

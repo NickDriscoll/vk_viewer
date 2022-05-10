@@ -484,11 +484,6 @@ impl VulkanAPI {
     }
 }
 
-pub struct Material {
-    pub color_idx: u32,
-    pub normal_idx: u32
-}
-
 #[derive(Clone, Copy)]
 pub struct VirtualBuffer {
     backing_buffer: vk::Buffer,
