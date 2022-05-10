@@ -1228,10 +1228,17 @@ fn main() {
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
         }
 
-        let dragon_model_matrix = glm::translation(&glm::vec3(-200.0, 300.0, 2.0 *
-                                  f32::sin(timer.elapsed_time) + 11.0)) *
-                                  glm::rotation(glm::quarter_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
-        draw_system.queue_drawcall(dragon_model_idx, main_pipeline, &[dragon_model_matrix]);
+        let dragon_matrices = {
+            let n = 64;
+            let mut m = Vec::with_capacity(n);
+            for i in 0..n {
+                let mat = glm::translation(&glm::vec3(-250.0 + 75.0 * i as f32, 300.0, 16.0 * f32::sin(timer.elapsed_time + i as f32) + 11.0)) *
+                          glm::rotation(glm::quarter_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
+                m.push(mat);
+            }
+            m
+        };
+        draw_system.queue_drawcall(dragon_model_idx, main_pipeline, &dragon_matrices);
         
         //Update sun's position
         sun_pitch += sun_speed * timer.delta_time;
