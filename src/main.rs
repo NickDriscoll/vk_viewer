@@ -10,6 +10,7 @@ mod structs;
 mod vkutil;
 
 use ash::vk;
+use gltf::Gltf;
 use imgui::{DrawCmd, FontAtlasRefMut};
 use sdl2::controller::GameController;
 use sdl2::event::Event;
@@ -733,6 +734,35 @@ fn main() {
         [main_pipeline, ter_pipeline, atm_pipeline, im_pipeline, wire_pipeline]
     };
 
+    //Load gltf object
+    // let glb = Gltf::open("./data/models/BoomBox.glb").unwrap();
+    // for scene in glb.scenes() {
+    //     for node in scene.nodes() {
+    //         if let Some(mesh) = node.mesh() {
+    //             use gltf::Semantic;
+
+    //             for prim in mesh.primitives() {
+    //                 let a = prim.get(&Semantic::Positions).unwrap();
+    //                 let view = a.view().unwrap();
+    //                 let buffer = view.buffer();
+
+    //                 println!("Primitive mode: {:?}", prim.mode());
+    //                 println!("Buffer length: {}\nOffset: {}", view.length(), view.offset());
+
+    //                 match view.stride() {
+    //                     Some(s) => { println!("Position stride: {}", s); }
+    //                     None => { println!("Position attribute is tightly packed."); }
+    //                 }
+                    
+                    
+    //                 let blob = &glb.blob;
+
+
+    //             }
+    //         }
+    //     }
+    // }
+
     let terrain_width_height = 256;
     let mut terrain_fixed_seed = false;
     let mut terrain_interactive_generation = false;
@@ -1120,8 +1150,6 @@ fn main() {
 
         movement_vector *= movement_multiplier;
 
-        //I want to be able to say:
-        //Draw a model with a pipeline with this many instances starting at this index in the global transform buffer
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         draw_system.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
 
@@ -1223,7 +1251,7 @@ fn main() {
         }
 
         let dragon_matrices = {
-            let n = 64;
+            let n = 10;
             let mut m = Vec::with_capacity(n);
             for i in 0..n {
                 let mat = glm::translation(&glm::vec3(-250.0 + 75.0 * i as f32, 300.0, 16.0 * f32::sin(timer.elapsed_time + i as f32) + 11.0)) *
@@ -1345,7 +1373,8 @@ fn main() {
                 projection_matrix.as_slice(),
                 view_from_world.as_slice(),
                 skybox_view_projection.as_slice(),
-                sun_direction.as_slice()
+                sun_direction.as_slice(),
+                &[timer.elapsed_time]
             ].concat();
 
             let uniform_ptr = frame_uniform_buffer.ptr() as *mut f32;

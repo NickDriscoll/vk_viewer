@@ -24,13 +24,14 @@ void main() {
     vec3 bitangent = normalize(f_bitangent);
     vec3 normal = normalize(f_normal);
     mat3 TBN = mat3(tangent, bitangent, normal);
+    vec2 uvs = f_uv;
 
     Material grass_material = global_materials[first_material_idx];
     Material rock_material = global_materials[first_material_idx + 1];
-    vec3 grass_color = texture(global_textures[grass_material.color_map_index], f_uv).rgb;
-    vec3 rock_color = texture(global_textures[rock_material.color_map_index], f_uv).rgb;
-    vec3 grass_normal = normalize(2.0 * texture(global_textures[grass_material.normal_map_index], f_uv).xyz - 1.0);
-    vec3 rock_normal = normalize(2.0 * texture(global_textures[rock_material.normal_map_index], f_uv).xyz - 1.0);
+    vec3 grass_color = texture(global_textures[grass_material.color_map_index], uvs).rgb;
+    vec3 rock_color = texture(global_textures[rock_material.color_map_index], uvs).rgb;
+    vec3 grass_normal = normalize(2.0 * texture(global_textures[grass_material.normal_map_index], uvs).xyz - 1.0);
+    vec3 rock_normal = normalize(2.0 * texture(global_textures[rock_material.normal_map_index], uvs).xyz - 1.0);
 
     float mix_factor = max(0.0, dot(normal, vec3(0.0, 0.0, 1.0)));
     mix_factor = smoothstep(0.60, 0.70, mix_factor);

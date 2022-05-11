@@ -11,6 +11,7 @@ strip = true
 
 [dependencies]
 ozy_engine = { path = "../ozy_engine" }
+gltf = "1.0.0"
 imgui = "0.8.2"
 nalgebra-glm = "0.16.0"
 noise = "0.7.0"
