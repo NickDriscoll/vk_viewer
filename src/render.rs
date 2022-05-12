@@ -57,27 +57,25 @@ impl DrawSystem {
     }
 
     pub fn queue_drawcall(&mut self, model_idx: usize, pipeline: vk::Pipeline, transforms: &[glm::TMat4<f32>]) {
-        match &self.models[model_idx] {
-            Some(_) => {
-                let instance_count = transforms.len() as u32;
-                let first_instance = self.transforms.len() as u32;
-
-                for t in transforms {
-                    self.transforms.push(*t);
-                }
-                let drawcall = DrawCall {
-                    geometry_idx: model_idx,
-                    pipeline,
-                    instance_count,
-                    first_instance
-                };
-
-                self.drawlist.push(drawcall);
-            }
-            None => {
-                tfd::message_box_ok("No model at supplied index", &format!("No model loaded at index {}", model_idx), tfd::MessageBoxIcon::Error);
-            }
+        if let None = &self.models[model_idx] {
+            tfd::message_box_ok("No model at supplied index", &format!("No model loaded at index {}", model_idx), tfd::MessageBoxIcon::Error);
+            return;
         }
+
+        let instance_count = transforms.len() as u32;
+        let first_instance = self.transforms.len() as u32;
+
+        for t in transforms {
+            self.transforms.push(*t);
+        }
+        let drawcall = DrawCall {
+            geometry_idx: model_idx,
+            pipeline,
+            instance_count,
+            first_instance
+        };
+
+        self.drawlist.push(drawcall);
     }
 
     pub fn drawlist_iter(&self) -> Iter<DrawCall> {

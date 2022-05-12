@@ -413,7 +413,7 @@ fn main() {
     let frame_uniform_buffer = VirtualBuffer::new(&vk, uniform_buffer_size, vk::BufferUsageFlags::UNIFORM_BUFFER);
     
     //Allocate buffer for object transforms
-    let global_transform_slots = 4 * 1024 * 1024;
+    let global_transform_slots = 1024 * 1024;
     let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
     let transform_storage_buffer = VirtualBuffer::new(&vk, buffer_size, vk::BufferUsageFlags::STORAGE_BUFFER);
 
@@ -1382,7 +1382,8 @@ fn main() {
 
             //Update model matrix storage buffer
             let transform_ptr = transform_storage_buffer.ptr() as *mut glm::TMat4<f32>;
-            ptr::copy_nonoverlapping(draw_system.get_transforms().as_ptr(), transform_ptr, draw_system.get_transforms().len());
+            let global_transforms = draw_system.get_transforms();
+            ptr::copy_nonoverlapping(global_transforms.as_ptr(), transform_ptr, global_transforms.len());
         };
 
         //Dear ImGUI virtual geo allocations

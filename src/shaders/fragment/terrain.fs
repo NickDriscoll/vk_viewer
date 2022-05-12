@@ -37,7 +37,7 @@ void main() {
     mix_factor = smoothstep(0.60, 0.70, mix_factor);
 
     vec3 world_normal = TBN * mix(rock_normal, grass_normal, mix_factor);
-    float sun_contribution = max(0.1, dot(world_normal, sun_direction) + 0.1);
+    float sun_contribution = max(LIGHTING_MIN, dot(world_normal, sun_direction) + 0.1);
 
     vec3 final_color = mix(rock_color, grass_color, mix_factor);    
     final_color *= sun_contribution;

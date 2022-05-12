@@ -7,3 +7,5 @@ layout (std140, set = 0, binding = 0) readonly uniform FrameData {
     vec3 sun_direction;
     float time;
 };
+
+const float LIGHTING_MIN = 0.15;
