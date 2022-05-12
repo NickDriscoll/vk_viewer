@@ -48,7 +48,7 @@ impl DrawSystem {
         }
     }
 
-    pub fn add_model(&mut self, data: DrawData) -> usize {
+    pub fn register_model(&mut self, data: DrawData) -> usize {
         self.models.insert(data)
     }
 

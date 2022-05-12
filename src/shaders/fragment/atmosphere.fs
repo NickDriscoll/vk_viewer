@@ -79,7 +79,6 @@ void main() {
     stars_color *= 1.0 - smoothstep(-0.1, 0.0, sun_direction.z);
     
     vec3 final_color = base_color + viewzenith_color + sunview_color + stars_color;
-    //vec3 final_color = stars_color;
 
     final_color += smoothstep(mix(1.0, 0.99, 0.25), 1.0, sunview_dot);
 
