@@ -94,5 +94,7 @@ pub struct FrameUniforms {
     pub clip_from_view: glm::TMat4<f32>,
     pub view_from_world: glm::TMat4<f32>,
     pub sun_direction: glm::TVec3<f32>,
-    pub time: f32
+    pub time: f32,
+    pub stars_threshold: f32, // modifies the number of stars that are visible
+	pub stars_exposure: f32   // modifies the overall strength of the stars
 }

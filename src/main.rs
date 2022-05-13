@@ -29,7 +29,7 @@ use ozy::structs::{FrameTimer, OptionVec};
 
 use vkutil::{ColorSpace, FreeList, VirtualBuffer, VirtualImage, VulkanAPI};
 use structs::{Camera, NoiseParameters, TerrainSpec};
-use render::{DrawData, DrawSystem, Material};
+use render::{DrawData, DrawSystem, FrameUniforms, Material};
 
 fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
@@ -415,7 +415,7 @@ fn main() {
     let mut vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
 
     //Allocate buffer for frame-constant uniforms
-    let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
+    let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + 3 * size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
     let frame_uniform_buffer = VirtualBuffer::new(&vk, uniform_buffer_size, vk::BufferUsageFlags::UNIFORM_BUFFER);
     
     //Allocate buffer for object transforms
@@ -859,7 +859,7 @@ fn main() {
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
 
-    let mut totoro_position = glm::zero();
+    let mut totoro_position: glm::TVec3<f32> = glm::zero();
     let mut totoro_lookat_dist = 7.5;
     let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
@@ -868,6 +868,8 @@ fn main() {
     let mut sun_speed = 0.003;
     let mut sun_pitch = 0.118;
     let mut sun_yaw = 0.783;
+    let mut stars_threshold = 8.0;
+    let mut stars_exposure = 200.0;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
@@ -1145,9 +1147,6 @@ fn main() {
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         draw_system.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
 
-        let totoro_model_matrix = glm::translation(&totoro_position) * ozy::routines::uniform_scale(2.0);
-        draw_system.queue_drawcall(totoro_model_idx, main_pipeline, &[totoro_model_matrix]);
-
         let view_from_world = if do_freecam {
             //Camera orientation based on user input
             camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
@@ -1210,6 +1209,11 @@ fn main() {
             let delta_pos = 2.0 * glm::affine_inverse(view_from_world) * view_movement_vector * timer.delta_time;
             totoro_position += glm::vec4_to_vec3(&delta_pos);
         }
+ 
+        let a = ozy::routines::uniform_scale(2.0);
+        let b = glm::translation(&totoro_position);
+        let totoro_model_matrix = b * a;
+        draw_system.queue_drawcall(totoro_model_idx, main_pipeline, &[totoro_model_matrix]);
 
         let imgui_window_token = if do_imgui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
@@ -1240,6 +1244,8 @@ fn main() {
             imgui::Slider::new("Sun speed", 0.0, 1.0).build(&imgui_ui, &mut sun_speed);
             imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
+            imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut stars_threshold);
+            imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut stars_exposure);
         }
 
         let dragon_matrices = {
@@ -1254,7 +1260,7 @@ fn main() {
         };
         draw_system.queue_drawcall(dragon_model_idx, main_pipeline, &dragon_matrices);
 
-        let bb_mat = glm::translation(&glm::vec3(0.0, 0.0, 10.0)) * ozy::routines::uniform_scale(150.0);
+        let bb_mat = glm::translation(&glm::vec3(0.0f32, 0.0, 10.0)) * ozy::routines::uniform_scale(150.0f32);
         draw_system.queue_drawcall(glb_model_idx, main_pipeline, &[bb_mat]);
         
         //Update sun's position
@@ -1369,7 +1375,7 @@ fn main() {
                 view_from_world.as_slice(),
                 skybox_view_projection.as_slice(),
                 sun_direction.as_slice(),
-                &[timer.elapsed_time, 8.0, 200.0]
+                &[timer.elapsed_time, stars_threshold, stars_exposure]
             ].concat();
 
             let uniform_ptr = frame_uniform_buffer.ptr() as *mut f32;
