@@ -741,7 +741,7 @@ fn main() {
 
     //Load gltf object
     let (glb_verts, glb_inds) = {
-        let glb = Gltf::open("./data/models/BoomBox.glb").unwrap();
+        let glb = Gltf::open("./data/models/shiba.glb").unwrap();
         let mut vertex_buffer = Vec::new();
         let mut index_buffer = Vec::new();
         for scene in glb.scenes() {
@@ -1332,7 +1332,7 @@ fn main() {
         };
         draw_system.queue_drawcall(dragon_model_idx, main_pipeline, &dragon_matrices);
 
-        let bb_mat = glm::translation(&glm::vec3(0.0, 0.0, 10.0)) * ozy::routines::uniform_scale(100.0);
+        let bb_mat = glm::translation(&glm::vec3(0.0, 0.0, 10.0)) * ozy::routines::uniform_scale(1.0);
         draw_system.queue_drawcall(glb_model_idx, main_pipeline, &[bb_mat]);
         
         //Update sun's position
