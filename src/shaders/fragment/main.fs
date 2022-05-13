@@ -30,9 +30,11 @@ void main() {
     vec3 base_color = texture(global_textures[my_mat.color_map_index], f_uv).rgb;
     vec3 sampled_normal = 2.0 * texture(global_textures[my_mat.normal_map_index], f_uv).xyz - 1.0;
     vec3 world_normal = TBN * sampled_normal;
-    float sun_contribution = max(LIGHTING_MIN, dot(world_normal, sun_direction));
+    float sun_contribution = max(0.0, dot(world_normal, sun_direction));
+    sun_contribution *= 1.0 - smoothstep(0.0, -0.05, sun_direction.z);
 
-    vec3 final_color = sun_contribution * base_color;
+    vec3 final_color = base_color;
+    final_color *= max(LIGHTING_MIN, sun_contribution);
 
     frag_color = vec4(final_color, 1.0);
 }
