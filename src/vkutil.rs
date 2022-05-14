@@ -489,14 +489,15 @@ impl VulkanAPI {
 
 pub struct VirtualBuffer {
     buffer: vk::Buffer,
-    allocation: Allocation
+    allocation: Allocation,
+    length: vk::DeviceSize
 }
 
 impl VirtualBuffer {
     //Read-only access to fields
     pub fn allocation(&self) -> &Allocation { &self.allocation }
     pub fn backing_buffer(&self) -> vk::Buffer { self.buffer }
-    pub fn length(&self) -> vk::DeviceSize { self.allocation.size() }
+    pub fn length(&self) -> vk::DeviceSize { self.length }
 
     pub fn allocate(vk: &VulkanAPI, allocator: &mut Allocator, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags) -> Self {
         let vk_buffer;
@@ -523,14 +524,8 @@ impl VirtualBuffer {
 
         VirtualBuffer {
             buffer: vk_buffer,
-            allocation
-        }
-    }
-
-    pub fn new(buffer: vk::Buffer, allocation: Allocation) -> Self {
-        VirtualBuffer {
-            buffer,
-            allocation
+            allocation,
+            length: actual_size
         }
     }
 

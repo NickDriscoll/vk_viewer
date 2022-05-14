@@ -425,8 +425,8 @@ fn main() {
     let mut vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
 
     //Allocate buffer for frame-constant uniforms
-    //let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + 3 * size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
-    let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
+    let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + 6 * size_of::<f32>()) as vk::DeviceSize;
+    //let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
     let frame_uniform_buffer = VirtualBuffer::allocate(
         &vk,
         &mut allocator,
@@ -438,7 +438,8 @@ fn main() {
     //Allocate buffer for object transforms
     let global_transform_slots = 1024 * 1024;
     let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
-    let transform_storage_buffer = VirtualBuffer::allocate(&vk,
+    let transform_storage_buffer = VirtualBuffer::allocate(
+        &vk,
         &mut allocator,
         buffer_size,
         vk.physical_device_properties.limits.min_storage_buffer_offset_alignment,
@@ -543,7 +544,7 @@ fn main() {
             vk::DescriptorBufferInfo {
                 buffer: frame_uniform_buffer.backing_buffer(),
                 offset: 0,
-                range: uniform_buffer_size
+                range: frame_uniform_buffer.length()
             }
         ];
         let storage_info = vk::DescriptorBufferInfo {
