@@ -1,6 +1,8 @@
 use std::{ffi::c_void, io::Read, collections::HashMap, ops::Index};
 
 use ash::vk;
+use gpu_allocator::vulkan::*;
+use gpu_allocator::MemoryLocation;
 use ozy::io::DDSHeader;
 use sdl2::video::Window;
 use std::ptr;
@@ -485,25 +487,21 @@ impl VulkanAPI {
     }
 }
 
-#[derive(Clone, Copy)]
 pub struct VirtualBuffer {
-    backing_buffer: vk::Buffer,
-    buffer_ptr: *mut c_void,
-    offset: u64,
-    length: u64
+    buffer: vk::Buffer,
+    allocation: Allocation
 }
 
 impl VirtualBuffer {
     //Read-only access to fields
-    pub fn backing_buffer(&self) -> vk::Buffer { self.backing_buffer }
-    pub fn ptr(&self) -> *mut c_void { self.buffer_ptr }
-    pub fn offset(&self) -> u64 { self.offset }
-    pub fn length(&self) -> u64 { self.length }
+    pub fn allocation(&self) -> &Allocation { &self.allocation }
+    pub fn backing_buffer(&self) -> vk::Buffer { self.buffer }
+    pub fn length(&self) -> vk::DeviceSize { self.allocation.size() }
 
-    pub fn new(vk: &VulkanAPI, size: vk::DeviceSize, usage_flags: vk::BufferUsageFlags) -> Self {
+    pub fn allocate(vk: &VulkanAPI, allocator: &mut Allocator, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags) -> Self {
         let vk_buffer;
-        let actual_size = size_to_alignment!(size, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
-        let vk_buffer_ptr = unsafe {        
+        let actual_size = size_to_alignment!(size, alignment);
+        let allocation = unsafe {
             let buffer_create_info = vk::BufferCreateInfo {
                 usage: usage_flags,
                 size: actual_size,
@@ -511,94 +509,40 @@ impl VirtualBuffer {
                 ..Default::default()
             };
             vk_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let mem_reqs = vk.device.get_buffer_memory_requirements(vk_buffer);
 
-            let buffer_memory = vkutil::allocate_buffer_memory(&vk, vk_buffer);
-            vk.device.bind_buffer_memory(vk_buffer, buffer_memory, 0).unwrap();
-
-            vk.device.map_memory(buffer_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()).unwrap()
+            let a = allocator.allocate(&AllocationCreateDesc {
+                name: "",
+                requirements: mem_reqs,
+                location: MemoryLocation::CpuToGpu,
+                linear: true
+            }).unwrap();
+            vk.device.bind_buffer_memory(vk_buffer, a.memory(), a.offset()).unwrap();
+            a
         };
 
         VirtualBuffer {
-            backing_buffer: vk_buffer,
-            buffer_ptr: vk_buffer_ptr,
-            offset: 0,
-            length: actual_size
+            buffer: vk_buffer,
+            allocation
         }
+    }
+
+    pub fn new(buffer: vk::Buffer, allocation: Allocation) -> Self {
+        VirtualBuffer {
+            buffer,
+            allocation
+        }
+    }
+
+    pub fn unchecked_ptr(&self) -> *mut c_void {
+        self.allocation.mapped_ptr().unwrap().as_ptr()
     }
 
     pub fn upload_buffer<T>(&self, in_buffer: &[T]) {
         unsafe {
-            let dst_ptr = self.buffer_ptr.offset(self.offset.try_into().unwrap());
+            let dst_ptr = self.allocation.mapped_ptr().unwrap().as_ptr();
             ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut T, in_buffer.len());
         }
-    }
-}
-
-//Allocator that can only free its memory all at once
-pub struct VirtualBumpAllocator {
-    backing_buffer: vk::Buffer,
-    buffer_ptr: *mut c_void,
-    current_offset: u64,
-    max_size: u64,
-}
-
-impl VirtualBumpAllocator {
-    //Read-only access to fields
-    //pub fn backing_buffer(&self) -> vk::Buffer { self.backing_buffer }
-    //pub fn current_offset(&self) -> u64 { self.current_offset }
-    //pub fn max_size(&self) -> u64 { self.max_size }
-    pub fn ptr(&self) -> *mut c_void { self.buffer_ptr }
-
-    pub fn new(backing_buffer: vk::Buffer, ptr: *mut c_void, max_size: u64) -> Self {
-        VirtualBumpAllocator {
-            backing_buffer,
-            current_offset: 0,
-            max_size,
-            buffer_ptr: ptr
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.current_offset = 0;
-    }
-
-
-    pub fn allocate_buffer(&mut self, size: u64) -> Result<VirtualBuffer, String> {
-        if size + self.current_offset > self.max_size {
-            return Err(format!("Tried to allocate {} bytes from a buffer with {} bytes remaining", size, self.max_size - self.current_offset));
-        }
-        
-        let b = VirtualBuffer {
-            backing_buffer: self.backing_buffer,
-            buffer_ptr: self.buffer_ptr,
-            offset: self.current_offset,
-            length: size
-        };
-        self.current_offset += size;
-        Ok(b)
-    }
-
-    pub fn allocate_geometry(&mut self, v_buffer: &[f32], i_buffer: &[u32]) -> Result<VirtualGeometry, String> {
-        let v_size = (v_buffer.len() * size_of::<f32>()) as u64;
-        let i_size = (i_buffer.len() * size_of::<u32>()) as u64;
-        let allocation_size = v_size + i_size;
-        if allocation_size + self.current_offset > self.max_size {
-            return Err(format!("Tried to allocate {} bytes from a buffer with {} bytes remaining", allocation_size, self.max_size - self.current_offset));
-        }
-        
-        let vertex_buffer = self.allocate_buffer(v_size).unwrap();
-        vertex_buffer.upload_buffer(&v_buffer);
-
-        let index_buffer = self.allocate_buffer(i_size).unwrap();
-        index_buffer.upload_buffer(&i_buffer);
-
-        Ok (
-            VirtualGeometry {
-                vertex_buffer,
-                index_buffer,
-                index_count: i_buffer.len() as u32
-            }
-        )
     }
 }
 
@@ -606,6 +550,20 @@ pub struct VirtualGeometry {
     pub vertex_buffer: VirtualBuffer,
     pub index_buffer: VirtualBuffer,
     pub index_count: u32
+}
+
+impl VirtualGeometry {
+    pub fn create(vk: &VulkanAPI, allocator: &mut Allocator, vertices: &[f32], indices: &[u32]) -> Self {
+        let vertex_buffer = VirtualBuffer::allocate(vk, allocator, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER);
+        let index_buffer = VirtualBuffer::allocate(vk, allocator, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER);
+        vertex_buffer.upload_buffer(vertices);
+        index_buffer.upload_buffer(indices);
+        VirtualGeometry {
+            vertex_buffer,
+            index_buffer,
+            index_count: indices.len() as u32
+        }
+    }
 }
 
 pub struct Display {

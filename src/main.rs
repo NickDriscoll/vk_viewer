@@ -11,12 +11,13 @@ mod structs;
 mod vkutil;
 
 use ash::vk;
-use gltf::Gltf;
+use gpu_allocator::vulkan::*;
 use imgui::{DrawCmd, FontAtlasRefMut};
 use sdl2::controller::GameController;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
+use sdl2::sys::exit;
 use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
@@ -27,7 +28,7 @@ use std::time::SystemTime;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
-use vkutil::{ColorSpace, FreeList, VirtualBuffer, VirtualImage, VulkanAPI};
+use vkutil::{ColorSpace, FreeList, VirtualBuffer, VirtualGeometry, VirtualImage, VulkanAPI};
 use structs::{Camera, NoiseParameters, TerrainSpec};
 use render::{DrawData, DrawSystem, FrameUniforms, Material};
 
@@ -99,6 +100,15 @@ fn main() {
 
     //Initialize the Vulkan API
     let vk = vkutil::VulkanAPI::initialize(&window);
+    
+    //Initialize gpu_allocator
+    let mut allocator = Allocator::new(&AllocatorCreateDesc {
+        instance: vk.instance.clone(),
+        device: vk.device.clone(),
+        physical_device: vk.physical_device,
+        debug_settings: Default::default(),
+        buffer_device_address: false,  // Ideally, check the BufferDeviceAddressFeatures struct.
+    }).unwrap();
 
     //Create command buffer
     let vk_command_buffer = unsafe {
@@ -415,18 +425,36 @@ fn main() {
     let mut vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
 
     //Allocate buffer for frame-constant uniforms
-    let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + 3 * size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
-    let frame_uniform_buffer = VirtualBuffer::new(&vk, uniform_buffer_size, vk::BufferUsageFlags::UNIFORM_BUFFER);
+    //let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + 3 * size_of::<glm::TVec4<f32>>()) as vk::DeviceSize;
+    let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
+    let frame_uniform_buffer = VirtualBuffer::allocate(
+        &vk,
+        &mut allocator,
+        uniform_buffer_size,
+        vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment,
+        vk::BufferUsageFlags::UNIFORM_BUFFER
+    );
     
     //Allocate buffer for object transforms
     let global_transform_slots = 1024 * 1024;
     let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
-    let transform_storage_buffer = VirtualBuffer::new(&vk, buffer_size, vk::BufferUsageFlags::STORAGE_BUFFER);
+    let transform_storage_buffer = VirtualBuffer::allocate(&vk,
+        &mut allocator,
+        buffer_size,
+        vk.physical_device_properties.limits.min_storage_buffer_offset_alignment,
+        vk::BufferUsageFlags::STORAGE_BUFFER
+    );
 
     //Allocate material buffer
     let global_material_slots = 1024;
     let material_size = 2 * size_of::<u32>() as u64;
-    let material_storage_buffer = VirtualBuffer::new(&vk, material_size * global_material_slots, vk::BufferUsageFlags::STORAGE_BUFFER);
+    let material_storage_buffer = VirtualBuffer::allocate(
+        &vk,
+        &mut allocator,
+        material_size * global_material_slots,
+        vk.physical_device_properties.limits.min_storage_buffer_offset_alignment,
+        vk::BufferUsageFlags::STORAGE_BUFFER
+    );
     
     //Set up descriptors
     let vk_descriptor_set_layout;
@@ -802,15 +830,12 @@ fn main() {
             vk::WHOLE_SIZE,
             vk::MemoryMapFlags::empty()
         ).unwrap();
-
-        //Create virtual bump allocator
-        let mut scene_geo_allocator = vkutil::VirtualBumpAllocator::new(scene_geo_buffer, buffer_ptr, scene_geo_buffer_size.try_into().unwrap());
-
-        terrain_geometry = scene_geo_allocator.allocate_geometry(&terrain_vertices, &terrain_indices).unwrap();
-        totoro_geometry = scene_geo_allocator.allocate_geometry(&totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices).unwrap();
-        dragon_geometry = scene_geo_allocator.allocate_geometry(&dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices).unwrap();
-        atmosphere_geometry = scene_geo_allocator.allocate_geometry(&ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer()).unwrap();
-        glb_geometry = scene_geo_allocator.allocate_geometry(&glb_verts, &glb_inds).unwrap();
+        
+        terrain_geometry = VirtualGeometry::create(&vk, &mut allocator, &terrain_vertices, &terrain_indices);
+        totoro_geometry = VirtualGeometry::create(&vk, &mut allocator, &totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices);
+        dragon_geometry = VirtualGeometry::create(&vk, &mut allocator, &dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices);
+        atmosphere_geometry = VirtualGeometry::create(&vk, &mut allocator, &ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer());
+        glb_geometry = VirtualGeometry::create(&vk, &mut allocator, &glb_verts, &glb_inds);
 
         drop(terrain_vertices);
         drop(terrain_indices);
@@ -834,23 +859,6 @@ fn main() {
         geometry: glb_geometry,
         material_idx: glb_matidx
     });
-
-    let mut imgui_geo_allocator = unsafe {
-        let imgui_buffer_size = vkutil::DEFAULT_ALLOCATION_SIZE;
-        let buffer_create_info = vk::BufferCreateInfo {
-            usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
-            size: imgui_buffer_size as vk::DeviceSize,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
-        };
-        let buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-        let buffer_memory = vkutil::allocate_buffer_memory(&vk, buffer);
-        vk.device.bind_buffer_memory(buffer, buffer_memory, 0).unwrap();
-
-        let ptr = vk.device.map_memory(buffer_memory, 0, imgui_buffer_size, vk::MemoryMapFlags::empty()).unwrap();
-
-        vkutil::VirtualBumpAllocator::new(buffer, ptr, imgui_buffer_size)
-    };
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -1288,6 +1296,50 @@ fn main() {
             t.end();
         }
         
+        //Dear ImGUI virtual geo allocations
+        let (imgui_geometries, imgui_cmd_lists) = {
+            let mut geos = Vec::with_capacity(16);
+            let mut cmds = Vec::with_capacity(16);
+
+            let imgui_draw_data = imgui_ui.render();
+            if imgui_draw_data.total_vtx_count > 0 {
+                for list in imgui_draw_data.draw_lists() {
+                    let vert_size = 8;  //Size in floats
+                    let vtx_buffer = list.vtx_buffer();
+                    let mut verts = vec![0.0; vtx_buffer.len() * vert_size];
+
+                    let mut current_vertex = 0;
+                    for vtx in vtx_buffer.iter() {
+                        let idx = current_vertex * vert_size;
+                        verts[idx] =     vtx.pos[0];
+                        verts[idx + 1] = vtx.pos[1];
+                        verts[idx + 2] = vtx.uv[0];
+                        verts[idx + 3] = vtx.uv[1];
+                        verts[idx + 4] = vtx.col[0] as f32 / 255.0;
+                        verts[idx + 5] = vtx.col[1] as f32 / 255.0;
+                        verts[idx + 6] = vtx.col[2] as f32 / 255.0;
+                        verts[idx + 7] = vtx.col[3] as f32 / 255.0;
+
+                        current_vertex += 1;
+                    }
+
+                    let idx_buffer = list.idx_buffer();
+                    let mut inds = vec![0u32; idx_buffer.len()];
+                    for i in 0..idx_buffer.len() {
+                        inds[i] = idx_buffer[i] as u32;
+                    }
+
+                    let g = VirtualGeometry::create(&vk, &mut allocator, &verts, &inds);
+                    geos.push(g);
+
+                    let mut cmd_list = Vec::with_capacity(list.commands().count());
+                    for command in list.commands() { cmd_list.push(command); }
+                    cmds.push(cmd_list);
+                }
+            }
+            (geos, cmds)
+        };
+
         //Pre-render phase
 
         //We need to wait until it's safe to write GPU data
@@ -1330,7 +1382,7 @@ fn main() {
                 }
             }
 
-            let material_ptr = material_storage_buffer.ptr() as *mut u32;
+            let material_ptr = material_storage_buffer.unchecked_ptr() as *mut u32;
             unsafe { ptr::copy_nonoverlapping(upload_mats.as_ptr(), material_ptr, upload_mats.len())} ;
         }
         
@@ -1378,58 +1430,13 @@ fn main() {
                 &[timer.elapsed_time, stars_threshold, stars_exposure]
             ].concat();
 
-            let uniform_ptr = frame_uniform_buffer.ptr() as *mut f32;
+            let uniform_ptr = frame_uniform_buffer.unchecked_ptr() as *mut f32;
             ptr::copy_nonoverlapping(uniform_buffer.as_ptr() as *mut _, uniform_ptr, uniform_buffer.len() * size_of::<f32>());
 
             //Update model matrix storage buffer
-            let transform_ptr = transform_storage_buffer.ptr() as *mut glm::TMat4<f32>;
+            let transform_ptr = transform_storage_buffer.unchecked_ptr() as *mut glm::TMat4<f32>;
             let global_transforms = draw_system.get_transforms();
             ptr::copy_nonoverlapping(global_transforms.as_ptr(), transform_ptr, global_transforms.len());
-        };
-
-        //Dear ImGUI virtual geo allocations
-        let (imgui_geometries, imgui_cmd_lists) = {
-            let mut geos = Vec::with_capacity(16);
-            let mut cmds = Vec::with_capacity(16);
-            imgui_geo_allocator.clear();
-
-            let imgui_draw_data = imgui_ui.render();
-            if imgui_draw_data.total_vtx_count > 0 {
-                for list in imgui_draw_data.draw_lists() {
-                    let vert_size = 8;  //Size in floats
-                    let vtx_buffer = list.vtx_buffer();
-                    let mut verts = vec![0.0; vtx_buffer.len() * vert_size];
-
-                    let mut current_vertex = 0;
-                    for vtx in vtx_buffer.iter() {
-                        let idx = current_vertex * vert_size;
-                        verts[idx] =     vtx.pos[0];
-                        verts[idx + 1] = vtx.pos[1];
-                        verts[idx + 2] = vtx.uv[0];
-                        verts[idx + 3] = vtx.uv[1];
-                        verts[idx + 4] = vtx.col[0] as f32 / 255.0;
-                        verts[idx + 5] = vtx.col[1] as f32 / 255.0;
-                        verts[idx + 6] = vtx.col[2] as f32 / 255.0;
-                        verts[idx + 7] = vtx.col[3] as f32 / 255.0;
-
-                        current_vertex += 1;
-                    }
-
-                    let idx_buffer = list.idx_buffer();
-                    let mut inds = vec![0u32; idx_buffer.len()];
-                    for i in 0..idx_buffer.len() {
-                        inds[i] = idx_buffer[i] as u32;
-                    }
-
-                    let g = imgui_geo_allocator.allocate_geometry(&verts, &inds).unwrap();
-                    geos.push(g);
-
-                    let mut cmd_list = Vec::with_capacity(list.commands().count());
-                    for command in list.commands() { cmd_list.push(command); }
-                    cmds.push(cmd_list);
-                }
-            }
-            (geos, cmds)
         };
 
         //Draw
@@ -1496,8 +1503,8 @@ fn main() {
                 if let Some(model) = draw_system.get_model(drawcall.geometry_idx) {
                     let pcs = [model.material_idx.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
                     vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                    vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[model.geometry.vertex_buffer.backing_buffer()], &[model.geometry.vertex_buffer.offset() as u64]);
-                    vk.device.cmd_bind_index_buffer(vk_command_buffer, model.geometry.index_buffer.backing_buffer(), (model.geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+                    vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[model.geometry.vertex_buffer.backing_buffer()], &[0 as u64]);
+                    vk.device.cmd_bind_index_buffer(vk_command_buffer, model.geometry.index_buffer.backing_buffer(), (0) as vk::DeviceSize, vk::IndexType::UINT32);
                     vk.device.cmd_draw_indexed(vk_command_buffer, model.geometry.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }
@@ -1505,8 +1512,8 @@ fn main() {
             //Record atmosphere rendering commands
             vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
             vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, atmosphere_tex_indices.as_slice());
-            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[atmosphere_geometry.vertex_buffer.backing_buffer()], &[atmosphere_geometry.vertex_buffer.offset() as u64]);
-            vk.device.cmd_bind_index_buffer(vk_command_buffer, atmosphere_geometry.index_buffer.backing_buffer(), (atmosphere_geometry.index_buffer.offset()) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[atmosphere_geometry.vertex_buffer.backing_buffer()], &[0 as u64]);
+            vk.device.cmd_bind_index_buffer(vk_command_buffer, atmosphere_geometry.index_buffer.backing_buffer(), (0) as vk::DeviceSize, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk_command_buffer, atmosphere_geometry.index_count, 1, 0, 0, 0);
 
             //Record Dear ImGUI drawing commands
@@ -1519,8 +1526,8 @@ fn main() {
                         DrawCmd::Elements {count, cmd_params} => {
                             let i_offset = cmd_params.idx_offset;
                             let v_offset = cmd_params.vtx_offset;
-                            let v_buffer = imgui_geometries[i].vertex_buffer;
-                            let i_buffer = imgui_geometries[i].index_buffer;
+                            let v_buffer = &imgui_geometries[i].vertex_buffer;
+                            let i_buffer = &imgui_geometries[i].index_buffer;
 
                             let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
                             let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
@@ -1539,15 +1546,15 @@ fn main() {
                                 }
                             };
                             vk.device.cmd_set_scissor(vk_command_buffer, 0, &[scissor_rect]);
-                            
+                         
                             let tex_id = cmd_params.texture_id.id() as u32;
                             if tex_id != prev_tex_id {
                                 prev_tex_id = tex_id;
                                 vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &tex_id.to_le_bytes());
                             }
 
-                            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[v_buffer.backing_buffer()], &[v_buffer.offset()]);
-                            vk.device.cmd_bind_index_buffer(vk_command_buffer, i_buffer.backing_buffer(), i_buffer.offset(), vk::IndexType::UINT32);
+                            vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[v_buffer.backing_buffer()], &[0]);
+                            vk.device.cmd_bind_index_buffer(vk_command_buffer, i_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
                             vk.device.cmd_draw_indexed(vk_command_buffer, *count as u32, 1, i_offset as u32, v_offset as i32, 0);
                         }
                         DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
