@@ -69,7 +69,8 @@ void main() {
 
     // Stars computation:
 	float stars = pow(clamp(noise(view_direction * 200.0f), 0.0f, 1.0f), stars_threshold) * stars_exposure;
-	stars *= mix(0.4, 1.4, noise(view_direction * 100.0f + vec3(time))); // time based flickering
+    float star_fact = mix(0.4, 1.4, noise(view_direction * 100.0f + vec3(time)));
+	stars *= clamp(star_fact, 0.1, 1.4); // time based flickering
  
     // star color by randomized temperature
     float stars_temperature = noise(view_direction * 150.0) * 0.5 + 0.5;
@@ -81,4 +82,5 @@ void main() {
     final_color += smoothstep(mix(1.0, 0.99, 0.25), 1.0, sunview_dot);
 
     frag_color = vec4(final_color, 1.0);
+    //frag_color = vec4(vec3(star_fact), 1.0);
 }

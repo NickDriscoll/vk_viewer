@@ -21,6 +21,7 @@ use sdl2::sys::exit;
 use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
+use std::os::raw::c_void;
 use std::mem::size_of;
 use std::ptr;
 use std::time::SystemTime;
@@ -355,6 +356,7 @@ fn main() {
             break;
         }
     }
+    drop(surf_formats);
     
     let vk_render_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
@@ -550,7 +552,7 @@ fn main() {
         let storage_info = vk::DescriptorBufferInfo {
             buffer: transform_storage_buffer.backing_buffer(),
             offset: 0,
-            range: (global_transform_slots * size_of::<glm::TMat4<f32>>()) as vk::DeviceSize
+            range: transform_storage_buffer.length()
         };
         let materials_info = vk::DescriptorBufferInfo {
             buffer: material_storage_buffer.backing_buffer(),
@@ -867,6 +869,7 @@ fn main() {
 
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
+    let mut last_view_from_world = glm::identity();
 
     let mut totoro_position: glm::TVec3<f32> = glm::zero();
     let mut totoro_lookat_dist = 7.5;
@@ -1156,6 +1159,29 @@ fn main() {
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         draw_system.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
 
+        if do_freecam {
+            const FREECAM_SPEED: f32 = 3.0;
+            let view_movement_vector = glm::mat4(
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, -1.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            ) * glm::vec3_to_vec4(&movement_vector);
+            let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
+            camera.position += glm::vec4_to_vec3(&delta_pos);
+            camera.orientation += camera_orientation_delta;
+        } else {
+            let view_movement_vector = glm::mat4(
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, -1.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            ) * glm::vec3_to_vec4(&movement_vector);
+
+            let delta_pos = 2.0 * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
+            totoro_position += glm::vec4_to_vec3(&delta_pos);
+        }
+
         let view_from_world = if do_freecam {
             //Camera orientation based on user input
             camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
@@ -1195,29 +1221,7 @@ fn main() {
             let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 0.75);
             glm::look_at(&(totoro_lookat_pos + lookat_target), &lookat_target, &glm::vec3(0.0, 0.0, 1.0))
         };
-
-        if do_freecam {
-            const FREECAM_SPEED: f32 = 3.0;
-            let view_movement_vector = glm::mat4(
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, -1.0, 0.0, 0.0,
-                0.0, 0.0, 0.0, 1.0
-            ) * glm::vec3_to_vec4(&movement_vector);
-            let delta_pos = FREECAM_SPEED * glm::affine_inverse(view_from_world) * view_movement_vector * timer.delta_time;
-            camera.position += glm::vec4_to_vec3(&delta_pos);
-            camera.orientation += camera_orientation_delta;
-        } else {
-            let view_movement_vector = glm::mat4(
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, -1.0, 0.0, 0.0,
-                0.0, 0.0, 0.0, 1.0
-            ) * glm::vec3_to_vec4(&movement_vector);
-
-            let delta_pos = 2.0 * glm::affine_inverse(view_from_world) * view_movement_vector * timer.delta_time;
-            totoro_position += glm::vec4_to_vec3(&delta_pos);
-        }
+        last_view_from_world = view_from_world;
  
         let a = ozy::routines::uniform_scale(2.0);
         let b = glm::translation(&totoro_position);
@@ -1383,12 +1387,12 @@ fn main() {
                 }
             }
 
-            let material_ptr = material_storage_buffer.unchecked_ptr() as *mut u32;
-            unsafe { ptr::copy_nonoverlapping(upload_mats.as_ptr(), material_ptr, upload_mats.len())} ;
+            println!("Materials: {:?}", upload_mats);
+            material_storage_buffer.upload_buffer(&upload_mats);
         }
         
         //Update uniform/storage buffers
-        unsafe {
+        {
             //Update static scene data
             let clip_from_screen = glm::mat4(
                 2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
@@ -1431,13 +1435,11 @@ fn main() {
                 &[timer.elapsed_time, stars_threshold, stars_exposure]
             ].concat();
 
-            let uniform_ptr = frame_uniform_buffer.unchecked_ptr() as *mut f32;
-            ptr::copy_nonoverlapping(uniform_buffer.as_ptr() as *mut _, uniform_ptr, uniform_buffer.len() * size_of::<f32>());
+            frame_uniform_buffer.upload_buffer(&uniform_buffer);
 
             //Update model matrix storage buffer
-            let transform_ptr = transform_storage_buffer.unchecked_ptr() as *mut glm::TMat4<f32>;
             let global_transforms = draw_system.get_transforms();
-            ptr::copy_nonoverlapping(global_transforms.as_ptr(), transform_ptr, global_transforms.len());
+            transform_storage_buffer.upload_buffer(&global_transforms);
         };
 
         //Draw
@@ -1595,5 +1597,10 @@ fn main() {
                 println!("{}", e);
             }
         }
+    }
+
+    //Cleanup
+    unsafe {
+        vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
     }
 }

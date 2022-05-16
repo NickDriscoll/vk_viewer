@@ -529,13 +529,13 @@ impl VirtualBuffer {
         }
     }
 
-    pub fn unchecked_ptr(&self) -> *mut c_void {
+    fn unchecked_ptr(&self) -> *mut c_void {
         self.allocation.mapped_ptr().unwrap().as_ptr()
     }
 
     pub fn upload_buffer<T>(&self, in_buffer: &[T]) {
         unsafe {
-            let dst_ptr = self.allocation.mapped_ptr().unwrap().as_ptr();
+            let dst_ptr = self.unchecked_ptr();
             ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut T, in_buffer.len());
         }
     }
@@ -892,6 +892,7 @@ impl PipelineCreator {
 
 }
 
+#[derive(Debug)]
 pub struct FreeList<T> {
     list: OptionVec<T>,
     size: u64,

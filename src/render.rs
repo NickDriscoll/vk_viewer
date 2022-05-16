@@ -2,6 +2,7 @@ use core::slice::Iter;
 use crate::vkutil::VirtualGeometry;
 use crate::*;
 
+#[derive(Debug)]
 pub struct Material {
     pub color_idx: u32,
     pub normal_idx: u32
