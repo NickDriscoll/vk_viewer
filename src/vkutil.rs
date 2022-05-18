@@ -40,69 +40,6 @@ pub const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping
     a: vk::ComponentSwizzle::A,
 };
 
-unsafe fn get_memory_type_index(
-    vk_instance: &ash::Instance,
-    vk_physical_device: vk::PhysicalDevice,
-    memory_requirements: vk::MemoryRequirements,
-    flags: vk::MemoryPropertyFlags
-) -> Option<u32> {
-    let mut i = 0;
-    let mut memory_type_index = None;
-    let mut largest_heap = 0;
-    let phys_device_mem_props = vk_instance.get_physical_device_memory_properties(vk_physical_device);
-    for mem_type in phys_device_mem_props.memory_types {
-        if memory_requirements.memory_type_bits & (1 << i) != 0 && mem_type.property_flags.contains(flags) {
-            let heap_size = phys_device_mem_props.memory_heaps[mem_type.heap_index as usize].size;
-            if heap_size > largest_heap {
-                memory_type_index = Some(i);
-                largest_heap = heap_size;
-            }
-        }
-        i += 1;
-    }
-
-    memory_type_index
-}
-
-pub unsafe fn allocate_buffer_memory(vk: &VulkanAPI, buffer: vk::Buffer) -> vk::DeviceMemory {
-    let mem_reqs = vk.device.get_buffer_memory_requirements(buffer);
-    let memory_type_index = get_memory_type_index(
-        &vk.instance,
-        vk.physical_device,
-        mem_reqs,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-    );
-    if let None = memory_type_index {
-        crash_with_error_dialog("Staging buffer memory allocation failed.");
-    }
-    let memory_type_index = memory_type_index.unwrap();
-
-    let alloc_info = vk::MemoryAllocateInfo {
-        allocation_size: mem_reqs.size,
-        memory_type_index,
-        ..Default::default()
-    };
-    vk.device.allocate_memory(&alloc_info, vkutil::MEMORY_ALLOCATOR).unwrap()    
-}
-
-pub unsafe fn allocate_image_memory(vk: &VulkanAPI, image: vk::Image) -> vk::DeviceMemory {
-    let mem_reqs = vk.device.get_image_memory_requirements(image);
-
-    //Search for the largest DEVICE_LOCAL heap the device advertises
-    let memory_type_index = get_memory_type_index(&vk.instance, vk.physical_device, mem_reqs, vk::MemoryPropertyFlags::DEVICE_LOCAL);
-    if let None = memory_type_index {
-        crash_with_error_dialog("Image memory allocation failed.");
-    }
-    let memory_type_index = memory_type_index.unwrap();
-
-    let allocate_info = vk::MemoryAllocateInfo {
-        allocation_size: mem_reqs.size,
-        memory_type_index,
-        ..Default::default()
-    };
-    vk.device.allocate_memory(&allocate_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-}
-
 pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
     let mut file = File::open(path).unwrap();
     let spv = ash::util::read_spv(&mut file).unwrap();
@@ -149,7 +86,7 @@ pub struct VirtualImage {
 }
 
 impl VirtualImage {
-    pub unsafe fn from_bc7(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str, color_space: ColorSpace) -> Self {
+    pub unsafe fn from_bc7(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str, color_space: ColorSpace) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening image {}", path));
         let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
 
@@ -231,26 +168,24 @@ impl VirtualImage {
     }
 }
 
-pub unsafe fn upload_image(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer, image: &VirtualImage, raw_bytes: &[u8]) {
-    let bytes_size = raw_bytes.len();
+pub unsafe fn upload_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, image: &VirtualImage, raw_bytes: &[u8]) {
 
-    let buffer_create_info = vk::BufferCreateInfo {
-        usage: vk::BufferUsageFlags::TRANSFER_SRC,
-        size: bytes_size as vk::DeviceSize,
-        sharing_mode: vk::SharingMode::EXCLUSIVE,
-        ..Default::default()
-    };
-    let staging_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();            
-    let staging_buffer_memory = vkutil::allocate_buffer_memory(&vk, staging_buffer);    
-    vk.device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap();
+    //Create staging buffer and upload raw image data
+    let bytes_size = raw_bytes.len() as vk::DeviceSize;
+    let staging_buffer = VirtualBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC);
+    staging_buffer.upload_buffer(&raw_bytes);
 
-    let staging_ptr = vk.device.map_memory(staging_buffer_memory, 0, bytes_size as vk::DeviceSize, vk::MemoryMapFlags::empty()).unwrap();
-    ptr::copy_nonoverlapping(raw_bytes.as_ptr(), staging_ptr as *mut _, bytes_size as usize);
-    vk.device.unmap_memory(staging_buffer_memory);
 
-    let image_memory = allocate_image_memory(vk, image.vk_image);
 
-    vk.device.bind_image_memory(image.vk_image, image_memory, 0).unwrap();
+    let reqs = vk.device.get_image_memory_requirements(image.vk_image);
+    let image_allocation = vk.allocator.allocate(&AllocationCreateDesc {
+        name: "",
+        requirements: reqs,
+        location: MemoryLocation::GpuOnly,
+        linear: false       //We want tiled memory for images
+    }).unwrap();
+
+    vk.device.bind_image_memory(image.vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
 
     vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
@@ -303,7 +238,7 @@ pub unsafe fn upload_image(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer,
         cumulative_offset += w * h;
     }
 
-    vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer, image.vk_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    vk.device.cmd_copy_buffer_to_image(vk_command_buffer, staging_buffer.backing_buffer(), image.vk_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -336,7 +271,7 @@ pub unsafe fn upload_image(vk: &VulkanAPI, vk_command_buffer: vk::CommandBuffer,
     vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
     vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
     vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
-    vk.device.destroy_buffer(staging_buffer, vkutil::MEMORY_ALLOCATOR);
+    vk.device.destroy_buffer(staging_buffer.backing_buffer(), vkutil::MEMORY_ALLOCATOR);
 }
 
 //All the variables that Vulkan needs
@@ -345,6 +280,7 @@ pub struct VulkanAPI {
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub device: ash::Device,
+    pub allocator: Allocator,
     pub surface: vk::SurfaceKHR,
     pub ext_surface: ash::extensions::khr::Surface,
     pub queue_family_index: u32
@@ -474,15 +410,24 @@ impl VulkanAPI {
             }
         };
 
+        //Initialize gpu_allocator
+        let mut allocator = Allocator::new(&AllocatorCreateDesc {
+            instance: vk_instance.clone(),
+            device: vk_device.clone(),
+            physical_device: vk_physical_device,
+            debug_settings: Default::default(),
+            buffer_device_address: false,  // Ideally, check the BufferDeviceAddressFeatures struct.
+        }).unwrap();
+
         VulkanAPI {
             instance: vk_instance,
             physical_device: vk_physical_device,
             physical_device_properties: vk_physical_device_properties,
             device: vk_device,
+            allocator,
             surface: vk_surface,
             ext_surface: vk_ext_surface,
             queue_family_index: vk_queue_family_index
-
         }
     }
 }
@@ -499,7 +444,7 @@ impl VirtualBuffer {
     pub fn backing_buffer(&self) -> vk::Buffer { self.buffer }
     pub fn length(&self) -> vk::DeviceSize { self.length }
 
-    pub fn allocate(vk: &VulkanAPI, allocator: &mut Allocator, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags) -> Self {
+    pub fn allocate(vk: &mut VulkanAPI, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags) -> Self {
         let vk_buffer;
         let actual_size = size_to_alignment!(size, alignment);
         let allocation = unsafe {
@@ -512,7 +457,7 @@ impl VirtualBuffer {
             vk_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
             let mem_reqs = vk.device.get_buffer_memory_requirements(vk_buffer);
 
-            let a = allocator.allocate(&AllocationCreateDesc {
+            let a = vk.allocator.allocate(&AllocationCreateDesc {
                 name: "",
                 requirements: mem_reqs,
                 location: MemoryLocation::CpuToGpu,
@@ -548,9 +493,9 @@ pub struct VirtualGeometry {
 }
 
 impl VirtualGeometry {
-    pub fn create(vk: &VulkanAPI, allocator: &mut Allocator, vertices: &[f32], indices: &[u32]) -> Self {
-        let vertex_buffer = VirtualBuffer::allocate(vk, allocator, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER);
-        let index_buffer = VirtualBuffer::allocate(vk, allocator, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER);
+    pub fn create(vk: &mut VulkanAPI, vertices: &[f32], indices: &[u32]) -> Self {
+        let vertex_buffer = VirtualBuffer::allocate(vk, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER);
+        let index_buffer = VirtualBuffer::allocate(vk, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER);
         vertex_buffer.upload_buffer(vertices);
         index_buffer.upload_buffer(indices);
         VirtualGeometry {
@@ -573,7 +518,7 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn initialize_swapchain(vk: &VulkanAPI, vk_ext_swapchain: &ash::extensions::khr::Swapchain, render_pass: vk::RenderPass) -> Self {
+    pub fn initialize_swapchain(vk: &mut VulkanAPI, vk_ext_swapchain: &ash::extensions::khr::Swapchain, render_pass: vk::RenderPass) -> Self {
         //Create the main swapchain for window present
         let vk_swapchain_image_format;
         let vk_swapchain_extent;
@@ -671,10 +616,17 @@ impl Display {
             };
 
             let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            let depth_memory = vkutil::allocate_image_memory(&vk, depth_image);
+
+            let reqs = vk.device.get_image_memory_requirements(depth_image);
+            let allocation = vk.allocator.allocate(&AllocationCreateDesc {
+                name: "",
+                requirements: reqs,
+                location: MemoryLocation::GpuOnly,
+                linear: false       //We want tiled memory for images
+            }).unwrap();
 
             //Bind the depth image to its memory
-            vk.device.bind_image_memory(depth_image, depth_memory, 0).unwrap();
+            vk.device.bind_image_memory(depth_image, allocation.memory(), allocation.offset()).unwrap();
 
             depth_image
         };

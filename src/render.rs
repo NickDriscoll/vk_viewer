@@ -22,19 +22,19 @@ pub struct DrawData {
     pub material_idx: u32
 }
 
-pub struct DrawSystem {
+pub struct Renderer {
     models: OptionVec<DrawData>,
     drawlist: Vec<DrawCall>,
     transforms: Vec<glm::TMat4<f32>>
 }
 
-impl DrawSystem {
+impl Renderer {
     pub fn get_transforms(&self) -> &Vec<glm::TMat4<f32>> {
         &self.transforms
     }
 
     pub fn new() -> Self {
-        DrawSystem {
+        Renderer {
             models: OptionVec::new(),
             drawlist: Vec::new(),
             transforms: Vec::new()
@@ -42,7 +42,7 @@ impl DrawSystem {
     }
 
     pub fn with_capacity(size: usize) -> Self {
-        DrawSystem {
+        Renderer {
             models: OptionVec::with_capacity(size),
             drawlist: Vec::with_capacity(size),
             transforms: Vec::with_capacity(size)

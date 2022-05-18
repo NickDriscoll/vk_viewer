@@ -1,6 +1,8 @@
 use gltf::Gltf;
 use std::ptr;
 
+use crate::crash_with_error_dialog;
+
 pub fn gltf_meshdata(path: &str) -> (Vec<f32>, Vec<u32>) {
     let glb = Gltf::open(path).unwrap();
     let mut vertex_buffer = Vec::new();
@@ -41,12 +43,30 @@ pub fn gltf_meshdata(path: &str) -> (Vec<f32>, Vec<u32>) {
                     let acc = prim.indices().unwrap();
                     println!("Index data type: {:?}", acc.data_type());
                     let view = acc.view().unwrap();
-                    index_buffer = vec![0u32; view.length()/2];
+
+                    let index_count = view.length() / 2;
+                    index_buffer = vec![0u32; index_count];
                     if let Some(blob) = &glb.blob {
-                        for i in 0..view.length()/2 {
+                        for i in 0..index_count {
                             let current_idx = 2 * i + view.offset();
                             let bytes = [blob[current_idx], blob[current_idx + 1], 0, 0];
                             index_buffer[i] = u32::from_le_bytes(bytes);
+                        }
+                    }
+
+                    //Handle material data
+                    use gltf::image::Source;
+                    let mat = prim.material();
+                    let tex_data_source = mat.pbr_metallic_roughness().base_color_texture().unwrap().texture().source().source();
+                    match tex_data_source {
+                        Source::View {view, mime_type} => {
+                            if mime_type.ne("image/png") {
+                                crash_with_error_dialog(&format!("Error loading image from glb\nUnsupported image type: {}", mime_type));
+                            }
+                            
+                        }
+                        Source::Uri {uri, mime_type} => {
+                            crash_with_error_dialog("Uri not supported");
                         }
                     }
                 }
@@ -80,8 +100,8 @@ pub fn gltf_meshdata(path: &str) -> (Vec<f32>, Vec<u32>) {
                     vertex_buffer[current_idx + 12] = texcoord_vec[2 * i];
                     vertex_buffer[current_idx + 13] = texcoord_vec[2 * i + 1];
                 }
-                }
             }
         }
+    }
     (vertex_buffer, index_buffer)
 }

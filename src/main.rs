@@ -11,19 +11,15 @@ mod structs;
 mod vkutil;
 
 use ash::vk;
-use gpu_allocator::vulkan::*;
 use imgui::{DrawCmd, FontAtlasRefMut};
 use sdl2::controller::GameController;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
-use sdl2::sys::exit;
 use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
-use std::os::raw::c_void;
 use std::mem::size_of;
-use std::ptr;
 use std::time::SystemTime;
 
 use ozy::io::OzyMesh;
@@ -31,7 +27,7 @@ use ozy::structs::{FrameTimer, OptionVec};
 
 use vkutil::{ColorSpace, FreeList, VirtualBuffer, VirtualGeometry, VirtualImage, VulkanAPI};
 use structs::{Camera, NoiseParameters, TerrainSpec};
-use render::{DrawData, DrawSystem, FrameUniforms, Material};
+use render::{DrawData, Renderer, FrameUniforms, Material};
 
 fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
@@ -59,9 +55,9 @@ fn regenerate_terrain(spec: &mut TerrainSpec, terrain_geometry: &vkutil::Virtual
     terrain_geometry.vertex_buffer.upload_buffer(&plane_vertices);
 }
 
-fn load_global_bc7(vk: &VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, command_buffer: vk::CommandBuffer, path: &str, color_space: vkutil::ColorSpace) -> u32 {
+fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, command_buffer: vk::CommandBuffer, path: &str, color_space: vkutil::ColorSpace) -> u32 {
     unsafe {
-        let vim = VirtualImage::from_bc7(&vk, command_buffer, path, color_space);
+        let vim = VirtualImage::from_bc7(vk, command_buffer, path, color_space);
 
         let descriptor_info = vk::DescriptorImageInfo {
             sampler: sampler,
@@ -100,16 +96,7 @@ fn main() {
     }
 
     //Initialize the Vulkan API
-    let vk = vkutil::VulkanAPI::initialize(&window);
-    
-    //Initialize gpu_allocator
-    let mut allocator = Allocator::new(&AllocatorCreateDesc {
-        instance: vk.instance.clone(),
-        device: vk.device.clone(),
-        physical_device: vk.physical_device,
-        debug_settings: Default::default(),
-        buffer_device_address: false,  // Ideally, check the BufferDeviceAddressFeatures struct.
-    }).unwrap();
+    let mut vk = vkutil::VulkanAPI::initialize(&window);
 
     //Create command buffer
     let vk_command_buffer = unsafe {
@@ -197,7 +184,7 @@ fn main() {
             mip_count: 1
         };
         let data = [0x80, 0x80, 0xFF, 0xFF];
-        vkutil::upload_image(&vk, vk_command_buffer, &vim, &data);
+        vkutil::upload_image(&mut vk, vk_command_buffer, &vim, &data);
 
         //Then create the image view
         let sampler_subresource_range = vk::ImageSubresourceRange {
@@ -226,25 +213,25 @@ fn main() {
     };
 
     //Global texture loading
-    let cartoon_grass_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/grass/color.dds", ColorSpace::SRGB);
-    let grass_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
-    let grass_normal_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
-    let rock_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
-    let rock_normal_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
-    let steel_plate_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/steel_plate/color.dds", ColorSpace::SRGB);
-    let dragon_color_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/color.dds", ColorSpace::SRGB);
-    let dragon_normal_global_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/normal.dds", ColorSpace::LINEAR);
+    let cartoon_grass_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/grass/color.dds", ColorSpace::SRGB);
+    let grass_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
+    let grass_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
+    let rock_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
+    let rock_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
+    let steel_plate_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/steel_plate/color.dds", ColorSpace::SRGB);
+    let dragon_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/color.dds", ColorSpace::SRGB);
+    let dragon_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/normal.dds", ColorSpace::LINEAR);
 
     //Load environment textures
     let atmosphere_tex_indices = {
-        let sunzenith_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
-        let viewzenith_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
-        let sunview_index = load_global_bc7(&vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
+        let sunzenith_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
+        let viewzenith_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
+        let sunview_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
         [sunzenith_index.to_le_bytes(), viewzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
     };
 
     //Create and upload Dear IMGUI font atlas
-    let imgui_font_global_index = match imgui_context.fonts() {
+    match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
             
@@ -278,7 +265,7 @@ fn main() {
                 height: atlas_texture.height,
                 mip_count: 1
             };
-            vkutil::upload_image(&vk, vk_command_buffer, &vim, atlas_texture.data);
+            vkutil::upload_image(&mut vk, vk_command_buffer, &vim, atlas_texture.data);
 
             atlas.clear_tex_data();  //Free atlas memory CPU-side
 
@@ -424,27 +411,27 @@ fn main() {
     };
 
     //Create the main swapchain for window present
-    let mut vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
+    let mut vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
 
     //Allocate buffer for frame-constant uniforms
     let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + 6 * size_of::<f32>()) as vk::DeviceSize;
     //let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
+    let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
     let frame_uniform_buffer = VirtualBuffer::allocate(
-        &vk,
-        &mut allocator,
+        &mut vk,
         uniform_buffer_size,
-        vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment,
+        uniform_buffer_alignment,
         vk::BufferUsageFlags::UNIFORM_BUFFER
     );
     
     //Allocate buffer for object transforms
+    let storage_buffer_alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
     let global_transform_slots = 1024 * 1024;
     let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
     let transform_storage_buffer = VirtualBuffer::allocate(
-        &vk,
-        &mut allocator,
+        &mut vk,
         buffer_size,
-        vk.physical_device_properties.limits.min_storage_buffer_offset_alignment,
+        storage_buffer_alignment,
         vk::BufferUsageFlags::STORAGE_BUFFER
     );
 
@@ -452,10 +439,9 @@ fn main() {
     let global_material_slots = 1024;
     let material_size = 2 * size_of::<u32>() as u64;
     let material_storage_buffer = VirtualBuffer::allocate(
-        &vk,
-        &mut allocator,
+        &mut vk,
         material_size * global_material_slots,
-        vk.physical_device_properties.limits.min_storage_buffer_offset_alignment,
+        storage_buffer_alignment,
         vk::BufferUsageFlags::STORAGE_BUFFER
     );
     
@@ -772,7 +758,7 @@ fn main() {
     };
 
     //Load gltf object
-    let (glb_verts, glb_inds) = gltfutil::gltf_meshdata("./data/models/BoomBox.glb");
+    let (glb_verts, glb_inds) = gltfutil::gltf_meshdata("./data/models/BoomBox_fixed.glb");
 
     let terrain_width_height = 256;
     let mut terrain_fixed_seed = false;
@@ -800,45 +786,19 @@ fn main() {
     //Load dragon model
     let dragon_mesh = OzyMesh::load("./data/models/dragon.ozy").unwrap();
     
-    let mut draw_system = DrawSystem::new();
+    let mut renderer = Renderer::new();
 
     let terrain_geometry;
     let totoro_geometry;
     let dragon_geometry;
     let atmosphere_geometry;
     let glb_geometry;
-    unsafe {
-        let scene_geo_buffer_size = 2 * vkutil::DEFAULT_ALLOCATION_SIZE;
-        let scene_geo_buffer = {
-            //Buffer creation
-            let buffer_create_info = vk::BufferCreateInfo {
-                usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
-                size: scene_geo_buffer_size as vk::DeviceSize,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            let buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            buffer
-        };
-
-        let buffer_memory = vkutil::allocate_buffer_memory(&vk, scene_geo_buffer);
-
-        //Bind buffer
-        vk.device.bind_buffer_memory(scene_geo_buffer, buffer_memory, 0).unwrap();
-
-        //Map buffer to host memory
-        let buffer_ptr = vk.device.map_memory(
-            buffer_memory,
-            0,
-            vk::WHOLE_SIZE,
-            vk::MemoryMapFlags::empty()
-        ).unwrap();
-        
-        terrain_geometry = VirtualGeometry::create(&vk, &mut allocator, &terrain_vertices, &terrain_indices);
-        totoro_geometry = VirtualGeometry::create(&vk, &mut allocator, &totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices);
-        dragon_geometry = VirtualGeometry::create(&vk, &mut allocator, &dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices);
-        atmosphere_geometry = VirtualGeometry::create(&vk, &mut allocator, &ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer());
-        glb_geometry = VirtualGeometry::create(&vk, &mut allocator, &glb_verts, &glb_inds);
+    {        
+        terrain_geometry = VirtualGeometry::create(&mut vk, &terrain_vertices, &terrain_indices);
+        totoro_geometry = VirtualGeometry::create(&mut vk, &totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices);
+        dragon_geometry = VirtualGeometry::create(&mut vk, &dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices);
+        atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer());
+        glb_geometry = VirtualGeometry::create(&mut vk, &glb_verts, &glb_inds);
 
         drop(terrain_vertices);
         drop(terrain_indices);
@@ -846,19 +806,19 @@ fn main() {
         drop(dragon_mesh);
     }
 
-    let terrain_model_idx = draw_system.register_model(DrawData {
+    let terrain_model_idx = renderer.register_model(DrawData {
         geometry: terrain_geometry,
         material_idx: terrain_grass_matidx
     });
-    let totoro_model_idx = draw_system.register_model(DrawData{
+    let totoro_model_idx = renderer.register_model(DrawData{
         geometry: totoro_geometry,
         material_idx: totoro_matidx
     });
-    let dragon_model_idx = draw_system.register_model(DrawData{
+    let dragon_model_idx = renderer.register_model(DrawData{
         geometry: dragon_geometry,
         material_idx: dragon_matidx
     });
-    let glb_model_idx = draw_system.register_model(DrawData{
+    let glb_model_idx = renderer.register_model(DrawData{
         geometry: glb_geometry,
         material_idx: glb_matidx
     });
@@ -910,7 +870,7 @@ fn main() {
         timer.update(); //Update frame timer
 
         //Reset renderer
-        draw_system.reset();
+        renderer.reset();
 
         //Abstracted input variables
         let mut movement_multiplier = 5.0f32;
@@ -966,7 +926,7 @@ fn main() {
                                 vk_ext_swapchain.destroy_swapchain(vk_display.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                                 //Recreate swapchain and associated data
-                                vk_display = vkutil::Display::initialize_swapchain(&vk, &vk_ext_swapchain, vk_render_pass);
+                                vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
 
                                 window_size = glm::vec2(vk_display.extent.width, vk_display.extent.height);
                                 imgui_io.display_size[0] = window_size.x as f32;
@@ -981,7 +941,7 @@ fn main() {
                                 do_imgui = !do_imgui;
                             }
                             Scancode::R => {
-                                if let Some(model) = draw_system.get_model(terrain_model_idx) {
+                                if let Some(model) = renderer.get_model(terrain_model_idx) {
                                     regenerate_terrain(&mut terrain, &model.geometry, terrain_fixed_seed);
                                 }
                             }
@@ -1038,7 +998,7 @@ fn main() {
                 }
 
                 if controller.button(Button::Y) {
-                    if let Some(terrain_model) = draw_system.get_model(terrain_model_idx) {
+                    if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
                         regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
                     }
                     if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
@@ -1137,13 +1097,13 @@ fn main() {
                 imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
-                    if let Some(terrain_model) = draw_system.get_model(terrain_model_idx) {
+                    if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
                         regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
                     }
                 }
 
                 if terrain_interactive_generation && parameters_changed {
-                    if let Some(terrain_model) = draw_system.get_model(terrain_model_idx) {
+                    if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
                         regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
                     }
                 }
@@ -1157,7 +1117,7 @@ fn main() {
         movement_vector *= movement_multiplier;
 
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
-        draw_system.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
+        renderer.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
 
         if do_freecam {
             const FREECAM_SPEED: f32 = 3.0;
@@ -1226,7 +1186,7 @@ fn main() {
         let a = ozy::routines::uniform_scale(2.0);
         let b = glm::translation(&totoro_position);
         let totoro_model_matrix = b * a;
-        draw_system.queue_drawcall(totoro_model_idx, main_pipeline, &[totoro_model_matrix]);
+        renderer.queue_drawcall(totoro_model_idx, main_pipeline, &[totoro_model_matrix]);
 
         let imgui_window_token = if do_imgui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
@@ -1271,10 +1231,10 @@ fn main() {
             }
             m
         };
-        draw_system.queue_drawcall(dragon_model_idx, main_pipeline, &dragon_matrices);
+        renderer.queue_drawcall(dragon_model_idx, main_pipeline, &dragon_matrices);
 
-        let bb_mat = glm::translation(&glm::vec3(0.0f32, 0.0, 10.0)) * ozy::routines::uniform_scale(150.0f32);
-        draw_system.queue_drawcall(glb_model_idx, main_pipeline, &[bb_mat]);
+        let bb_mat = glm::translation(&glm::vec3(0.0f32, 0.0, 10.0));
+        renderer.queue_drawcall(glb_model_idx, main_pipeline, &[bb_mat]);
         
         //Update sun's position
         sun_pitch += sun_speed * timer.delta_time;
@@ -1334,7 +1294,7 @@ fn main() {
                         inds[i] = idx_buffer[i] as u32;
                     }
 
-                    let g = VirtualGeometry::create(&vk, &mut allocator, &verts, &inds);
+                    let g = VirtualGeometry::create(&mut vk, &verts, &inds);
                     geos.push(g);
 
                     let mut cmd_list = Vec::with_capacity(list.commands().count());
@@ -1387,7 +1347,6 @@ fn main() {
                 }
             }
 
-            println!("Materials: {:?}", upload_mats);
             material_storage_buffer.upload_buffer(&upload_mats);
         }
         
@@ -1438,7 +1397,7 @@ fn main() {
             frame_uniform_buffer.upload_buffer(&uniform_buffer);
 
             //Update model matrix storage buffer
-            let global_transforms = draw_system.get_transforms();
+            let global_transforms = renderer.get_transforms();
             transform_storage_buffer.upload_buffer(&global_transforms);
         };
 
@@ -1498,12 +1457,12 @@ fn main() {
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
-            for drawcall in draw_system.drawlist_iter() {
+            for drawcall in renderer.drawlist_iter() {
                 if drawcall.pipeline != last_bound_pipeline {
                     vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
                     last_bound_pipeline = drawcall.pipeline;
                 }
-                if let Some(model) = draw_system.get_model(drawcall.geometry_idx) {
+                if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
                     let pcs = [model.material_idx.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
                     vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
                     vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[model.geometry.vertex_buffer.backing_buffer()], &[0 as u64]);

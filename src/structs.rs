@@ -70,3 +70,8 @@ impl TerrainSpec {
 
     }
 }
+
+//A prop is a simple interactive model
+pub struct Prop {
+    geo_idx: usize
+}
