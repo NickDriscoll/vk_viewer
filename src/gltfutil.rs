@@ -6,14 +6,16 @@ use crate::crash_with_error_dialog;
 pub struct GLTFData {
     pub vertices: Vec<f32>,
     pub indices: Vec<u32>,
-    pub png_bytes: Vec<u8>
+    pub color_png_bytes: Vec<u8>,
+    pub normal_png_bytes: Vec<u8>
 }
 
 pub fn gltf_meshdata(path: &str) -> GLTFData {
     let glb = Gltf::open(path).unwrap();
     let mut vertex_buffer = Vec::new();
     let mut index_buffer = Vec::new();
-    let mut bytes = vec![];
+    let mut color_bytes = vec![];
+    let mut normal_bytes = vec![];
     for scene in glb.scenes() {
         for node in scene.nodes() {
             if let Some(mesh) = node.mesh() {
@@ -56,24 +58,34 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
 
                     //Handle material data
                     use gltf::image::Source;
-                    let mat = prim.material();
-                    let tex_data_source = mat.pbr_metallic_roughness().base_color_texture().unwrap().texture().source().source();
-                    match tex_data_source {
-                        Source::View {view, mime_type} => unsafe {
-                            if mime_type.ne("image/png") {
-                                crash_with_error_dialog(&format!("Error loading image from glb\nUnsupported image type: {}", mime_type));
+                    fn png_bytes_from_source(glb: &Gltf, source: Source) -> Vec<u8> {
+                        let mut bytes = vec![];
+                        match source {
+                            Source::View {view, mime_type} => unsafe {
+                                if mime_type.ne("image/png") {
+                                    crash_with_error_dialog(&format!("Error loading image from glb\nUnsupported image type: {}", mime_type));
+                                }
+                                if let Some(blob) = &glb.blob {
+                                    bytes = vec![0u8; view.length()];
+                                    let src_ptr = blob.as_ptr() as *const u8;
+                                    let src_ptr = src_ptr.offset(view.offset() as isize);
+                                    ptr::copy_nonoverlapping(src_ptr, bytes.as_mut_ptr(), view.length());
+                                }
                             }
-                            if let Some(blob) = &glb.blob {
-                                bytes = vec![0u8; view.length()];
-                                let src_ptr = blob.as_ptr() as *const u8;
-                                let src_ptr = src_ptr.offset(view.offset() as isize);
-                                ptr::copy_nonoverlapping(src_ptr, bytes.as_mut_ptr(), view.length());
+                            Source::Uri {..} => {
+                                crash_with_error_dialog("Uri not supported");
                             }
                         }
-                        Source::Uri {uri, mime_type} => {
-                            crash_with_error_dialog("Uri not supported");
-                        }
+                        bytes
                     }
+
+                    let mat = prim.material();
+
+                    let tex_data_source = mat.pbr_metallic_roughness().base_color_texture().unwrap().texture().source().source();
+                    color_bytes = png_bytes_from_source(&glb, tex_data_source);
+
+                    let normal_source = mat.normal_texture().unwrap().texture().source().source();
+                    normal_bytes = png_bytes_from_source(&glb, normal_source);
                 }
 
                 //Now, interleave the mesh data
@@ -112,6 +124,7 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
     GLTFData {
         vertices: vertex_buffer,
         indices: index_buffer,
-        png_bytes: bytes
+        color_png_bytes: color_bytes,
+        normal_png_bytes: normal_bytes
     }
 }

@@ -175,13 +175,15 @@ fn main() {
             ..Default::default()
         };
         let normal_image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+        let allocation = vkutil::allocate_image(&mut vk, normal_image);
 
         let vim = vkutil::VirtualImage {
             vk_image: normal_image,
             vk_view: vk::ImageView::default(),
             width: 1,
             height: 1,
-            mip_count: 1
+            mip_count: 1,
+            allocation
         };
         let data = [0x80, 0x80, 0xFF, 0xFF];
         vkutil::upload_image(&mut vk, vk_command_buffer, &vim, &data);
@@ -257,13 +259,15 @@ fn main() {
                 ..Default::default()
             };
             let vk_font_image = vk.device.create_image(&font_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let allocation = vkutil::allocate_image(&mut vk, vk_font_image);
 
             let vim = vkutil::VirtualImage {
                 vk_image: vk_font_image,
                 vk_view: vk::ImageView::default(),
                 width: atlas_texture.width,
                 height: atlas_texture.height,
-                mip_count: 1
+                mip_count: 1,
+                allocation
             };
             vkutil::upload_image(&mut vk, vk_command_buffer, &vim, atlas_texture.data);
 
@@ -319,11 +323,6 @@ fn main() {
     let dragon_matidx = global_materials.insert(Material {
         color_idx: dragon_color_global_index,
         normal_idx: dragon_normal_global_index
-    }) as u32;
-
-    let glb_matidx = global_materials.insert(Material {
-        color_idx: dragon_color_global_index,
-        normal_idx: default_normal_index
     }) as u32;
 
     let totoro_matidx = global_materials.insert(Material {
@@ -526,7 +525,7 @@ fn main() {
         vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap()
     };
 
-    //Write constant values to buffer descriptors
+    //Write constant values to buffer descriptors vkUpdateDescriptorSets()
     unsafe {
         let uniform_infos = [
             vk::DescriptorBufferInfo {
@@ -760,90 +759,28 @@ fn main() {
     //Load gltf object
     let glb_data = gltfutil::gltf_meshdata("./data/models/BoomBox_fixed.glb");
 
-    //Load the PNG data that was in the glb
-    {
-        use png::BitDepth;
-        use png::ColorType;
-
-        let decoder = png::Decoder::new(glb_data.png_bytes.as_slice());
-        let mut reader = decoder.read_info().unwrap();
-        let info = reader.info();
-
-        //We're given a depth in bits, so we set up an integer divide
-        let byte_size_divisor = match info.bit_depth {
-            BitDepth::One => { 8 }
-            BitDepth::Two => { 4 }
-            BitDepth::Four => { 2 }
-            BitDepth::Eight => { 1 }
-            _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
+    let glb_color_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, glb_data.color_png_bytes.as_slice());
+    let glb_normal_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, glb_data.normal_png_bytes.as_slice());
+    let glb_material_idx = {
+        let image_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: glb_color_image.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
+        let color_idx = global_textures.insert(image_info) as u32;
 
-        match info.color_type {
-            ColorType::Rgb => unsafe {
-                let format = match info.srgb {
-                    Some(_) => { vk::Format::R8G8B8_SRGB }
-                    None => { vk::Format::R8G8B8_SNORM }
-                };
+        let image_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: glb_normal_image.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let normal_idx = global_textures.insert(image_info) as u32;
 
-                let width = info.width;
-                let height = info.height;
-                let bytes_size = 3 * width * height / byte_size_divisor;
-                let mut bytes = vec![0u8; bytes_size as usize];
-                reader.next_frame(&mut bytes).unwrap();
-                
-                let image_extent = vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1
-                };
-                let image_create_info = vk::ImageCreateInfo {
-                    image_type: vk::ImageType::TYPE_2D,
-                    format,
-                    extent: image_extent,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    samples: vk::SampleCountFlags::TYPE_1,
-                    tiling: vk::ImageTiling::OPTIMAL,
-                    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                    sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    queue_family_index_count: 1,
-                    p_queue_family_indices: &vk.queue_family_index,
-                    initial_layout: vk::ImageLayout::UNDEFINED,
-                    ..Default::default()
-                };
-                let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-
-                let mut vim = VirtualImage {
-                    vk_image: image,
-                    vk_view: vk::ImageView::default(),
-                    width,
-                    height,
-                    mip_count: 1
-                };
-                vkutil::upload_image(&mut vk, vk_command_buffer, &vim, &bytes);
-                
-                let sampler_subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1
-                };
-                let grass_view_info = vk::ImageViewCreateInfo {
-                    image: image,
-                    format,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: sampler_subresource_range,
-                    ..Default::default()
-                };
-                let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-
-                vim.vk_view = view;
-            }
-            t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)) }
-        }
-    }
+        global_materials.insert(Material {
+            color_idx,
+            normal_idx
+        }) as u32
+    };
 
     let terrain_width_height = 256;
     let mut terrain_fixed_seed = false;
@@ -905,7 +842,7 @@ fn main() {
     });
     let glb_model_idx = renderer.register_model(DrawData{
         geometry: glb_geometry,
-        material_idx: glb_matidx
+        material_idx: glb_material_idx
     });
 
     //Create semaphore used to wait on swapchain image
@@ -1445,7 +1382,7 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.2, 50.0);
+            let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.05, 50.0);
     
             //Relative to OpenGL clip space, Vulkan has negative Y and half Z.
             let projection_matrix = glm::mat4(

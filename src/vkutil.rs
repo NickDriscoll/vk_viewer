@@ -1,4 +1,4 @@
-use std::{ffi::c_void, io::Read, collections::HashMap, ops::Index};
+use std::{ffi::c_void, io::Read, ops::Index};
 
 use ash::vk;
 use gpu_allocator::vulkan::*;
@@ -30,9 +30,6 @@ pub const DEPTH_STENCIL_CLEAR: vk::ClearValue = {
     }
 };
 
-//I have no idea if this is optimal
-pub const DEFAULT_ALLOCATION_SIZE: vk::DeviceSize = 256 * 1024 * 1024;
-
 pub const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
     r: vk::ComponentSwizzle::R,
     g: vk::ComponentSwizzle::G,
@@ -59,6 +56,19 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
     }
 }
 
+pub unsafe fn allocate_image(vk: &mut VulkanAPI, image: vk::Image) -> Allocation {
+    let requirements = vk.device.get_image_memory_requirements(image);
+    let a = vk.allocator.allocate(&AllocationCreateDesc {
+        name: &format!("VirtualImage {:?}", image),
+        requirements,
+        location: MemoryLocation::GpuOnly,
+        linear: false       //We want tiled memory for images
+    }).unwrap();
+
+    vk.device.bind_image_memory(image, a.memory(), a.offset()).unwrap();
+    a
+}
+
 //Macro to fit a given desired size to a given alignment without worrying about the specific integer type
 macro_rules! size_to_alignment {
     ($in_size:ident, $alignment:expr) => {
@@ -82,10 +92,108 @@ pub struct VirtualImage {
     pub vk_view: vk::ImageView,
     pub width: u32,
     pub height: u32,
-    pub mip_count: u32
+    pub mip_count: u32,
+    pub allocation: Allocation
 }
 
 impl VirtualImage {
+    pub fn from_png_bytes(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, png_bytes: &[u8]) -> Self {
+        use png::BitDepth;
+        use png::ColorType;
+
+        let decoder = png::Decoder::new(png_bytes);
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
+
+        //We're given a depth in bits, so we set up an integer divide
+        let byte_size_divisor = match info.bit_depth {
+            BitDepth::One => { 8 }
+            BitDepth::Two => { 4 }
+            BitDepth::Four => { 2 }
+            BitDepth::Eight => { 1 }
+            _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
+        };
+
+        match info.color_type {
+            ColorType::Rgb => unsafe {
+                let format = match info.srgb {
+                    Some(_) => { vk::Format::R8G8B8A8_SRGB }
+                    None => { vk::Format::R8G8B8A8_UNORM }
+                };
+
+                let width = info.width;
+                let height = info.height;
+                let pixel_count = (width * height / byte_size_divisor) as usize;
+                let mut raw_bytes = vec![0u8; 3 * pixel_count];
+                let mut bytes = vec![0xFFu8; 4 * pixel_count];
+                reader.next_frame(&mut raw_bytes).unwrap();
+
+                //Convert to RGBA by adding an alpha of 1.0 to each pixel
+                for i in 0..pixel_count {
+                    let idx = 4 * i;
+                    let r_idx = 3 * i;
+                    bytes[idx] = raw_bytes[r_idx];
+                    bytes[idx + 1] = raw_bytes[r_idx + 1];
+                    bytes[idx + 2] = raw_bytes[r_idx + 2];
+                }
+                
+                let image_extent = vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                };
+                let image_create_info = vk::ImageCreateInfo {
+                    image_type: vk::ImageType::TYPE_2D,
+                    format,
+                    extent: image_extent,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    tiling: vk::ImageTiling::OPTIMAL,
+                    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    queue_family_index_count: 1,
+                    p_queue_family_indices: &vk.queue_family_index,
+                    initial_layout: vk::ImageLayout::UNDEFINED,
+                    ..Default::default()
+                };
+                let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+                let allocation = allocate_image(vk, image);
+
+                let mut vim = VirtualImage {
+                    vk_image: image,
+                    vk_view: vk::ImageView::default(),
+                    width,
+                    height,
+                    mip_count: 1,
+                    allocation
+                };
+                vkutil::upload_image(vk, vk_command_buffer, &vim, &bytes);
+                
+                let sampler_subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                };
+                let grass_view_info = vk::ImageViewCreateInfo {
+                    image,
+                    format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: sampler_subresource_range,
+                    ..Default::default()
+                };
+                let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+                vim.vk_view = view;
+                vim
+            }
+            t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
+        }
+    }
+
     pub unsafe fn from_bc7(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str, color_space: ColorSpace) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening image {}", path));
         let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
@@ -136,13 +244,15 @@ impl VirtualImage {
             ..Default::default()
         };
         let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+        let allocation = allocate_image(vk, image);
 
         let mut vim = VirtualImage {
             vk_image: image,
             vk_view: vk::ImageView::default(),
             width,
             height,
-            mip_count: mipmap_count
+            mip_count: mipmap_count,
+            allocation
         };
         upload_image(vk, vk_command_buffer, &vim, &raw_bytes);
         
@@ -173,16 +283,6 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuf
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = VirtualBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC);
     staging_buffer.upload_buffer(&raw_bytes);
-
-    let reqs = vk.device.get_image_memory_requirements(image.vk_image);
-    let image_allocation = vk.allocator.allocate(&AllocationCreateDesc {
-        name: "",
-        requirements: reqs,
-        location: MemoryLocation::GpuOnly,
-        linear: false       //We want tiled memory for images
-    }).unwrap();
-
-    vk.device.bind_image_memory(image.vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
 
     vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
