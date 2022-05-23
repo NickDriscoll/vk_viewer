@@ -758,7 +758,92 @@ fn main() {
     };
 
     //Load gltf object
-    let (glb_verts, glb_inds) = gltfutil::gltf_meshdata("./data/models/BoomBox_fixed.glb");
+    let glb_data = gltfutil::gltf_meshdata("./data/models/BoomBox_fixed.glb");
+
+    //Load the PNG data that was in the glb
+    {
+        use png::BitDepth;
+        use png::ColorType;
+
+        let decoder = png::Decoder::new(glb_data.png_bytes.as_slice());
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
+
+        //We're given a depth in bits, so we set up an integer divide
+        let byte_size_divisor = match info.bit_depth {
+            BitDepth::One => { 8 }
+            BitDepth::Two => { 4 }
+            BitDepth::Four => { 2 }
+            BitDepth::Eight => { 1 }
+            _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
+        };
+
+        match info.color_type {
+            ColorType::Rgb => unsafe {
+                let format = match info.srgb {
+                    Some(_) => { vk::Format::R8G8B8_SRGB }
+                    None => { vk::Format::R8G8B8_SNORM }
+                };
+
+                let width = info.width;
+                let height = info.height;
+                let bytes_size = 3 * width * height / byte_size_divisor;
+                let mut bytes = vec![0u8; bytes_size as usize];
+                reader.next_frame(&mut bytes).unwrap();
+                
+                let image_extent = vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                };
+                let image_create_info = vk::ImageCreateInfo {
+                    image_type: vk::ImageType::TYPE_2D,
+                    format,
+                    extent: image_extent,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    tiling: vk::ImageTiling::OPTIMAL,
+                    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    queue_family_index_count: 1,
+                    p_queue_family_indices: &vk.queue_family_index,
+                    initial_layout: vk::ImageLayout::UNDEFINED,
+                    ..Default::default()
+                };
+                let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+                let mut vim = VirtualImage {
+                    vk_image: image,
+                    vk_view: vk::ImageView::default(),
+                    width,
+                    height,
+                    mip_count: 1
+                };
+                vkutil::upload_image(&mut vk, vk_command_buffer, &vim, &bytes);
+                
+                let sampler_subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                };
+                let grass_view_info = vk::ImageViewCreateInfo {
+                    image: image,
+                    format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: sampler_subresource_range,
+                    ..Default::default()
+                };
+                let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+                vim.vk_view = view;
+            }
+            t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)) }
+        }
+    }
 
     let terrain_width_height = 256;
     let mut terrain_fixed_seed = false;
@@ -798,7 +883,7 @@ fn main() {
         totoro_geometry = VirtualGeometry::create(&mut vk, &totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices);
         dragon_geometry = VirtualGeometry::create(&mut vk, &dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices);
         atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer());
-        glb_geometry = VirtualGeometry::create(&mut vk, &glb_verts, &glb_inds);
+        glb_geometry = VirtualGeometry::create(&mut vk, &glb_data.vertices, &glb_data.indices);
 
         drop(terrain_vertices);
         drop(terrain_indices);

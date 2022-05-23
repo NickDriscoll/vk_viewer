@@ -3,32 +3,33 @@ use std::ptr;
 
 use crate::crash_with_error_dialog;
 
-pub fn gltf_meshdata(path: &str) -> (Vec<f32>, Vec<u32>) {
+pub struct GLTFData {
+    pub vertices: Vec<f32>,
+    pub indices: Vec<u32>,
+    pub png_bytes: Vec<u8>
+}
+
+pub fn gltf_meshdata(path: &str) -> GLTFData {
     let glb = Gltf::open(path).unwrap();
     let mut vertex_buffer = Vec::new();
     let mut index_buffer = Vec::new();
+    let mut bytes = vec![];
     for scene in glb.scenes() {
         for node in scene.nodes() {
-            println!("Processing node");
             if let Some(mesh) = node.mesh() {
                 use gltf::Semantic;
                 let semantics = [Semantic::Positions, Semantic::Normals, Semantic::Tangents, Semantic::TexCoords(0)];
                 let mut vecs: [Vec<f32>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
                 for prim in mesh.primitives() {
-                    println!("Primitive mode: {:?}", prim.mode());
                     for s_idx in 0..semantics.len() {
                         let sem = &semantics[s_idx];
                         let acc = prim.get(sem).unwrap();
                         let view = acc.view().unwrap();
 
-                        println!("Buffer length: {}\nOffset: {}", view.length(), view.offset());
-                        println!("Data type: {:?}", acc.data_type());
-
                         let byte_stride = match view.stride() {
                             Some(s) => { s }
                             None => { 0 }
                         };
-                        println!("Byte stride: {}", byte_stride);
 
                         unsafe {
                             if let Some(blob) = &glb.blob {
@@ -41,7 +42,6 @@ pub fn gltf_meshdata(path: &str) -> (Vec<f32>, Vec<u32>) {
                     }
 
                     let acc = prim.indices().unwrap();
-                    println!("Index data type: {:?}", acc.data_type());
                     let view = acc.view().unwrap();
 
                     let index_count = view.length() / 2;
@@ -59,11 +59,16 @@ pub fn gltf_meshdata(path: &str) -> (Vec<f32>, Vec<u32>) {
                     let mat = prim.material();
                     let tex_data_source = mat.pbr_metallic_roughness().base_color_texture().unwrap().texture().source().source();
                     match tex_data_source {
-                        Source::View {view, mime_type} => {
+                        Source::View {view, mime_type} => unsafe {
                             if mime_type.ne("image/png") {
                                 crash_with_error_dialog(&format!("Error loading image from glb\nUnsupported image type: {}", mime_type));
                             }
-                            
+                            if let Some(blob) = &glb.blob {
+                                bytes = vec![0u8; view.length()];
+                                let src_ptr = blob.as_ptr() as *const u8;
+                                let src_ptr = src_ptr.offset(view.offset() as isize);
+                                ptr::copy_nonoverlapping(src_ptr, bytes.as_mut_ptr(), view.length());
+                            }
                         }
                         Source::Uri {uri, mime_type} => {
                             crash_with_error_dialog("Uri not supported");
@@ -103,5 +108,10 @@ pub fn gltf_meshdata(path: &str) -> (Vec<f32>, Vec<u32>) {
             }
         }
     }
-    (vertex_buffer, index_buffer)
+
+    GLTFData {
+        vertices: vertex_buffer,
+        indices: index_buffer,
+        png_bytes: bytes
+    }
 }

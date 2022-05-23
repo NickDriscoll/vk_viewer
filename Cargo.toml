@@ -17,6 +17,7 @@ gpu-allocator = "0.17.0"
 imgui = "0.8.2"
 nalgebra-glm = "0.17.0"
 noise = "0.7.0"
+png = "0.17.5"
 tinyfiledialogs = "3.9.0"
 
 [dependencies.ash]

@@ -1345,6 +1345,7 @@ dependencies = [
  "nalgebra-glm",
  "noise",
  "ozy_engine",
+ "png 0.17.5",
  "sdl2",
  "tinyfiledialogs",
 ]

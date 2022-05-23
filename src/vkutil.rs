@@ -169,13 +169,10 @@ impl VirtualImage {
 }
 
 pub unsafe fn upload_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, image: &VirtualImage, raw_bytes: &[u8]) {
-
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = VirtualBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC);
     staging_buffer.upload_buffer(&raw_bytes);
-
-
 
     let reqs = vk.device.get_image_memory_requirements(image.vk_image);
     let image_allocation = vk.allocator.allocate(&AllocationCreateDesc {
@@ -411,7 +408,7 @@ impl VulkanAPI {
         };
 
         //Initialize gpu_allocator
-        let mut allocator = Allocator::new(&AllocatorCreateDesc {
+        let allocator = Allocator::new(&AllocatorCreateDesc {
             instance: vk_instance.clone(),
             device: vk_device.clone(),
             physical_device: vk_physical_device,

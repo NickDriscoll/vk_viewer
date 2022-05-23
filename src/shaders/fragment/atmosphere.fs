@@ -82,5 +82,4 @@ void main() {
     final_color += smoothstep(mix(1.0, 0.99, 0.25), 1.0, sunview_dot);
 
     frag_color = vec4(final_color, 1.0);
-    //frag_color = vec4(vec3(star_fact), 1.0);
 }
