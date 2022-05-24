@@ -4,6 +4,7 @@ extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
 mod gltfutil;
+mod input;
 mod render;
 mod structs;
 
@@ -118,7 +119,7 @@ fn main() {
     };
 
     //Create texture samplers
-    let (material_sampler, font_sampler) = unsafe {
+    let (material_sampler, point_sampler) = unsafe {
         let sampler_info = vk::SamplerCreateInfo {
             min_filter: vk::Filter::LINEAR,
             mag_filter: vk::Filter::LINEAR,
@@ -207,7 +208,7 @@ fn main() {
         let view = vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
         
         let image_info = vk::DescriptorImageInfo {
-            sampler: font_sampler,
+            sampler: point_sampler,
             image_view: view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
@@ -215,15 +216,11 @@ fn main() {
     };
 
     //Global texture loading
-    let cartoon_grass_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/grass/color.dds", ColorSpace::SRGB);
     let grass_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
     let grass_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
     let rock_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     let rock_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
-    let steel_plate_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/steel_plate/color.dds", ColorSpace::SRGB);
-    let dragon_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/color.dds", ColorSpace::SRGB);
-    let dragon_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/dragon/normal.dds", ColorSpace::LINEAR);
-
+    
     //Load environment textures
     let atmosphere_tex_indices = {
         let sunzenith_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
@@ -292,7 +289,7 @@ fn main() {
             let font_view = vk.device.create_image_view(&font_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
             
             let image_info = vk::DescriptorImageInfo {
-                sampler: font_sampler,
+                sampler: point_sampler,
                 image_view: font_view,
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
             };
@@ -318,11 +315,6 @@ fn main() {
     let terrain_rock_matidx = global_materials.insert(Material {
         color_idx: rock_color_global_index,
         normal_idx: rock_normal_global_index
-    }) as u32;
-
-    let dragon_matidx = global_materials.insert(Material {
-        color_idx: dragon_color_global_index,
-        normal_idx: dragon_normal_global_index
     }) as u32;
 
     let totoro_matidx = global_materials.insert(Material {
@@ -413,8 +405,7 @@ fn main() {
     let mut vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
 
     //Allocate buffer for frame-constant uniforms
-    let uniform_buffer_size = (5 * size_of::<glm::TMat4<f32>>() + 6 * size_of::<f32>()) as vk::DeviceSize;
-    //let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
+    let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
     let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
     let frame_uniform_buffer = VirtualBuffer::allocate(
         &mut vk,
@@ -782,18 +773,32 @@ fn main() {
         }) as u32
     };
 
+    let noise_parameters = {
+        const OCTAVES: usize = 8;
+        const LACUNARITY: f64 = 1.75;
+        const GAIN: f64 = 0.5;
+        let mut ps = Vec::with_capacity(OCTAVES);
+        
+        let mut amplitude = 2.0;
+        let mut frequency = 0.15;
+        for _ in 0..OCTAVES {
+            ps.push(NoiseParameters {
+                amplitude,
+                frequency
+            });
+            amplitude *= GAIN;
+            frequency *= LACUNARITY
+        }
+        ps
+    };
+
     let terrain_width_height = 256;
     let mut terrain_fixed_seed = false;
     let mut terrain_interactive_generation = false;
     let mut terrain = TerrainSpec {
         vertex_width: terrain_width_height,
         vertex_height: terrain_width_height,
-        noise_parameters: vec![
-            NoiseParameters { amplitude: 2.0, frequency: 0.15 },
-            NoiseParameters { amplitude: 2.0, frequency: 0.20 },
-            NoiseParameters { amplitude: 0.25, frequency: 1.5 },
-            NoiseParameters { amplitude: 0.0125, frequency: 8.0 },
-        ],
+        noise_parameters,
         amplitude: 2.0,
         exponent: 2.2,
         seed: time_from_epoch_ms()
@@ -804,28 +809,22 @@ fn main() {
 
     //Load totoro model
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
-
-    //Load dragon model
-    let dragon_mesh = OzyMesh::load("./data/models/dragon.ozy").unwrap();
     
     let mut renderer = Renderer::new();
 
     let terrain_geometry;
     let totoro_geometry;
-    let dragon_geometry;
     let atmosphere_geometry;
     let glb_geometry;
     {        
         terrain_geometry = VirtualGeometry::create(&mut vk, &terrain_vertices, &terrain_indices);
         totoro_geometry = VirtualGeometry::create(&mut vk, &totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices);
-        dragon_geometry = VirtualGeometry::create(&mut vk, &dragon_mesh.vertex_array.vertices, &dragon_mesh.vertex_array.indices);
         atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer());
         glb_geometry = VirtualGeometry::create(&mut vk, &glb_data.vertices, &glb_data.indices);
 
         drop(terrain_vertices);
         drop(terrain_indices);
         drop(totoro_mesh);
-        drop(dragon_mesh);
     }
 
     let terrain_model_idx = renderer.register_model(DrawData {
@@ -835,10 +834,6 @@ fn main() {
     let totoro_model_idx = renderer.register_model(DrawData{
         geometry: totoro_geometry,
         material_idx: totoro_matidx
-    });
-    let dragon_model_idx = renderer.register_model(DrawData{
-        geometry: dragon_geometry,
-        material_idx: dragon_matidx
     });
     let glb_model_idx = renderer.register_model(DrawData{
         geometry: glb_geometry,
@@ -899,9 +894,9 @@ fn main() {
         let mut movement_vector: glm::TVec3<f32> = glm::zero();
         let mut camera_orientation_delta: glm::TVec2<f32> = glm::zero();
         let mut scroll_amount = 0.0;
+        let framerate;
 
         //Input
-        let framerate;
         {
             use sdl2::controller::Button;
             use sdl2::event::WindowEvent;
@@ -1082,6 +1077,7 @@ fn main() {
 
             framerate = imgui_io.framerate;
         }
+        movement_vector *= movement_multiplier;
 
         //Update
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
@@ -1135,8 +1131,6 @@ fn main() {
                 token.end();
             }
         }
-
-        movement_vector *= movement_multiplier;
 
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         renderer.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
@@ -1243,20 +1237,17 @@ fn main() {
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut stars_exposure);
         }
 
-        let dragon_matrices = {
-            let n = 10;
-            let mut m = Vec::with_capacity(n);
-            for i in 0..n {
-                let mat = glm::translation(&glm::vec3(-250.0 + 75.0 * i as f32, 300.0, 16.0 * f32::sin(timer.elapsed_time + i as f32) + 11.0)) *
-                          glm::rotation(glm::quarter_pi::<f32>(), &glm::vec3(0.0, 0.0, 1.0));
-                m.push(mat);
-            }
-            m
-        };
-        renderer.queue_drawcall(dragon_model_idx, main_pipeline, &dragon_matrices);
+        let bb_mats = {
+            let count = 4;
+            let mut ms = vec![glm::identity(); count];
 
-        let bb_mat = glm::translation(&glm::vec3(0.0f32, 0.0, 10.0));
-        renderer.queue_drawcall(glb_model_idx, main_pipeline, &[bb_mat]);
+            for i in 0..count {
+                let mat = glm::translation(&glm::vec3(5.0 * i as f32, 0.0, f32::sin(timer.elapsed_time + i as f32) + 10.0));
+                ms[i] = mat;
+            }
+            ms
+        };
+        renderer.queue_drawcall(glb_model_idx, main_pipeline, &bb_mats);
         
         //Update sun's position
         sun_pitch += sun_speed * timer.delta_time;

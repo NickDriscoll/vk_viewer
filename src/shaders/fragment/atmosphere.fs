@@ -67,6 +67,9 @@ void main() {
     vec3 sunview_color = texture(global_textures2D[sunview_idx], vec2(sunzenith_dot, 0.5)).rgb;
     sunview_color *= pow(sunview_dot, 1.0);
 
+    //Used to bring out the stars/dim the sun
+    float nighttime_factor = smoothstep(-0.1, 0.0, sun_direction.z);
+
     // Stars computation:
 	float stars = pow(clamp(noise(view_direction * 200.0f), 0.0f, 1.0f), stars_threshold) * stars_exposure;
     float star_fact = mix(0.4, 1.4, noise(view_direction * 100.0f + vec3(time)));
@@ -75,11 +78,11 @@ void main() {
     // star color by randomized temperature
     float stars_temperature = noise(view_direction * 150.0) * 0.5 + 0.5;
     vec3 stars_color = stars * Unity_Blackbody_float(mix(1500.0, 65000.0, pow(stars_temperature,4.0)));
-    stars_color *= 1.0 - smoothstep(-0.1, 0.0, sun_direction.z);
+    stars_color *= 1.0 - nighttime_factor;
     
     vec3 final_color = base_color + viewzenith_color + sunview_color + stars_color;
 
-    final_color += smoothstep(mix(1.0, 0.99, 0.25), 1.0, sunview_dot);
+    final_color += nighttime_factor * smoothstep(mix(1.0, 0.99, 0.25), 1.0, sunview_dot);
 
     frag_color = vec4(final_color, 1.0);
 }
