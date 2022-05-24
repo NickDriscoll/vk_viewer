@@ -13,6 +13,7 @@ mod vkutil;
 
 use ash::vk;
 use imgui::{DrawCmd, FontAtlasRefMut};
+use input::InputOutput;
 use sdl2::controller::GameController;
 use sdl2::event::Event;
 use sdl2::mixer;
@@ -26,6 +27,7 @@ use std::time::SystemTime;
 use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
+use input::UserInput;
 use vkutil::{ColorSpace, FreeList, VirtualBuffer, VirtualGeometry, VirtualImage, VulkanAPI};
 use structs::{Camera, NoiseParameters, TerrainSpec};
 use render::{DrawData, Renderer, FrameUniforms, Material};
@@ -75,9 +77,7 @@ fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::Descri
 fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
-    let mut event_pump = unwrap_result(sdl_context.event_pump(), "Error initializing SDL event pump");
     let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
-    let controller_subsystem = unwrap_result(sdl_context.game_controller(), "Error initializing SDL controller subsystem");
     let mut window_size = glm::vec2(1280, 720);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
@@ -867,12 +867,9 @@ fn main() {
     let mut do_imgui = true;
     let mut do_terrain_window = false;
     let mut do_freecam = true;
-    let mut cursor_captured = false;
     
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
-
-    let mut game_controllers = [None, None, None, None];
 
     let vk_submission_fence = unsafe {
         let create_info = vk::FenceCreateInfo {
@@ -882,6 +879,8 @@ fn main() {
         vk.device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
 
+    let mut input_system = input::InputSystem::init(&sdl_context);
+
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
@@ -889,195 +888,51 @@ fn main() {
         //Reset renderer
         renderer.reset();
 
-        //Abstracted input variables
-        let mut movement_multiplier = 5.0f32;
-        let mut movement_vector: glm::TVec3<f32> = glm::zero();
-        let mut camera_orientation_delta: glm::TVec2<f32> = glm::zero();
-        let mut scroll_amount = 0.0;
-        let framerate;
+        //Input sampling
+        let imgui_io = imgui_context.io_mut();
+        let input_output = match input::do_input(&mut input_system, &timer, imgui_io) {
+            UserInput::Output(o) => { o }
+            UserInput::ExitProgram => { break 'running; }
+        };
 
-        //Input
-        {
-            use sdl2::controller::Button;
-            use sdl2::event::WindowEvent;
-            use sdl2::keyboard::{Scancode};
-            use sdl2::mouse::MouseButton;
-
-            //Sync controller array with how many controllers are actually connected
-            for i in 0..game_controllers.len() {
-                match &mut game_controllers[i] {
-                    None => {
-                        if i < unwrap_result(controller_subsystem.num_joysticks(), "Error getting number of controllers") as usize {
-                            let controller = unwrap_result(controller_subsystem.open(i as u32), "Error opening controller");
-                            game_controllers[i] = Some(controller);
-                        }
-                    }
-                    Some(controller) => {
-                        if !controller.attached() {
-                            game_controllers[i] = None;
-                        }
-                    }
-                }
+        //Handling of some input results before update
+        if input_output.gui_toggle { do_imgui = !do_imgui }
+        if input_output.regen_terrain {
+            if let Some(ter) = renderer.get_model(terrain_model_idx) {
+                regenerate_terrain(&mut terrain, &ter.geometry, terrain_fixed_seed);
             }
-
-            let imgui_io = imgui_context.io_mut();
-            imgui_io.delta_time = timer.delta_time;
-            
-            //Pump event queue
-            for event in event_pump.poll_iter() {
-                match event {
-                    Event::Quit{..} => { break 'running; }
-                    Event::Window { win_event, .. } => {
-                        match win_event {
-                            WindowEvent::Resized(_, _) => unsafe {
-                                vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
-
-                                //Free the now-invalid swapchain data
-                                for framebuffer in vk_display.swapchain_framebuffers {
-                                    vk.device.destroy_framebuffer(framebuffer, vkutil::MEMORY_ALLOCATOR);
-                                }
-                                for view in vk_display.swapchain_image_views {
-                                    vk.device.destroy_image_view(view, vkutil::MEMORY_ALLOCATOR);
-                                }
-                                vk.device.destroy_image_view(vk_display.depth_image_view, vkutil::MEMORY_ALLOCATOR);
-                                vk_ext_swapchain.destroy_swapchain(vk_display.swapchain, vkutil::MEMORY_ALLOCATOR);
-
-                                //Recreate swapchain and associated data
-                                vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
-
-                                window_size = glm::vec2(vk_display.extent.width, vk_display.extent.height);
-                                imgui_io.display_size[0] = window_size.x as f32;
-                                imgui_io.display_size[1] = window_size.y as f32;
-                            }
-                            _ => {}
-                        }
-                    }
-                    Event::KeyDown { scancode: Some(sc), repeat: false, .. } => {
-                        match sc {
-                            Scancode::Escape => {
-                                do_imgui = !do_imgui;
-                            }
-                            Scancode::R => {
-                                if let Some(model) = renderer.get_model(terrain_model_idx) {
-                                    regenerate_terrain(&mut terrain, &model.geometry, terrain_fixed_seed);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    Event::MouseButtonUp { mouse_btn, ..} => {
-                        match mouse_btn {
-                            MouseButton::Right => {
-                                cursor_captured = !cursor_captured;
-                                let mouse_util = sdl_context.mouse();
-                                mouse_util.set_relative_mouse_mode(cursor_captured);
-                                if !cursor_captured {
-                                    mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    Event::MouseMotion { xrel, yrel, .. } => {
-                        if cursor_captured {
-                            const DAMPENING: f32 = 0.25 / 360.0;
-                            camera_orientation_delta += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
-                        }
-                    }
-                    Event::MouseWheel { x, y, .. } => {
-                        imgui_io.mouse_wheel_h = x as f32;
-                        imgui_io.mouse_wheel = y as f32;
-                        scroll_amount = imgui_io.mouse_wheel;
-                    }
-                    _ => {  }
-                }
-            }
-
-            let keyboard_state = event_pump.keyboard_state();
-            let mouse_state = event_pump.mouse_state();
-            imgui_io.mouse_down = [mouse_state.left(), mouse_state.right(), mouse_state.middle(), mouse_state.x1(), mouse_state.x2()];
-            imgui_io.mouse_pos[0] = mouse_state.x() as f32;
-            imgui_io.mouse_pos[1] = mouse_state.y() as f32;
-
-            if let Some(controller) = &mut game_controllers[0] {
-                use sdl2::controller::{Axis};
-
-                fn get_normalized_axis(controller: &GameController, axis: Axis) -> f32 {
-                    controller.axis(axis) as f32 / i16::MAX as f32
-                }
-
-                if controller.button(Button::LeftShoulder) {
-                    movement_vector += glm::vec3(0.0, 0.0, -1.0);                    
-                }
-
-                if controller.button(Button::RightShoulder) {
-                    movement_vector += glm::vec3(0.0, 0.0, 1.0);                    
-                }
-
-                if controller.button(Button::Y) {
-                    if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
-                        regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
-                    }
-                    if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
-                        println!("{}", e);
-                    }
-                }
-
-                let left_trigger = get_normalized_axis(&controller, Axis::TriggerLeft);
-                movement_multiplier *= 4.0 * left_trigger + 1.0;
-
-                const JOYSTICK_DEADZONE: f32 = 0.15;
-                let left_joy_vector = {
-                    let x = get_normalized_axis(&controller, Axis::LeftX);
-                    let y = get_normalized_axis(&controller, Axis::LeftY);
-                    let mut res = glm::vec3(x, -y, 0.0);
-                    if glm::length(&res) < JOYSTICK_DEADZONE {
-                        res = glm::zero();
-                    }
-                    res
-                };
-                let right_joy_vector = {
-                    let x = get_normalized_axis(&controller, Axis::RightX);
-                    let y = get_normalized_axis(&controller, Axis::RightY);
-                    let mut res = glm::vec2(x, -y);
-                    if glm::length(&res) < JOYSTICK_DEADZONE {
-                        res = glm::zero();
-                    }
-                    res
-                };
-
-                movement_vector += &left_joy_vector;
-                camera_orientation_delta += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
-            }
-
-            if keyboard_state.is_scancode_pressed(Scancode::LShift) {
-                movement_multiplier *= 15.0;
-            }
-            if keyboard_state.is_scancode_pressed(Scancode::LCtrl) {
-                movement_multiplier *= 0.25;
-            }
-            if keyboard_state.is_scancode_pressed(Scancode::W) {
-                movement_vector += glm::vec3(0.0, 1.0, 0.0);
-            }
-            if keyboard_state.is_scancode_pressed(Scancode::A) {
-                movement_vector += glm::vec3(-1.0, 0.0, 0.0);
-            }
-            if keyboard_state.is_scancode_pressed(Scancode::S) {
-                movement_vector += glm::vec3(0.0, -1.0, 0.0);
-            }
-            if keyboard_state.is_scancode_pressed(Scancode::D) {
-                movement_vector += glm::vec3(1.0, 0.0, 0.0);
-            }
-            if keyboard_state.is_scancode_pressed(Scancode::Q) {
-                movement_vector += glm::vec3(0.0, 0.0, -1.0);
-            }
-            if keyboard_state.is_scancode_pressed(Scancode::E) {
-                movement_vector += glm::vec3(0.0, 0.0, 1.0);
-            }
-
-            framerate = imgui_io.framerate;
         }
-        movement_vector *= movement_multiplier;
+
+        unsafe {
+            if input_output.resize_window {
+                vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+
+                //Free the now-invalid swapchain data
+                for framebuffer in vk_display.swapchain_framebuffers {
+                    vk.device.destroy_framebuffer(framebuffer, vkutil::MEMORY_ALLOCATOR);
+                }
+                for view in vk_display.swapchain_image_views {
+                    vk.device.destroy_image_view(view, vkutil::MEMORY_ALLOCATOR);
+                }
+                vk.device.destroy_image_view(vk_display.depth_image_view, vkutil::MEMORY_ALLOCATOR);
+                vk_ext_swapchain.destroy_swapchain(vk_display.swapchain, vkutil::MEMORY_ALLOCATOR);
+
+                //Recreate swapchain and associated data
+                vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
+
+                window_size = glm::vec2(vk_display.extent.width, vk_display.extent.height);
+                imgui_io.display_size[0] = window_size.x as f32;
+                imgui_io.display_size[1] = window_size.y as f32;
+            }
+        }
+
+        {
+            let mouse_util = sdl_context.mouse();
+            mouse_util.set_relative_mouse_mode(input_system.cursor_captured);
+            if input_system.cursor_captured {
+                mouse_util.warp_mouse_in_window(&window, window_size.x as i32 / 2, window_size.y as i32 / 2);
+            }
+        }
 
         //Update
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
@@ -1142,17 +997,17 @@ fn main() {
                 0.0, 0.0, 1.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
                 0.0, 0.0, 0.0, 1.0
-            ) * glm::vec3_to_vec4(&movement_vector);
+            ) * glm::vec3_to_vec4(&input_output.movement_vector);
             let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
             camera.position += glm::vec4_to_vec3(&delta_pos);
-            camera.orientation += camera_orientation_delta;
+            camera.orientation += input_output.orientation_delta;
         } else {
             let view_movement_vector = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, 0.0, 1.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
                 0.0, 0.0, 0.0, 1.0
-            ) * glm::vec3_to_vec4(&movement_vector);
+            ) * glm::vec3_to_vec4(&input_output.movement_vector);
 
             let delta_pos = 2.0 * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
             totoro_position += glm::vec4_to_vec3(&delta_pos);
@@ -1165,11 +1020,11 @@ fn main() {
         } else {
             let min = 3.0;
             let max = 200.0;
-            totoro_lookat_dist -= 0.1 * totoro_lookat_dist * scroll_amount;
+            totoro_lookat_dist -= 0.1 * totoro_lookat_dist * input_output.scroll_amount;
             totoro_lookat_dist = f32::clamp(totoro_lookat_dist, min, max);
             
             let lookat = glm::look_at(&totoro_lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
-            let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-camera_orientation_delta.x, camera_orientation_delta.y, 0.0, 0.0);
+            let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-input_output.orientation_delta.x, input_output.orientation_delta.y, 0.0, 0.0);
 
             totoro_lookat_pos += totoro_lookat_dist * glm::vec4_to_vec3(&world_space_offset);
             let camera_pos = glm::normalize(&totoro_lookat_pos);
@@ -1221,8 +1076,8 @@ fn main() {
                 mb.end();
             }
 
-            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", framerate, 1000.0 / framerate));
-            let (message, color) =  if game_controllers[0].is_some() {
+            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", input_output.framerate, 1000.0 / input_output.framerate));
+            let (message, color) =  if input_system.controllers[0].is_some() {
                 ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
             } else {
                 ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])

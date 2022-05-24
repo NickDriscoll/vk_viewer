@@ -5,9 +5,25 @@ use sdl2::{EventPump, GameControllerSubsystem};
 use crate::*;
 
 pub struct InputSystem {
-    event_pump: EventPump,
-    controller_subsystem: GameControllerSubsystem,
-    controllers: OptionVec<GameController>
+    pub event_pump: EventPump,
+    pub controller_subsystem: GameControllerSubsystem,
+    pub controllers: [Option<GameController>; 4],
+    pub cursor_captured: bool
+}
+
+impl InputSystem {
+    pub fn init(sdl_ctxt: &sdl2::Sdl) -> Self {
+        let event_pump = unwrap_result(sdl_ctxt.event_pump(), "Error initializing SDL event pump");
+        let controller_subsystem = unwrap_result(sdl_ctxt.game_controller(), "Error initializing SDL controller subsystem");
+        let controllers = [None, None, None, None];
+
+        InputSystem {
+            event_pump,
+            controller_subsystem,
+            controllers,
+            cursor_captured: false
+        }
+    }
 }
 
 //The output of the input system
@@ -19,16 +35,15 @@ pub struct InputOutput {
     pub framerate: f32,
     pub regen_terrain: bool,
     pub resize_window: bool,
-    pub cursor_capture_toggle: bool,
     pub gui_toggle: bool
 }
 
-enum UserInput {
+pub enum UserInput {
     Output(InputOutput),
     ExitProgram
 }
 
-fn do_input(
+pub fn do_input(
     input_system: &mut InputSystem,
     timer: &FrameTimer,
     imgui_io: &mut Io
@@ -46,21 +61,20 @@ fn do_input(
     let framerate;
     let mut regen_terrain = false;
     let mut resize_window = false;
-    let mut cursor_capture_toggle = false;
     let mut gui_toggle = false;
 
     //Sync controller array with how many controllers are actually connected
     for i in 0..input_system.controllers.len() {
-        match &mut input_system.controllers.get_mut_element(i) {
+        match &mut input_system.controllers[i] {
             None => {
                 if i < unwrap_result(input_system.controller_subsystem.num_joysticks(), "Error getting number of controllers") as usize {
                     let controller = unwrap_result(input_system.controller_subsystem.open(i as u32), "Error opening controller");
-                    input_system.controllers.replace(i, controller);
+                    input_system.controllers[i] = Some(controller);
                 }
             }
             Some(controller) => {
                 if !controller.attached() {
-                    input_system.controllers.delete(i);
+                    input_system.controllers[i] = None;
                 }
             }
         }
@@ -87,13 +101,15 @@ fn do_input(
             }
             Event::MouseButtonUp { mouse_btn, ..} => {
                 match mouse_btn {
-                    MouseButton::Right => { cursor_capture_toggle = true; }
+                    MouseButton::Right => { input_system.cursor_captured = !input_system.cursor_captured; }
                     _ => {}
                 }
             }
             Event::MouseMotion { xrel, yrel, .. } => {
                 const DAMPENING: f32 = 0.25 / 360.0;
-                orientation_delta += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
+                if input_system.cursor_captured {
+                    orientation_delta += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
+                }
             }
             Event::MouseWheel { x, y, .. } => {
                 imgui_io.mouse_wheel_h = x as f32;
@@ -110,7 +126,7 @@ fn do_input(
     imgui_io.mouse_pos[0] = mouse_state.x() as f32;
     imgui_io.mouse_pos[1] = mouse_state.y() as f32;
 
-    if let Some(controller) = &mut input_system.controllers.get_mut_element(0) {
+    if let Some(controller) = &mut input_system.controllers[0] {
         use sdl2::controller::{Axis};
 
         fn get_normalized_axis(controller: &GameController, axis: Axis) -> f32 {
@@ -195,7 +211,6 @@ fn do_input(
         framerate,
         regen_terrain,
         resize_window,
-        cursor_capture_toggle,
         gui_toggle
     })
 }
