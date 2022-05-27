@@ -1104,18 +1104,21 @@ fn main() {
         }
 
         let bb_mats = {
-            let count = 1;
-            let mut ms = vec![glm::identity(); count];
+            let count = 8;
+            let mut ms = Vec::with_capacity(count * count);
 
             for i in 0..count {
-                let mat = glm::translation(&glm::vec3(5.0 * i as f32, 0.0, f32::sin(timer.elapsed_time + i as f32) + 10.0));
-                ms[i] = mat;
+                for j in 0..count {
+                    //let mat = glm::translation(&glm::vec3(5.0 * i as f32, 0.0, f32::sin(timer.elapsed_time + i as f32) + 10.0));
+                    let mat = glm::translation(&glm::vec3(75.0 * i as f32 - 250.0, 75.0 * j as f32 - 250.0, 0.0));
+                    ms.push(mat);
+                }
             }
             ms
         };
 
         for idx in &glb_model_indices {
-            renderer.queue_drawcall(*idx, main_pipeline, &[glm::identity()]);
+            renderer.queue_drawcall(*idx, main_pipeline, &bb_mats);
         }
         
         //Update sun's position

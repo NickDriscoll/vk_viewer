@@ -28,7 +28,7 @@ void main() {
     Material my_mat = global_materials[material_idx];
 
     vec4 color_sample = texture(global_textures[my_mat.color_map_index], f_uv);
-    if (color_sample.a == 0.0) discard;
+    if (color_sample.a < 0.1) discard;
 
     vec3 base_color = color_sample.rgb;
     vec3 sampled_normal = 2.0 * texture(global_textures[my_mat.normal_map_index], f_uv).xyz - 1.0;
