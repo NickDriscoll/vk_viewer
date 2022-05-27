@@ -27,10 +27,11 @@ void main() {
     vec2 uvs = f_uv;
 
     Material grass_material = global_materials[first_material_idx];
-    Material rock_material = global_materials[first_material_idx + 1];
     vec3 grass_color = texture(global_textures[grass_material.color_map_index], uvs).rgb;
-    vec3 rock_color = texture(global_textures[rock_material.color_map_index], uvs).rgb;
     vec3 grass_normal = normalize(2.0 * texture(global_textures[grass_material.normal_map_index], uvs).xyz - 1.0);
+    
+    Material rock_material = global_materials[first_material_idx + 1];
+    vec3 rock_color = texture(global_textures[rock_material.color_map_index], uvs).rgb;
     vec3 rock_normal = normalize(2.0 * texture(global_textures[rock_material.normal_map_index], uvs).xyz - 1.0);
 
     float mix_factor = max(0.0, dot(normal, vec3(0.0, 0.0, 1.0)));

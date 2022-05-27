@@ -190,6 +190,71 @@ impl VirtualImage {
                 vim.vk_view = view;
                 vim
             }
+            ColorType::Rgba => unsafe {
+                let format = match info.srgb {
+                    Some(_) => { vk::Format::R8G8B8A8_SRGB }
+                    None => { vk::Format::R8G8B8A8_UNORM }
+                };
+
+                let width = info.width;
+                let height = info.height;
+                let pixel_count = (width * height / byte_size_divisor) as usize;
+                let mut bytes = vec![0xFFu8; 4 * pixel_count];
+                reader.next_frame(&mut bytes).unwrap();
+                
+                let image_extent = vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                };
+                let image_create_info = vk::ImageCreateInfo {
+                    image_type: vk::ImageType::TYPE_2D,
+                    format,
+                    extent: image_extent,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    tiling: vk::ImageTiling::OPTIMAL,
+                    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    queue_family_index_count: 1,
+                    p_queue_family_indices: &vk.queue_family_index,
+                    initial_layout: vk::ImageLayout::UNDEFINED,
+                    ..Default::default()
+                };
+                let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+                let allocation = allocate_image(vk, image);
+
+                let mut vim = VirtualImage {
+                    vk_image: image,
+                    vk_view: vk::ImageView::default(),
+                    width,
+                    height,
+                    mip_count: 1,
+                    allocation
+                };
+                vkutil::upload_image(vk, vk_command_buffer, &vim, &bytes);
+                
+                let sampler_subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                };
+                let grass_view_info = vk::ImageViewCreateInfo {
+                    image,
+                    format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: sampler_subresource_range,
+                    ..Default::default()
+                };
+                let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+                vim.vk_view = view;
+                vim
+            }
             t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
         }
     }

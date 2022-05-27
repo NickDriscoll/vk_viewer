@@ -747,32 +747,6 @@ fn main() {
         [main_pipeline, ter_pipeline, atm_pipeline, im_pipeline, wire_pipeline]
     };
 
-    //Load gltf object
-    let glb_data = gltfutil::gltf_meshdata("./data/models/BoomBox_fixed.glb");
-
-    let glb_color_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, glb_data.color_png_bytes.as_slice());
-    let glb_normal_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, glb_data.normal_png_bytes.as_slice());
-    let glb_material_idx = {
-        let image_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: glb_color_image.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let color_idx = global_textures.insert(image_info) as u32;
-
-        let image_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: glb_normal_image.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let normal_idx = global_textures.insert(image_info) as u32;
-
-        global_materials.insert(Material {
-            color_idx,
-            normal_idx
-        }) as u32
-    };
-
     let noise_parameters = {
         const OCTAVES: usize = 8;
         const LACUNARITY: f64 = 1.75;
@@ -787,7 +761,7 @@ fn main() {
                 frequency
             });
             amplitude *= GAIN;
-            frequency *= LACUNARITY
+            frequency *= LACUNARITY;
         }
         ps
     };
@@ -812,15 +786,56 @@ fn main() {
     
     let mut renderer = Renderer::new();
 
+    //Load gltf object
+    //let glb_name = "./data/models/BoomBox_fixed.glb";
+    let glb_name = "./data/models/nice_tree.glb";
+    let glb_data = gltfutil::gltf_meshdata(glb_name);
+
+    //Register each primitive with the renderer
+    let mut glb_model_indices = vec![];
+    for prim in glb_data.primitives {
+        let geometry = VirtualGeometry::create(&mut vk, &prim.vertices, &prim.indices);
+        
+        let color_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, prim.material.color_bytes.as_slice());
+        let image_info = vk::DescriptorImageInfo {
+            sampler: material_sampler,
+            image_view: color_image.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let color_idx = global_textures.insert(image_info) as u32;
+
+        let normal_idx = match prim.material.normal_bytes {
+            Some(bytes) => {
+                let normal_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, bytes.as_slice());
+                let image_info = vk::DescriptorImageInfo {
+                    sampler: material_sampler,
+                    image_view: normal_image.vk_view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                };
+                global_textures.insert(image_info) as u32
+            }
+            None => { default_normal_index }
+        };
+
+        let material_idx = global_materials.insert(Material {
+                color_idx,
+                normal_idx
+            }) as u32;
+
+        let model_idx = renderer.register_model(DrawData {
+            geometry,
+            material_idx
+        });
+        glb_model_indices.push(model_idx);
+    }
+
     let terrain_geometry;
     let totoro_geometry;
     let atmosphere_geometry;
-    let glb_geometry;
     {        
         terrain_geometry = VirtualGeometry::create(&mut vk, &terrain_vertices, &terrain_indices);
         totoro_geometry = VirtualGeometry::create(&mut vk, &totoro_mesh.vertex_array.vertices, &totoro_mesh.vertex_array.indices);
         atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer());
-        glb_geometry = VirtualGeometry::create(&mut vk, &glb_data.vertices, &glb_data.indices);
 
         drop(terrain_vertices);
         drop(terrain_indices);
@@ -834,10 +849,6 @@ fn main() {
     let totoro_model_idx = renderer.register_model(DrawData{
         geometry: totoro_geometry,
         material_idx: totoro_matidx
-    });
-    let glb_model_idx = renderer.register_model(DrawData{
-        geometry: glb_geometry,
-        material_idx: glb_material_idx
     });
 
     //Create semaphore used to wait on swapchain image
@@ -1093,7 +1104,7 @@ fn main() {
         }
 
         let bb_mats = {
-            let count = 4;
+            let count = 1;
             let mut ms = vec![glm::identity(); count];
 
             for i in 0..count {
@@ -1102,7 +1113,10 @@ fn main() {
             }
             ms
         };
-        renderer.queue_drawcall(glb_model_idx, main_pipeline, &bb_mats);
+
+        for idx in &glb_model_indices {
+            renderer.queue_drawcall(*idx, main_pipeline, &[glm::identity()]);
+        }
         
         //Update sun's position
         sun_pitch += sun_speed * timer.delta_time;

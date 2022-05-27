@@ -27,7 +27,10 @@ void main() {
 
     Material my_mat = global_materials[material_idx];
 
-    vec3 base_color = texture(global_textures[my_mat.color_map_index], f_uv).rgb;
+    vec4 color_sample = texture(global_textures[my_mat.color_map_index], f_uv);
+    if (color_sample.a == 0.0) discard;
+
+    vec3 base_color = color_sample.rgb;
     vec3 sampled_normal = 2.0 * texture(global_textures[my_mat.normal_map_index], f_uv).xyz - 1.0;
     vec3 world_normal = TBN * sampled_normal;
     float sun_contribution = max(0.0, dot(world_normal, sun_direction));
