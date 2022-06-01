@@ -71,8 +71,7 @@ fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::Descri
     }
 }
 
-unsafe fn upload_raw_rgba(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, rgba: &[u8]) -> u32 {
-    let format = vk::Format::R8G8B8A8_UNORM;
+unsafe fn upload_raw_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, sampler: vk::Sampler, format: vk::Format, rgba: &[u8]) -> vk::DescriptorImageInfo {
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
         format,
@@ -123,12 +122,11 @@ unsafe fn upload_raw_rgba(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuff
     };
     let view = vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
     
-    let image_info = vk::DescriptorImageInfo {
+    vk::DescriptorImageInfo {
         sampler,
         image_view: view,
         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-    };
-    global_textures.insert(image_info) as u32
+    }
 }
 
 //Entry point
@@ -210,10 +208,10 @@ fn main() {
     //Maintain free list for texture allocation
     let mut global_textures = FreeList::with_capacity(1024);
 
-    let default_texture_sampler;
+    let default_image_info;
 
-    let default_color_index = unsafe { upload_raw_rgba(&mut vk, vk_command_buffer, &mut global_textures, point_sampler, &[0x80, 0x80, 0x80, 0xFF])};
-    let default_normal_index = unsafe { upload_raw_rgba(&mut vk, vk_command_buffer, &mut global_textures, point_sampler, &[0x80, 0x80, 0xFF, 0xFF])};
+    let default_color_index = unsafe { global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, &[0x80, 0x80, 0x80, 0xFF])) as u32};
+    let default_normal_index = unsafe { global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
     
     //Load environment textures
     let atmosphere_tex_indices = {
@@ -227,71 +225,14 @@ fn main() {
     match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
-            
             let atlas_format = vk::Format::R8_UNORM;
-            let image_extent = vk::Extent3D {
-                width: atlas_texture.width,
-                height: atlas_texture.height,
-                depth: 1
-            };
-            let font_create_info = vk::ImageCreateInfo {
-                image_type: vk::ImageType::TYPE_2D,
-                format: atlas_format,
-                extent: image_extent,
-                mip_levels: 1,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 1,
-                p_queue_family_indices: &vk.queue_family_index,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                ..Default::default()
-            };
-            let vk_font_image = vk.device.create_image(&font_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            let allocation = vkutil::allocate_image(&mut vk, vk_font_image);
-
-            let vim = vkutil::VirtualImage {
-                vk_image: vk_font_image,
-                vk_view: vk::ImageView::default(),
-                width: atlas_texture.width,
-                height: atlas_texture.height,
-                mip_count: 1,
-                allocation
-            };
-            vkutil::upload_image(&mut vk, vk_command_buffer, &vim, atlas_texture.data);
-
+            let descriptor_info = upload_raw_image(&mut vk, vk_command_buffer, point_sampler, atlas_format, atlas_texture.data);
+            default_image_info = descriptor_info;
+            let index = global_textures.insert(descriptor_info);
+            
             atlas.clear_tex_data();  //Free atlas memory CPU-side
-
-            //Then create the image view
-            let sampler_subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let font_view_info = vk::ImageViewCreateInfo {
-                image: vk_font_image,
-                format: atlas_format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                subresource_range: sampler_subresource_range,
-                ..Default::default()
-            };
-            let font_view = vk.device.create_image_view(&font_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            
-            let image_info = vk::DescriptorImageInfo {
-                sampler: point_sampler,
-                image_view: font_view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-            };
-            let sampler_index = global_textures.insert(image_info);
-            
-            default_texture_sampler = image_info;
-            atlas.tex_id = imgui::TextureId::new(sampler_index);    //Giving Dear Imgui a reference to the font atlas GPU texture
-            sampler_index as u32
+            atlas.tex_id = imgui::TextureId::new(index);    //Giving Dear Imgui a reference to the font atlas GPU texture
+            index as u32
         }
         FontAtlasRefMut::Shared(_) => {
             panic!("Not dealing with this case.");
@@ -1203,7 +1144,7 @@ fn main() {
         if global_textures.updated {
             global_textures.updated = false;
 
-            let mut image_infos = vec![default_texture_sampler; global_textures.size() as usize];
+            let mut image_infos = vec![default_image_info; global_textures.size() as usize];
             for i in 0..global_textures.len() {
                 if let Some(info) = global_textures[i] {
                     image_infos[i] = info;
