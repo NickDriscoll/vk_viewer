@@ -61,7 +61,7 @@ fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::Descri
         let vim = VirtualImage::from_bc7(vk, command_buffer, path, color_space);
 
         let descriptor_info = vk::DescriptorImageInfo {
-            sampler: sampler,
+            sampler,
             image_view: vim.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
@@ -69,6 +69,66 @@ fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::Descri
 
         index as u32
     }
+}
+
+unsafe fn upload_raw_rgba(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, rgba: &[u8]) -> u32 {
+    let format = vk::Format::R8G8B8A8_UNORM;
+    let image_create_info = vk::ImageCreateInfo {
+        image_type: vk::ImageType::TYPE_2D,
+        format,
+        extent: vk::Extent3D {
+            width: 1,
+            height: 1,
+            depth: 1
+        },
+        mip_levels: 1,
+        array_layers: 1,
+        samples: vk::SampleCountFlags::TYPE_1,
+        tiling: vk::ImageTiling::OPTIMAL,
+        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+        sharing_mode: vk::SharingMode::EXCLUSIVE,
+        queue_family_index_count: 1,
+        p_queue_family_indices: &vk.queue_family_index,
+        initial_layout: vk::ImageLayout::UNDEFINED,
+        ..Default::default()
+    };
+    let normal_image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+    let allocation = vkutil::allocate_image(vk, normal_image);
+
+    let vim = vkutil::VirtualImage {
+        vk_image: normal_image,
+        vk_view: vk::ImageView::default(),
+        width: 1,
+        height: 1,
+        mip_count: 1,
+        allocation
+    };
+    vkutil::upload_image(vk, vk_command_buffer, &vim, &rgba);
+
+    //Then create the image view
+    let sampler_subresource_range = vk::ImageSubresourceRange {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: 1
+    };
+    let view_info = vk::ImageViewCreateInfo {
+        image: normal_image,
+        format,
+        view_type: vk::ImageViewType::TYPE_2D,
+        components: vkutil::COMPONENT_MAPPING_DEFAULT,
+        subresource_range: sampler_subresource_range,
+        ..Default::default()
+    };
+    let view = vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+    
+    let image_info = vk::DescriptorImageInfo {
+        sampler,
+        image_view: view,
+        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+    };
+    global_textures.insert(image_info) as u32
 }
 
 //Entry point
@@ -152,72 +212,8 @@ fn main() {
 
     let default_texture_sampler;
 
-    let default_normal_index = unsafe {
-        let format = vk::Format::R8G8B8A8_UNORM;
-        let image_create_info = vk::ImageCreateInfo {
-            image_type: vk::ImageType::TYPE_2D,
-            format,
-            extent: vk::Extent3D {
-                width: 1,
-                height: 1,
-                depth: 1
-            },
-            mip_levels: 1,
-            array_layers: 1,
-            samples: vk::SampleCountFlags::TYPE_1,
-            tiling: vk::ImageTiling::OPTIMAL,
-            usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            queue_family_index_count: 1,
-            p_queue_family_indices: &vk.queue_family_index,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            ..Default::default()
-        };
-        let normal_image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-        let allocation = vkutil::allocate_image(&mut vk, normal_image);
-
-        let vim = vkutil::VirtualImage {
-            vk_image: normal_image,
-            vk_view: vk::ImageView::default(),
-            width: 1,
-            height: 1,
-            mip_count: 1,
-            allocation
-        };
-        let data = [0x80, 0x80, 0xFF, 0xFF];
-        vkutil::upload_image(&mut vk, vk_command_buffer, &vim, &data);
-
-        //Then create the image view
-        let sampler_subresource_range = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1
-        };
-        let view_info = vk::ImageViewCreateInfo {
-            image: normal_image,
-            format,
-            view_type: vk::ImageViewType::TYPE_2D,
-            components: vkutil::COMPONENT_MAPPING_DEFAULT,
-            subresource_range: sampler_subresource_range,
-            ..Default::default()
-        };
-        let view = vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-        
-        let image_info = vk::DescriptorImageInfo {
-            sampler: point_sampler,
-            image_view: view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        global_textures.insert(image_info) as u32
-    };
-
-    //Global texture loading
-    let grass_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
-    let grass_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
-    let rock_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
-    let rock_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
+    let default_color_index = unsafe { upload_raw_rgba(&mut vk, vk_command_buffer, &mut global_textures, point_sampler, &[0x80, 0x80, 0x80, 0xFF])};
+    let default_normal_index = unsafe { upload_raw_rgba(&mut vk, vk_command_buffer, &mut global_textures, point_sampler, &[0x80, 0x80, 0xFF, 0xFF])};
     
     //Load environment textures
     let atmosphere_tex_indices = {
@@ -305,18 +301,8 @@ fn main() {
     //Create free list for materials
     let mut global_materials = FreeList::with_capacity(256);
 
-    let terrain_grass_matidx = global_materials.insert(Material {
-        color_idx: grass_color_global_index,
-        normal_idx: grass_normal_global_index
-    }) as u32;
-
-    let terrain_rock_matidx = global_materials.insert(Material {
-        color_idx: rock_color_global_index,
-        normal_idx: rock_normal_global_index
-    }) as u32;
-
     let totoro_matidx = global_materials.insert(Material {
-        color_idx: grass_color_global_index,
+        color_idx: default_color_index,
         normal_idx: default_normal_index
     }) as u32;
 
@@ -764,6 +750,7 @@ fn main() {
         ps
     };
 
+    //Define terrain
     let terrain_width_height = 256;
     let mut terrain_fixed_seed = false;
     let mut terrain_interactive_generation = false;
@@ -778,6 +765,22 @@ fn main() {
 
     let terrain_vertices = terrain.generate_vertices();
     let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
+    
+    //Loading terrain textures
+    let grass_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
+    let grass_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
+    let rock_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
+    let rock_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
+
+    let terrain_grass_matidx = global_materials.insert(Material {
+        color_idx: grass_color_global_index,
+        normal_idx: grass_normal_global_index
+    }) as u32;
+
+    let terrain_rock_matidx = global_materials.insert(Material {
+        color_idx: rock_color_global_index,
+        normal_idx: rock_normal_global_index
+    }) as u32;
 
     //Load totoro model
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
@@ -1107,8 +1110,8 @@ fn main() {
 
             for i in 0..count {
                 for j in 0..count {
-                    //let mat = glm::translation(&glm::vec3(5.0 * i as f32, 0.0, f32::sin(timer.elapsed_time + i as f32) + 10.0));
-                    let mat = glm::translation(&glm::vec3(75.0 * i as f32 - 250.0, 75.0 * j as f32 - 250.0, 0.0));
+                    let mat = glm::translation(&glm::vec3(75.0 * i as f32 - 250.0, 75.0 * j as f32 - 250.0, f32::sin(timer.elapsed_time + i as f32) + 10.0)) *
+                              glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
                     ms.push(mat);
                 }
             }
