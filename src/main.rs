@@ -71,13 +71,13 @@ fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::Descri
     }
 }
 
-unsafe fn upload_raw_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, sampler: vk::Sampler, format: vk::Format, rgba: &[u8]) -> vk::DescriptorImageInfo {
+unsafe fn upload_raw_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, sampler: vk::Sampler, format: vk::Format, width: u32, height: u32, rgba: &[u8]) -> vk::DescriptorImageInfo {
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
         format,
         extent: vk::Extent3D {
-            width: 1,
-            height: 1,
+            width,
+            height,
             depth: 1
         },
         mip_levels: 1,
@@ -97,8 +97,8 @@ unsafe fn upload_raw_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuf
     let vim = vkutil::VirtualImage {
         vk_image: normal_image,
         vk_view: vk::ImageView::default(),
-        width: 1,
-        height: 1,
+        width,
+        height,
         mip_count: 1,
         allocation
     };
@@ -210,8 +210,8 @@ fn main() {
 
     let default_image_info;
 
-    let default_color_index = unsafe { global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, &[0x80, 0x80, 0x80, 0xFF])) as u32};
-    let default_normal_index = unsafe { global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
+    let default_color_index = unsafe { global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0x80, 0xFF])) as u32};
+    let default_normal_index = unsafe { global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
     
     //Load environment textures
     let atmosphere_tex_indices = {
@@ -226,7 +226,7 @@ fn main() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
             let atlas_format = vk::Format::R8_UNORM;
-            let descriptor_info = upload_raw_image(&mut vk, vk_command_buffer, point_sampler, atlas_format, atlas_texture.data);
+            let descriptor_info = upload_raw_image(&mut vk, vk_command_buffer, point_sampler, atlas_format, atlas_texture.width, atlas_texture.height, atlas_texture.data);
             default_image_info = descriptor_info;
             let index = global_textures.insert(descriptor_info);
             

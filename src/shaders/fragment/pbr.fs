@@ -19,8 +19,23 @@ layout(push_constant) uniform Indices {
     uint material_idx;
 };
 
+const float PI = 3.141592654;
+
 vec3 fresnel_schlick(vec3 base_reflectivity, vec3 halfway, vec3 view) {
-    
+    float quintic_term = (1.0 - dot(halfway, view));
+    return base_reflectivity + (vec3(1.0) - base_reflectivity) * quintic_term * quintic_term * quintic_term * quintic_term * quintic_term;
+}
+
+//Approximation of roughness at a point
+float NDFggxtr(vec3 normal, vec3 halfway, float roughness) {
+    float thedot = dot(normal, halfway);
+    float squared_term = thedot*thedot * (roughness*roughness - 1.0) + 1.0;
+    return roughness * roughness / (PI * squared_term * squared_term);
+}
+
+float schlick_ggx(vec3 normal, vec3 view, float roughness) {
+    float thedot = dot(normal, view);
+    return thedot / (thedot * (1.0 - roughness) + roughness);
 }
 
 void main() {
