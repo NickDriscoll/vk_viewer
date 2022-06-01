@@ -13,8 +13,6 @@ mod vkutil;
 
 use ash::vk;
 use imgui::{DrawCmd, FontAtlasRefMut};
-use input::InputOutput;
-use sdl2::controller::GameController;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
@@ -1104,7 +1102,7 @@ fn main() {
         }
 
         let bb_mats = {
-            let count = 8;
+            let count = 4;
             let mut ms = Vec::with_capacity(count * count);
 
             for i in 0..count {

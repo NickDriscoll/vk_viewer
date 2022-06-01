@@ -36,7 +36,7 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 let semantics = [Semantic::Positions, Semantic::Normals, Semantic::Tangents, Semantic::TexCoords(0)];
                 let mut vecs: [Vec<f32>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
                 for prim in mesh.primitives() {
-                    let mut vertex_buffer = Vec::new();
+                    let mut vertex_buffer;
 
                     for s_idx in 0..semantics.len() {
                         let sem = &semantics[s_idx];
@@ -61,7 +61,6 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                     let acc = prim.indices().unwrap();
 
                     let index_buffer = unsafe {
-                        println!("DataType is {:?}", acc.data_type());
                         let view = acc.view().unwrap();
                         match acc.data_type() {
                             DataType::U16 => {

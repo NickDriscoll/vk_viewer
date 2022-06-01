@@ -503,73 +503,78 @@ impl VulkanAPI {
         let vk_physical_device;
         let vk_physical_device_properties;
         let mut vk_queue_family_index = 0;
+        let buffer_device_address;
         let vk_device = unsafe {
-            match vk_instance.enumerate_physical_devices() {
-                Ok(phys_devices) => {
-                    let mut phys_device = None;
-                    let device_types = [vk::PhysicalDeviceType::DISCRETE_GPU, vk::PhysicalDeviceType::INTEGRATED_GPU, vk::PhysicalDeviceType::CPU];
-                    'gpu_search: for d_type in device_types {
-                        for device in phys_devices.iter() {
-                            let props = vk_instance.get_physical_device_properties(*device);
-                            if props.device_type == d_type {
-                                let name = CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap();
-                                println!("\"{}\" was chosen as 3D accelerator.", name);
-                                phys_device = Some(*device);
-                                break 'gpu_search;
-                            }
-                        }
+            let phys_devices = vk_instance.enumerate_physical_devices();
+            if let Err(e) = phys_devices {
+                crash_with_error_dialog(&format!("Unable to enumerate physical devices: {}", e));
+            }
+            let phys_devices = phys_devices.unwrap();
+
+            //Search for the physical device
+            let device_types = [vk::PhysicalDeviceType::DISCRETE_GPU, vk::PhysicalDeviceType::INTEGRATED_GPU, vk::PhysicalDeviceType::CPU];
+            let mut phys_device = None;
+            'gpu_search: for d_type in device_types {
+                for device in phys_devices.iter() {
+                    let props = vk_instance.get_physical_device_properties(*device);
+                    if props.device_type == d_type {
+                        let name = CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap();
+                        println!("\"{}\" was chosen as 3D accelerator.", name);
+                        phys_device = Some(*device);
+                        break 'gpu_search;
                     }
-
-                    vk_physical_device = phys_device.unwrap();
-                    vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
-                    
-                    let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
-                    let mut physical_device_features = vk::PhysicalDeviceFeatures2 {
-                        p_next: &mut indexing_features as *mut _ as *mut c_void,
-                        ..Default::default()
-                    };
-                    vk_instance.get_physical_device_features2(vk_physical_device, &mut physical_device_features);
-                    if physical_device_features.features.texture_compression_bc == vk::FALSE {
-                        println!("WARNING: GPU compressed textures not supported by this GPU.");
-                    }
-
-                    let mut i = 0;
-                    for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
-                        if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                            vk_queue_family_index = i;
-                            break;
-                        }
-                        i += 1;
-                    }
-
-                    let queue_create_info = vk::DeviceQueueCreateInfo {
-                        queue_family_index: vk_queue_family_index,
-                        queue_count: 1,
-                        p_queue_priorities: [1.0].as_ptr(),
-                        ..Default::default()
-                    };
-                    
-                    if !vk_ext_surface.get_physical_device_surface_support(vk_physical_device, vk_queue_family_index, vk_surface).unwrap() {
-                        panic!("The physical device queue doesn't support swapchain present!");
-                    }
-
-                    let extension_names = [ash::extensions::khr::Swapchain::name().as_ptr()];
-                    let create_info = vk::DeviceCreateInfo {
-                        queue_create_info_count: 1,
-                        p_queue_create_infos: [queue_create_info].as_ptr(),
-                        enabled_extension_count: extension_names.len() as u32,
-                        pp_enabled_extension_names: extension_names.as_ptr(),
-                        p_enabled_features: &physical_device_features.features,
-                        p_next: &mut indexing_features as *mut _ as *mut c_void,
-                        ..Default::default()
-                    };
-
-                    vk_instance.create_device(vk_physical_device, &create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-                }
-                Err(e) => {
-                    crash_with_error_dialog(&format!("Unable to enumerate physical devices: {}", e));
                 }
             }
+
+            vk_physical_device = phys_device.unwrap();
+            vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
+            
+            //Get physical device features
+            let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
+            let mut buffer_address_features = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+            indexing_features.p_next = &mut buffer_address_features as *mut _ as *mut c_void;
+            let mut physical_device_features = vk::PhysicalDeviceFeatures2 {
+                p_next: &mut indexing_features as *mut _ as *mut c_void,
+                ..Default::default()
+            };
+            vk_instance.get_physical_device_features2(vk_physical_device, &mut physical_device_features);
+            if physical_device_features.features.texture_compression_bc == vk::FALSE {
+                tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.", tfd::MessageBoxIcon::Warning);
+            }
+            buffer_device_address = buffer_address_features.buffer_device_address != 0;
+
+            let mut i = 0;
+            for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
+                if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                    vk_queue_family_index = i;
+                    break;
+                }
+                i += 1;
+            }
+
+            let queue_create_info = vk::DeviceQueueCreateInfo {
+                queue_family_index: vk_queue_family_index,
+                queue_count: 1,
+                p_queue_priorities: [1.0].as_ptr(),
+                ..Default::default()
+            };
+            
+            if !vk_ext_surface.get_physical_device_surface_support(vk_physical_device, vk_queue_family_index, vk_surface).unwrap() {
+                panic!("The physical device queue doesn't support swapchain present!");
+            }
+
+            let extension_names = [ash::extensions::khr::Swapchain::name().as_ptr()];
+            let create_info = vk::DeviceCreateInfo {
+                queue_create_info_count: 1,
+                p_queue_create_infos: [queue_create_info].as_ptr(),
+                enabled_extension_count: extension_names.len() as u32,
+                pp_enabled_extension_names: extension_names.as_ptr(),
+                p_enabled_features: &physical_device_features.features,
+                p_next: &mut indexing_features as *mut _ as *mut c_void,
+                ..Default::default()
+            };
+
+            vk_instance.create_device(vk_physical_device, &create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
         };
 
         //Initialize gpu_allocator
@@ -578,7 +583,7 @@ impl VulkanAPI {
             device: vk_device.clone(),
             physical_device: vk_physical_device,
             debug_settings: Default::default(),
-            buffer_device_address: false,  // Ideally, check the BufferDeviceAddressFeatures struct.
+            buffer_device_address
         }).unwrap();
 
         VulkanAPI {
