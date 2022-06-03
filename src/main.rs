@@ -943,28 +943,27 @@ fn main() {
         let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
         renderer.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
 
+        let view_movement_vector = glm::mat4(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, -1.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 1.0
+        ) * glm::vec3_to_vec4(&input_output.movement_vector);
         if do_freecam {
             const FREECAM_SPEED: f32 = 3.0;
-            let view_movement_vector = glm::mat4(
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, -1.0, 0.0, 0.0,
-                0.0, 0.0, 0.0, 1.0
-            ) * glm::vec3_to_vec4(&input_output.movement_vector);
             let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
             camera.position += glm::vec4_to_vec3(&delta_pos);
             camera.orientation += input_output.orientation_delta;
         } else {
-            let view_movement_vector = glm::mat4(
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, -1.0, 0.0, 0.0,
-                0.0, 0.0, 0.0, 1.0
-            ) * glm::vec3_to_vec4(&input_output.movement_vector);
-
             let delta_pos = 2.0 * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
             totoro_position += glm::vec4_to_vec3(&delta_pos);
         }
+ 
+        //Totoro update
+        let a = ozy::routines::uniform_scale(2.0);
+        let b = glm::translation(&totoro_position);
+        let totoro_model_matrix = b * a;
+        renderer.queue_drawcall(totoro_model_idx, main_pipeline, &[totoro_model_matrix]);
 
         let view_from_world = if do_freecam {
             //Camera orientation based on user input
@@ -1006,11 +1005,6 @@ fn main() {
             glm::look_at(&(totoro_lookat_pos + lookat_target), &lookat_target, &glm::vec3(0.0, 0.0, 1.0))
         };
         last_view_from_world = view_from_world;
- 
-        let a = ozy::routines::uniform_scale(2.0);
-        let b = glm::translation(&totoro_position);
-        let totoro_model_matrix = b * a;
-        renderer.queue_drawcall(totoro_model_idx, main_pipeline, &[totoro_model_matrix]);
 
         let imgui_window_token = if do_imgui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
@@ -1051,8 +1045,7 @@ fn main() {
 
             for i in 0..count {
                 for j in 0..count {
-                    let mat = glm::translation(&glm::vec3(75.0 * i as f32 - 250.0, 75.0 * j as f32 - 250.0, f32::sin(timer.elapsed_time + i as f32) + 10.0)) *
-                              glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+                    let mat = glm::translation(&glm::vec3(75.0 * i as f32 - 250.0, 75.0 * j as f32 - 250.0, 0.0));
                     ms.push(mat);
                 }
             }

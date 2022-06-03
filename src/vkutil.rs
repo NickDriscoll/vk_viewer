@@ -114,21 +114,22 @@ impl VirtualImage {
             _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
         };
 
-        match info.color_type {
-            ColorType::Rgb => unsafe {
-                let format = match info.srgb {
+        let width = info.width;
+        let height = info.height;
+        let pixel_count = (width * height / byte_size_divisor) as usize;
+        let format;
+        let bytes = match info.color_type {
+            ColorType::Rgb => {
+                format = match info.srgb {
                     Some(_) => { vk::Format::R8G8B8A8_SRGB }
                     None => { vk::Format::R8G8B8A8_UNORM }
                 };
 
-                let width = info.width;
-                let height = info.height;
-                let pixel_count = (width * height / byte_size_divisor) as usize;
                 let mut raw_bytes = vec![0u8; 3 * pixel_count];
-                let mut bytes = vec![0xFFu8; 4 * pixel_count];
                 reader.next_frame(&mut raw_bytes).unwrap();
 
                 //Convert to RGBA by adding an alpha of 1.0 to each pixel
+                let mut bytes = vec![0xFFu8; 4 * pixel_count];
                 for i in 0..pixel_count {
                     let idx = 4 * i;
                     let r_idx = 3 * i;
@@ -136,126 +137,168 @@ impl VirtualImage {
                     bytes[idx + 1] = raw_bytes[r_idx + 1];
                     bytes[idx + 2] = raw_bytes[r_idx + 2];
                 }
-                
-                let image_extent = vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1
-                };
-                let image_create_info = vk::ImageCreateInfo {
-                    image_type: vk::ImageType::TYPE_2D,
-                    format,
-                    extent: image_extent,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    samples: vk::SampleCountFlags::TYPE_1,
-                    tiling: vk::ImageTiling::OPTIMAL,
-                    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                    sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    queue_family_index_count: 1,
-                    p_queue_family_indices: &vk.queue_family_index,
-                    initial_layout: vk::ImageLayout::UNDEFINED,
-                    ..Default::default()
-                };
-                let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-                let allocation = allocate_image(vk, image);
-
-                let mut vim = VirtualImage {
-                    vk_image: image,
-                    vk_view: vk::ImageView::default(),
-                    width,
-                    height,
-                    mip_count: 1,
-                    allocation
-                };
-                vkutil::upload_image(vk, vk_command_buffer, &vim, &bytes);
-                
-                let sampler_subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1
-                };
-                let grass_view_info = vk::ImageViewCreateInfo {
-                    image,
-                    format,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: sampler_subresource_range,
-                    ..Default::default()
-                };
-                let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-
-                vim.vk_view = view;
-                vim
+                bytes
             }
-            ColorType::Rgba => unsafe {
-                let format = match info.srgb {
+            ColorType::Rgba => {
+                format = match info.srgb {
                     Some(_) => { vk::Format::R8G8B8A8_SRGB }
                     None => { vk::Format::R8G8B8A8_UNORM }
                 };
 
-                let width = info.width;
-                let height = info.height;
-                let pixel_count = (width * height / byte_size_divisor) as usize;
                 let mut bytes = vec![0xFFu8; 4 * pixel_count];
                 reader.next_frame(&mut bytes).unwrap();
-                
-                let image_extent = vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1
-                };
-                let image_create_info = vk::ImageCreateInfo {
-                    image_type: vk::ImageType::TYPE_2D,
-                    format,
-                    extent: image_extent,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    samples: vk::SampleCountFlags::TYPE_1,
-                    tiling: vk::ImageTiling::OPTIMAL,
-                    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                    sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    queue_family_index_count: 1,
-                    p_queue_family_indices: &vk.queue_family_index,
-                    initial_layout: vk::ImageLayout::UNDEFINED,
-                    ..Default::default()
-                };
-                let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-                let allocation = allocate_image(vk, image);
+                bytes
+            }
+            t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
+        };
 
-                let mut vim = VirtualImage {
-                    vk_image: image,
-                    vk_view: vk::ImageView::default(),
-                    width,
-                    height,
-                    mip_count: 1,
-                    allocation
-                };
-                vkutil::upload_image(vk, vk_command_buffer, &vim, &bytes);
-                
-                let sampler_subresource_range = vk::ImageSubresourceRange {
+        unsafe {
+            let mip_levels = (f32::log2(u32::max(width, height) as f32)) as u32 + 1;
+
+            let image_extent = vk::Extent3D {
+                width,
+                height,
+                depth: 1
+            };
+            let image_create_info = vk::ImageCreateInfo {
+                image_type: vk::ImageType::TYPE_2D,
+                format,
+                extent: image_extent,
+                mip_levels,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: &vk.queue_family_index,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                ..Default::default()
+            };
+            let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let allocation = allocate_image(vk, image);
+
+            let mut vim = VirtualImage {
+                vk_image: image,
+                vk_view: vk::ImageView::default(),
+                width,
+                height,
+                mip_count: mip_levels,
+                allocation
+            };
+            vkutil::upload_image(vk, vk_command_buffer, &vim, &bytes);
+
+            //Generate mipmaps
+            vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: mip_levels,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let image_memory_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                old_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                new_layout: vk::ImageLayout::GENERAL,
+                image,
+                subresource_range,
+                ..Default::default()
+            };
+            vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+        
+            for i in 0..mip_levels-1 {
+                let src_subresource = vk::ImageSubresourceLayers {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
+                    mip_level: i,
                     base_array_layer: 0,
                     layer_count: 1
                 };
-                let grass_view_info = vk::ImageViewCreateInfo {
-                    image,
-                    format,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: sampler_subresource_range,
-                    ..Default::default()
+                let dst_subresource = vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: i + 1,
+                    base_array_layer: 0,
+                    layer_count: 1
                 };
-                let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-
-                vim.vk_view = view;
-                vim
+                let src_offsets = [
+                    vk::Offset3D {x: 0, y: 0, z: 0},
+                    vk::Offset3D {x: (width >> i) as i32, y: (height >> i) as i32, z: 1}
+                ];
+                let dst_offsets = [
+                    vk::Offset3D {x: 0, y: 0, z: 0},
+                    vk::Offset3D {x: (width >> (i + 1)) as i32, y: (height >> (i + 1)) as i32, z: 1}
+                ];
+                let regions = [
+                    vk::ImageBlit {
+                        src_subresource,
+                        src_offsets,
+                        dst_subresource,
+                        dst_offsets
+                    }
+                ];
+                vk.device.cmd_blit_image(
+                    vk_command_buffer,
+                    image,
+                    vk::ImageLayout::GENERAL,
+                    image,
+                    vk::ImageLayout::GENERAL,
+                    &regions,
+                    vk::Filter::LINEAR
+                );
             }
-            t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
+
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: mip_levels,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let image_memory_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                old_layout: vk::ImageLayout::GENERAL,
+                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                image,
+                subresource_range,
+                ..Default::default()
+            };
+            vk.device.cmd_pipeline_barrier(vk_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+
+            vk.device.end_command_buffer(vk_command_buffer).unwrap();
+    
+            let submit_info = vk::SubmitInfo {
+                command_buffer_count: 1,
+                p_command_buffers: &vk_command_buffer,
+                ..Default::default()
+            };        
+            let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+            vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
+            vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+            vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
+            
+            let sampler_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: mip_levels,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let grass_view_info = vk::ImageViewCreateInfo {
+                image,
+                format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                subresource_range: sampler_subresource_range,
+                ..Default::default()
+            };
+            let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+            vim.vk_view = view;
+            vim
         }
     }
 
