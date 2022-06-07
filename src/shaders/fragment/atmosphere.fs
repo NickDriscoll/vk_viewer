@@ -56,7 +56,7 @@ vec3 Unity_Blackbody_float(float Temperature) {
 void main() {
     vec3 view_direction = normalize(f_view_direction);
     float sunzenith_dot = sun_direction.z * 0.5 + 0.5;
-    float sunview_dot = dot(sun_direction, view_direction) * 0.5 + 0.5;
+    float sunview_dot = dot(sun_direction.xyz, view_direction) * 0.5 + 0.5;
     float viewzenith_dot = view_direction.z * 0.5 + 0.5;
 
     vec3 base_color = texture(global_textures2D[sunzenith_idx], vec2(sunzenith_dot, 0.5)).rgb;

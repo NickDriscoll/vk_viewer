@@ -303,7 +303,7 @@ impl VirtualImage {
     }
 
     pub unsafe fn from_bc7(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, path: &str, color_space: ColorSpace) -> Self {
-        let mut file = unwrap_result(File::open(path), &format!("Error opening image {}", path));
+        let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
         let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
 
         let width = dds_header.width;
@@ -800,7 +800,7 @@ impl Display {
             image_views
         };
 
-        let vk_depth_format;
+        let vk_depth_format = vk::Format::D32_SFLOAT;
         let vk_depth_image = unsafe {
             let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
             let extent = vk::Extent3D {
@@ -809,7 +809,6 @@ impl Display {
                 depth: 1
             };
 
-            vk_depth_format = vk::Format::D24_UNORM_S8_UINT;
             let create_info = vk::ImageCreateInfo {
                 queue_family_index_count: 1,
                 p_queue_family_indices: [vk.queue_family_index].as_ptr(),

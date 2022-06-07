@@ -275,7 +275,7 @@ fn main() {
         };
 
         let depth_attachment_description = vk::AttachmentDescription {
-            format: vk::Format::D24_UNORM_S8_UINT,
+            format: vk::Format::D32_SFLOAT,
             samples: vk::SampleCountFlags::TYPE_1,
             load_op: vk::AttachmentLoadOp::CLEAR,
             store_op: vk::AttachmentStoreOp::DONT_CARE,
@@ -331,6 +331,7 @@ fn main() {
 
     //Allocate buffer for frame-constant uniforms
     let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
+    println!("Frame uniform buffer is {} bytes", uniform_buffer_size);
     let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
     let frame_uniform_buffer = VirtualBuffer::allocate(
         &mut vk,
@@ -443,6 +444,7 @@ fn main() {
 
     //Write constant values to buffer descriptors vkUpdateDescriptorSets()
     unsafe {
+        println!("Frame uniform buffer length: {}", frame_uniform_buffer.length());
         let uniform_infos = [
             vk::DescriptorBufferInfo {
                 buffer: frame_uniform_buffer.backing_buffer(),
@@ -515,7 +517,7 @@ fn main() {
         //Load shaders
         let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/main.vs.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/main.fs.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/pbr.fs.spv");
             [v, f]
         };
         
@@ -729,7 +731,6 @@ fn main() {
     let mut renderer = Renderer::new();
 
     //Load gltf object
-    //let glb_name = "./data/models/BoomBox_fixed.glb";
     let glb_name = "./data/models/nice_tree.glb";
     let glb_data = gltfutil::gltf_meshdata(glb_name);
 
@@ -812,6 +813,8 @@ fn main() {
     let mut sun_yaw = 0.783;
     let mut stars_threshold = 8.0;
     let mut stars_exposure = 200.0;
+    let mut trees_width = 1;
+    let mut trees_height = 1;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
@@ -965,9 +968,11 @@ fn main() {
         let totoro_model_matrix = b * a;
         renderer.queue_drawcall(totoro_model_idx, main_pipeline, &[totoro_model_matrix]);
 
+        let campos;
         let view_from_world = if do_freecam {
             //Camera orientation based on user input
             camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
+            campos = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
             camera.make_view_matrix()
         } else {
             let min = 3.0;
@@ -1002,7 +1007,10 @@ fn main() {
             }
 
             let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 0.75);
-            glm::look_at(&(totoro_lookat_pos + lookat_target), &lookat_target, &glm::vec3(0.0, 0.0, 1.0))
+            let pos = totoro_lookat_pos + lookat_target;
+            let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
+            campos = glm::vec4(pos.x, pos.y, pos.z, 1.0);
+            m
         };
         last_view_from_world = view_from_world;
 
@@ -1037,14 +1045,14 @@ fn main() {
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
             imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut stars_threshold);
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut stars_exposure);
+            imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
+            imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
 
         let bb_mats = {
-            let count = 4;
-            let mut ms = Vec::with_capacity(count * count);
-
-            for i in 0..count {
-                for j in 0..count {
+            let mut ms = Vec::with_capacity((trees_width * trees_height) as usize);
+            for i in 0..trees_width {
+                for j in 0..trees_height {
                     let mat = glm::translation(&glm::vec3(75.0 * i as f32 - 250.0, 75.0 * j as f32 - 250.0, 0.0));
                     ms.push(mat);
                 }
@@ -1156,6 +1164,7 @@ fn main() {
             unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
         }
 
+        //Update bindless material definitions
         if global_materials.updated {
             global_materials.updated = false;
 
@@ -1204,16 +1213,18 @@ fn main() {
             //that the sky is infinitely far away
             let skybox_view_projection = projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_from_world));
 
+            let sundir = glm::vec4(sun_direction.x, sun_direction.y, sun_direction.z, 0.0);
             let uniform_buffer = [
                 clip_from_screen.as_slice(),
                 view_projection.as_slice(),
                 projection_matrix.as_slice(),
                 view_from_world.as_slice(),
                 skybox_view_projection.as_slice(),
-                sun_direction.as_slice(),
+                campos.as_slice(),
+                sundir.as_slice(),
+                &[5.0, 5.0, 5.0, 0.0],
                 &[timer.elapsed_time, stars_threshold, stars_exposure]
             ].concat();
-
             frame_uniform_buffer.upload_buffer(&uniform_buffer);
 
             //Update model matrix storage buffer
