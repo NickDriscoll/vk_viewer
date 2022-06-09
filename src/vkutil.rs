@@ -389,7 +389,7 @@ impl VirtualImage {
 pub unsafe fn upload_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, image: &VirtualImage, raw_bytes: &[u8]) {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
-    let staging_buffer = VirtualBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC);
+    let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC);
     staging_buffer.upload_buffer(&raw_bytes);
 
     vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
@@ -642,13 +642,13 @@ impl VulkanAPI {
     }
 }
 
-pub struct VirtualBuffer {
+pub struct GPUBuffer {
     buffer: vk::Buffer,
     allocation: Allocation,
     length: vk::DeviceSize
 }
 
-impl VirtualBuffer {
+impl GPUBuffer {
     //Read-only access to fields
     pub fn allocation(&self) -> &Allocation { &self.allocation }
     pub fn backing_buffer(&self) -> vk::Buffer { self.buffer }
@@ -677,11 +677,15 @@ impl VirtualBuffer {
             a
         };
 
-        VirtualBuffer {
+        GPUBuffer {
             buffer: vk_buffer,
             allocation,
             length: actual_size
         }
+    }
+
+    pub fn free(self, vk: &mut VulkanAPI) {
+        vk.allocator.free(self.allocation).unwrap();
     }
 
     fn unchecked_ptr(&self) -> *mut c_void {
@@ -697,15 +701,15 @@ impl VirtualBuffer {
 }
 
 pub struct VirtualGeometry {
-    pub vertex_buffer: VirtualBuffer,
-    pub index_buffer: VirtualBuffer,
+    pub vertex_buffer: GPUBuffer,
+    pub index_buffer: GPUBuffer,
     pub index_count: u32
 }
 
 impl VirtualGeometry {
     pub fn create(vk: &mut VulkanAPI, vertices: &[f32], indices: &[u32]) -> Self {
-        let vertex_buffer = VirtualBuffer::allocate(vk, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER);
-        let index_buffer = VirtualBuffer::allocate(vk, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER);
+        let vertex_buffer = GPUBuffer::allocate(vk, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER);
+        let index_buffer = GPUBuffer::allocate(vk, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER);
         vertex_buffer.upload_buffer(vertices);
         index_buffer.upload_buffer(indices);
         VirtualGeometry {
@@ -713,6 +717,10 @@ impl VirtualGeometry {
             index_buffer,
             index_count: indices.len() as u32
         }
+    }
+
+    pub fn delete(self, vk: &mut VulkanAPI) {
+        vk.allocator.free(self.vertex_buffer.allocation).unwrap();
     }
 }
 

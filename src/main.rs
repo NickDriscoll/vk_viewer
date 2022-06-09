@@ -4,6 +4,7 @@ extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
 mod gltfutil;
+mod gui;
 mod input;
 mod render;
 mod structs;
@@ -26,9 +27,11 @@ use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
-use vkutil::{ColorSpace, FreeList, VirtualBuffer, VirtualGeometry, VirtualImage, VulkanAPI};
+use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualGeometry, VirtualImage, VulkanAPI};
 use structs::{Camera, NoiseParameters, TerrainSpec};
 use render::{DrawData, Renderer, FrameUniforms, Material};
+
+use crate::gui::{Imgui, ImguiFrame};
 
 fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
@@ -333,7 +336,7 @@ fn main() {
     let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
     println!("Frame uniform buffer is {} bytes", uniform_buffer_size);
     let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
-    let frame_uniform_buffer = VirtualBuffer::allocate(
+    let frame_uniform_buffer = GPUBuffer::allocate(
         &mut vk,
         uniform_buffer_size,
         uniform_buffer_alignment,
@@ -344,7 +347,7 @@ fn main() {
     let storage_buffer_alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
     let global_transform_slots = 1024 * 1024;
     let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
-    let transform_storage_buffer = VirtualBuffer::allocate(
+    let transform_storage_buffer = GPUBuffer::allocate(
         &mut vk,
         buffer_size,
         storage_buffer_alignment,
@@ -354,7 +357,7 @@ fn main() {
     //Allocate material buffer
     let global_material_slots = 1024;
     let material_size = 2 * size_of::<u32>() as u64;
-    let material_storage_buffer = VirtualBuffer::allocate(
+    let material_storage_buffer = GPUBuffer::allocate(
         &mut vk,
         material_size * global_material_slots,
         storage_buffer_alignment,
@@ -801,6 +804,7 @@ fn main() {
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
     let mut last_view_from_world = glm::identity();
+    let mut do_freecam = true;
 
     let mut totoro_position: glm::TVec3<f32> = glm::zero();
     let mut totoro_lookat_dist = 7.5;
@@ -821,9 +825,7 @@ fn main() {
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
-    let mut do_imgui = true;
-    let mut do_terrain_window = false;
-    let mut do_freecam = true;
+    let mut debug_gui = gui::Imgui::new();
     
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
@@ -853,7 +855,7 @@ fn main() {
         };
 
         //Handling of some input results before update
-        if input_output.gui_toggle { do_imgui = !do_imgui }
+        if input_output.gui_toggle { debug_gui.do_gui = !debug_gui.do_gui }
         if input_output.regen_terrain {
             if let Some(ter) = renderer.get_model(terrain_model_idx) {
                 regenerate_terrain(&mut terrain, &ter.geometry, terrain_fixed_seed);
@@ -893,7 +895,7 @@ fn main() {
 
         //Update
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
-        if do_imgui && do_terrain_window {
+        if debug_gui.do_gui && debug_gui.do_terrain_window {
             if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) { 
                 let mut parameters_changed = false;
 
@@ -938,7 +940,7 @@ fn main() {
                     }
                 }
 
-                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { do_terrain_window = false; }
+                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { debug_gui.do_terrain_window = false; }
 
                 token.end();
             }
@@ -1015,7 +1017,7 @@ fn main() {
         };
         last_view_from_world = view_from_world;
 
-        let imgui_window_token = if do_imgui {
+        let imgui_window_token = if debug_gui.do_gui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
         } else {
             None
@@ -1025,7 +1027,7 @@ fn main() {
             if let Some(mb) = imgui_ui.begin_menu_bar() {
                 if let Some(mt) = imgui_ui.begin_menu("Environment") {
                     if imgui::MenuItem::new("Terrain builder").build(&imgui_ui) {
-                        do_terrain_window = true;
+                        debug_gui.do_terrain_window = true;
                     }
                     mt.end();
                 }
@@ -1091,7 +1093,7 @@ fn main() {
         }
         
         //Dear ImGUI virtual geo allocations
-        let (imgui_geometries, imgui_cmd_lists) = {
+        {
             let mut geos = Vec::with_capacity(16);
             let mut cmds = Vec::with_capacity(16);
 
@@ -1131,7 +1133,11 @@ fn main() {
                     cmds.push(cmd_list);
                 }
             }
-            (geos, cmds)
+
+            debug_gui.frames[debug_gui.current_frame] = ImguiFrame {
+                geometries: geos,
+                draw_cmd_lists: cmds
+            };
         };
 
         //Pre-render phase
@@ -1140,6 +1146,15 @@ fn main() {
         unsafe {
             vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
             vk.device.reset_fences(&[vk_submission_fence]).unwrap();
+        }
+
+        //Destroy Dear ImGUI allocations from last frame
+        {
+            let last_frame = (debug_gui.current_frame + 1) % Imgui::FRAMES_IN_FLIGHT;
+            let geo_count = debug_gui.frames[last_frame].geometries.len();
+            for geo in debug_gui.frames[last_frame].geometries.drain(0..geo_count) {
+                geo.delete(&mut vk);
+            }
         }
 
         //Update bindless texture sampler descriptors
@@ -1313,15 +1328,16 @@ fn main() {
             //Record Dear ImGUI drawing commands
             let mut prev_tex_id = u32::MAX;
             vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);
-            for i in 0..imgui_cmd_lists.len() {
-                let cmd_list = &imgui_cmd_lists[i];
+            let gui_frame = &debug_gui.frames[debug_gui.current_frame];
+            for i in 0..gui_frame.draw_cmd_lists.len() {
+                let cmd_list = &gui_frame.draw_cmd_lists[i];
                 for cmd in cmd_list {
                     match cmd {
                         DrawCmd::Elements {count, cmd_params} => {
                             let i_offset = cmd_params.idx_offset;
                             let v_offset = cmd_params.vtx_offset;
-                            let v_buffer = &imgui_geometries[i].vertex_buffer;
-                            let i_buffer = &imgui_geometries[i].index_buffer;
+                            let v_buffer = &gui_frame.geometries[i].vertex_buffer;
+                            let i_buffer = &gui_frame.geometries[i].index_buffer;
 
                             let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
                             let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
@@ -1356,6 +1372,7 @@ fn main() {
                     }
                 }
             }
+            debug_gui.current_frame = (debug_gui.current_frame + 1) % Imgui::FRAMES_IN_FLIGHT;
 
             vk.device.cmd_end_render_pass(vk_command_buffer);
 
