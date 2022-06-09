@@ -14,6 +14,8 @@ pub struct GLTFMaterial {
     pub color_imagetype: GLTFImageType,
     pub normal_bytes: Option<Vec<u8>>,
     pub normal_imagetype: GLTFImageType,
+    pub metallic_roughness_bytes: Option<Vec<u8>>,
+    pub metallic_roughness_imagetype: GLTFImageType,
 }
 
 pub struct GLTFPrimitive {
@@ -26,38 +28,41 @@ pub struct GLTFData {
     pub primitives: Vec<GLTFPrimitive>
 }
 
+fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic) -> Option<Vec<f32>> {
+    let acc = match prim.get(&semantic) {
+        Some(a) => { a }
+        None => { return None; }
+    };
+    let view = acc.view().unwrap();
+
+    let byte_stride = match view.stride() {
+        Some(s) => { s }
+        None => { 0 }
+    };
+
+    unsafe {
+        match &glb.blob {
+            Some(blob) => {
+                let mut data = vec![0.0; view.length()/4];
+                let src_ptr = blob.as_ptr() as *const u8;
+                let src_ptr = src_ptr.offset(view.offset() as isize);
+                ptr::copy_nonoverlapping(src_ptr, data.as_mut_ptr() as *mut u8, view.length());
+                Some(data)
+            }
+            None => {
+                crash_with_error_dialog("Invalid glb. No blob.");
+            }
+        }
+    }
+}
+
 pub fn gltf_meshdata(path: &str) -> GLTFData {
     let glb = Gltf::open(path).unwrap();
     let mut primitives = vec![];
     for mesh in glb.meshes() {
-        use gltf::Semantic;
-        let semantics = [Semantic::Positions, Semantic::Normals, Semantic::Tangents, Semantic::TexCoords(0)];
-        let mut vecs: [Vec<f32>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
         for prim in mesh.primitives() {
-            let mut vertex_buffer;
-
-            for s_idx in 0..semantics.len() {
-                let sem = &semantics[s_idx];
-                let acc = prim.get(sem).unwrap();
-                let view = acc.view().unwrap();
-
-                let byte_stride = match view.stride() {
-                    Some(s) => { s }
-                    None => { 0 }
-                };
-
-                unsafe {
-                    if let Some(blob) = &glb.blob {
-                        vecs[s_idx] = vec![0.0; view.length()/4];
-                        let src_ptr = blob.as_ptr() as *const u8;
-                        let src_ptr = src_ptr.offset(view.offset() as isize);
-                        ptr::copy_nonoverlapping(src_ptr, vecs[s_idx].as_mut_ptr() as *mut u8, view.length());
-                    }
-                }
-            }
-
+            //We always expect an index buffer to be present
             let acc = prim.indices().unwrap();
-
             let index_buffer = unsafe {
                 let view = acc.view().unwrap();
                 match acc.data_type() {
@@ -87,16 +92,17 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 }
             };
 
+            //We always expect position data to be present
+            use gltf::Semantic;
+            let position_vec = get_f32_semantic(&glb, &prim, Semantic::Positions).unwrap();
+            let normal_vec = get_f32_semantic(&glb, &prim, Semantic::Normals).unwrap();
+            let tangent_vec = get_f32_semantic(&glb, &prim, Semantic::Tangents).unwrap();
+            let texcoord_vec = get_f32_semantic(&glb, &prim, Semantic::TexCoords(0)).unwrap();
+
             //Now, interleave the mesh data
-            let position_vec = &vecs[0];
-            let normal_vec = &vecs[1];
-            let tangent_vec = &vecs[2];
-            let texcoord_vec = &vecs[3];
-            vertex_buffer = vec![0.0f32; position_vec.len() + normal_vec.len() + 6 * tangent_vec.len() / 4 + texcoord_vec.len()];
-            
+            let mut vertex_buffer = vec![0.0f32; position_vec.len() + normal_vec.len() + 6 * tangent_vec.len() / 4 + texcoord_vec.len()];
             for i in 0..(vertex_buffer.len() / 14) {
                 let current_idx = i * 14;
-
                 let normal = glm::vec3(normal_vec[3 * i], normal_vec[3 * i + 1], normal_vec[3 * i + 2]);
                 let tangent = glm::vec3(tangent_vec[4 * i], tangent_vec[4 * i + 1], tangent_vec[4 * i + 2]);
                 let bitangent = glm::cross(&normal, &tangent);
@@ -141,8 +147,9 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
             }
 
             let mat = prim.material();
+            let pbr_model = mat.pbr_metallic_roughness();
 
-            let tex_data_source = mat.pbr_metallic_roughness().base_color_texture().unwrap().texture().source().source();
+            let tex_data_source = pbr_model.base_color_texture().unwrap().texture().source().source();
             let color_bytes = png_bytes_from_source(&glb, tex_data_source);
 
             let normal_bytes = match mat.normal_texture() {
@@ -153,11 +160,21 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 None => { None }
             };
 
+            let metallic_roughness_bytes = match pbr_model.metallic_roughness_texture() {
+                Some(texture) => {
+                    let source = texture.texture().source().source();
+                    Some(png_bytes_from_source(&glb, source))
+                }
+                None => { None }
+            };
+
             let mat = GLTFMaterial {
                 color_bytes,
                 color_imagetype: GLTFImageType::PNG,
                 normal_bytes,
-                normal_imagetype: GLTFImageType::PNG
+                normal_imagetype: GLTFImageType::PNG,
+                metallic_roughness_bytes,
+                metallic_roughness_imagetype: GLTFImageType::PNG
             };
 
             let p = GLTFPrimitive {

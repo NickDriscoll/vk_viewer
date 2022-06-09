@@ -731,12 +731,12 @@ fn main() {
     let mut renderer = Renderer::new();
 
     //Load gltf object
-    let glb_name = "./data/models/nice_tree.glb";
-    let glb_data = gltfutil::gltf_meshdata(glb_name);
+    let glb_name = "./data/models/pbr_sphere.glb";
+    let tree_data = gltfutil::gltf_meshdata(glb_name);
 
     //Register each primitive with the renderer
-    let mut glb_model_indices = vec![];
-    for prim in glb_data.primitives {
+    let mut tree_model_indices = vec![];
+    for prim in tree_data.primitives {
         let geometry = VirtualGeometry::create(&mut vk, &prim.vertices, &prim.indices);
         
         let color_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, prim.material.color_bytes.as_slice());
@@ -769,7 +769,7 @@ fn main() {
             geometry,
             material_idx
         });
-        glb_model_indices.push(model_idx);
+        tree_model_indices.push(model_idx);
     }
 
     let terrain_geometry;
@@ -811,6 +811,7 @@ fn main() {
     let mut sun_speed = 0.003;
     let mut sun_pitch = 0.118;
     let mut sun_yaw = 0.783;
+    let mut sun_luminance = [2.0, 2.0, 2.0, 0.0];
     let mut stars_threshold = 8.0;
     let mut stars_exposure = 200.0;
     let mut trees_width = 1;
@@ -1053,14 +1054,14 @@ fn main() {
             let mut ms = Vec::with_capacity((trees_width * trees_height) as usize);
             for i in 0..trees_width {
                 for j in 0..trees_height {
-                    let mat = glm::translation(&glm::vec3(75.0 * i as f32 - 250.0, 75.0 * j as f32 - 250.0, 0.0));
+                    let mat = glm::translation(&glm::vec3(25.0 * i as f32 - 50.0, 25.0 * j as f32 - 50.0, 0.0)) * ozy::routines::uniform_scale(3.0);
                     ms.push(mat);
                 }
             }
             ms
         };
 
-        for idx in &glb_model_indices {
+        for idx in &tree_model_indices {
             renderer.queue_drawcall(*idx, main_pipeline, &bb_mats);
         }
         
@@ -1222,7 +1223,7 @@ fn main() {
                 skybox_view_projection.as_slice(),
                 campos.as_slice(),
                 sundir.as_slice(),
-                &[5.0, 5.0, 5.0, 0.0],
+                &sun_luminance,
                 &[timer.elapsed_time, stars_threshold, stars_exposure]
             ].concat();
             frame_uniform_buffer.upload_buffer(&uniform_buffer);
@@ -1297,7 +1298,7 @@ fn main() {
                     let pcs = [model.material_idx.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
                     vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
                     vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[model.geometry.vertex_buffer.backing_buffer()], &[0 as u64]);
-                    vk.device.cmd_bind_index_buffer(vk_command_buffer, model.geometry.index_buffer.backing_buffer(), (0) as vk::DeviceSize, vk::IndexType::UINT32);
+                    vk.device.cmd_bind_index_buffer(vk_command_buffer, model.geometry.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
                     vk.device.cmd_draw_indexed(vk_command_buffer, model.geometry.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }

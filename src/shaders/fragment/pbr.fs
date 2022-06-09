@@ -19,7 +19,7 @@ layout(push_constant) uniform Indices {
     uint material_idx;
 };
 
-const float PI = 3.141592654;
+const float PI = 3.14159265359;
 
 //Everything is from https://learnopengl.com/PBR/Theory
 
@@ -31,7 +31,7 @@ vec3 fresnel_schlick(vec3 base_reflectivity, vec3 halfway, vec3 view) {
 //Trowbridge-Reitz
 //Approximation of roughness at a point
 float NDFggxtr(vec3 normal, vec3 halfway, float roughness) {
-    float thedot = dot(normal, halfway);
+    float thedot = max(dot(normal, halfway), 0.0);
     float r2 = roughness * roughness;
     float squared_term = thedot*thedot * (r2 - 1.0) + 1.0;
     return r2 / (PI * squared_term * squared_term);
@@ -40,13 +40,11 @@ float NDFggxtr(vec3 normal, vec3 halfway, float roughness) {
 float schlick_ggx(vec3 normal, vec3 view, float roughness) {
     float k = (roughness + 1.0) * (roughness + 1.0) / 8.0; //Direct
     //float k = roughness * roughness / 2.0; //IBL
-    float thedot = dot(normal, view);
+    float thedot = max(dot(normal, view), 0.0);
     return thedot / (thedot * (1.0 - k) + k);
 }
 
 float geometry_smith(vec3 normal, vec3 view, vec3 light_direction, float roughness) {
-    float k = (roughness + 1.0) * (roughness + 1.0) / 8.0; //Direct
-    //float k = roughness * roughness / 2.0; //IBL
     float ggx1 = schlick_ggx(normal, view, roughness);
     float ggx2 = schlick_ggx(normal, light_direction, roughness);
     return ggx1 * ggx2;
@@ -56,26 +54,16 @@ vec3 f_lambert(vec3 color) {
     return color / PI;
 }
 
-vec3 f_cook_torrence(vec3 normal, vec3 view, vec3 light_direction, vec3 halfway, float roughness) {
-    float D = NDFggxtr(normal, halfway, roughness);
-    vec3 F = fresnel_schlick(vec3(0.04), halfway, view);
-    float G = geometry_smith(normal, view, light_direction, roughness);
-    vec3 numerator = D * F * G;
-    float denominator = 4.0 * max(dot(normal, view), 0.0) * max(dot(normal, light_direction), 0.0) + 0.0001;
-    return numerator / denominator;
-}
-
 void main() {
     //Assemble input data
     vec3 tangent = normalize(f_tangent);
     vec3 bitangent = normalize(f_bitangent);
     vec3 normal = normalize(f_normal);
     vec3 view = normalize(camera_position.xyz - f_position);
-    vec3 halfway = normalize(normal + sun_direction.xyz);
     mat3 TBN = mat3(tangent, bitangent, normal);
     Material my_mat = global_materials[material_idx];
 
-    float roughness = 0.75;
+    float roughness = 0.3;
     float metallic = 0.0;
     float ambient_occlusion = 1.0;
 
@@ -88,12 +76,21 @@ void main() {
     vec3 sampled_normal = 2.0 * texture(global_textures[my_mat.normal_map_index], f_uv).xyz - 1.0;
     vec3 world_normal = normalize(TBN * sampled_normal);
     
+    vec3 halfway = normalize(view + sun_direction.xyz);
     vec3 ks = fresnel_schlick(vec3(0.04), halfway, view);
     vec3 kd = vec3(1.0) - ks;
     kd *= 1.0 - metallic;
 
+    //Cook-Torrence specular term evaluation
+    float D = NDFggxtr(normal, halfway, roughness);
+    vec3 F = ks;
+    float G = geometry_smith(normal, view, sun_direction.xyz, roughness);
+    vec3 numerator = D * F * G;
+    float denominator = 4.0 * max(dot(normal, view), 0.0) * max(dot(normal, sun_direction.xyz), 0.0) + 0.0001;
+    vec3 cook_torrence = numerator / denominator;
+
     //Luminance from the sun
-    vec3 Lo = (kd * f_lambert(albedo) + f_cook_torrence(world_normal, view, sun_direction.xyz, halfway, roughness)) * sun_radiance.xyz * max(0.0, dot(world_normal, sun_direction.xyz));
+    vec3 Lo = (kd * f_lambert(albedo) + cook_torrence) * sun_radiance.xyz * max(0.0, dot(world_normal, sun_direction.xyz));
     vec3 ambient = vec3(0.03) * albedo * ambient_occlusion;
     
     vec3 color = Lo + ambient;
