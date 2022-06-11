@@ -91,6 +91,8 @@ void main() {
 
     //Luminance from the sun
     vec3 Lo = (kd * f_lambert(albedo) + cook_torrence) * sun_radiance.xyz * max(0.0, dot(world_normal, sun_direction.xyz));
+    float sun_contribution = 1.0 - smoothstep(0.0, -0.05, sun_direction.z);
+    Lo *= sun_contribution;
     vec3 ambient = vec3(0.03) * albedo * ambient_occlusion;
     
     vec3 color = Lo + ambient;

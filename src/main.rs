@@ -1,7 +1,9 @@
 #![allow(non_snake_case)]
+
+//Alias some library names
 extern crate nalgebra_glm as glm;
-extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
+extern crate ozy_engine as ozy;
 
 mod gltfutil;
 mod gui;
@@ -734,7 +736,7 @@ fn main() {
     let mut renderer = Renderer::new();
 
     //Load gltf object
-    let glb_name = "./data/models/pbr_sphere.glb";
+    let glb_name = "./data/models/nice_tree.glb";
     let tree_data = gltfutil::gltf_meshdata(glb_name);
 
     //Register each primitive with the renderer
