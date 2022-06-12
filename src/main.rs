@@ -336,7 +336,6 @@ fn main() {
 
     //Allocate buffer for frame-constant uniforms
     let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
-    println!("Frame uniform buffer is {} bytes", uniform_buffer_size);
     let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
     let frame_uniform_buffer = GPUBuffer::allocate(
         &mut vk,
@@ -345,10 +344,10 @@ fn main() {
         vk::BufferUsageFlags::UNIFORM_BUFFER
     );
     
-    //Allocate buffer for object transforms
+    //Allocate buffer for instance data
     let storage_buffer_alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
     let global_transform_slots = 1024 * 1024;
-    let buffer_size = (size_of::<glm::TMat4<f32>>() * global_transform_slots) as vk::DeviceSize;
+    let buffer_size = (size_of::<render::InstanceData>() * global_transform_slots) as vk::DeviceSize;
     let transform_storage_buffer = GPUBuffer::allocate(
         &mut vk,
         buffer_size,
@@ -449,7 +448,6 @@ fn main() {
 
     //Write constant values to buffer descriptors vkUpdateDescriptorSets()
     unsafe {
-        println!("Frame uniform buffer length: {}", frame_uniform_buffer.length());
         let uniform_infos = [
             vk::DescriptorBufferInfo {
                 buffer: frame_uniform_buffer.backing_buffer(),
@@ -521,13 +519,15 @@ fn main() {
     let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/main.vs.spv");
+            //let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/main.vs.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/pbr.fs.spv");
             [v, f]
         };
         
         let terrain_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/main.vs.spv");
+            //let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/main.vs.spv");
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/terrain.fs.spv");
             [v, f]
         };
@@ -1036,7 +1036,7 @@ fn main() {
                 mb.end();
             }
 
-            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime)", input_output.framerate, 1000.0 / input_output.framerate));
+            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime, frame {})", input_output.framerate, 1000.0 / input_output.framerate, timer.frame_count));
             let (message, color) =  if input_system.controllers[0].is_some() {
                 ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
             } else {
@@ -1246,8 +1246,7 @@ fn main() {
             frame_uniform_buffer.upload_buffer(&uniform_buffer);
 
             //Update model matrix storage buffer
-            let global_transforms = renderer.get_transforms();
-            transform_storage_buffer.upload_buffer(&global_transforms);
+            transform_storage_buffer.upload_buffer(&renderer.get_instance_data());
         };
 
         //Draw

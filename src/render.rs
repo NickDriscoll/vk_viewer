@@ -22,22 +22,39 @@ pub struct DrawData {
     pub material_idx: u32
 }
 
+pub struct InstanceData {
+    pub world_from_model: glm::TMat4<f32>,
+    pub normal_matrix: glm::TMat4<f32>
+}
+
+impl InstanceData {
+    pub fn new(world_from_model: glm::TMat4<f32>) -> Self {
+        let normal_matrix = glm::mat4_to_mat3(&world_from_model);
+        let normal_matrix = glm::transpose(&glm::mat3_to_mat4(&glm::affine_inverse(normal_matrix)));
+
+        InstanceData {
+            world_from_model,
+            normal_matrix
+        }
+    }
+}
+
 pub struct Renderer {
     models: OptionVec<DrawData>,
     drawlist: Vec<DrawCall>,
-    transforms: Vec<glm::TMat4<f32>>
+    instance_data: Vec<InstanceData>
 }
 
 impl Renderer {
-    pub fn get_transforms(&self) -> &Vec<glm::TMat4<f32>> {
-        &self.transforms
+    pub fn get_instance_data(&self) -> &Vec<InstanceData> {
+        &self.instance_data
     }
 
     pub fn new() -> Self {
         Renderer {
             models: OptionVec::new(),
             drawlist: Vec::new(),
-            transforms: Vec::new()
+            instance_data: Vec::new()
         }
     }
 
@@ -45,7 +62,7 @@ impl Renderer {
         Renderer {
             models: OptionVec::with_capacity(size),
             drawlist: Vec::with_capacity(size),
-            transforms: Vec::with_capacity(size)
+            instance_data: Vec::with_capacity(size)
         }
     }
 
@@ -64,10 +81,11 @@ impl Renderer {
         }
 
         let instance_count = transforms.len() as u32;
-        let first_instance = self.transforms.len() as u32;
+        let first_instance = self.instance_data.len() as u32;
 
         for t in transforms {
-            self.transforms.push(*t);
+            let instance_data = InstanceData::new(*t);
+            self.instance_data.push(instance_data);
         }
         let drawcall = DrawCall {
             geometry_idx: model_idx,
@@ -85,7 +103,7 @@ impl Renderer {
 
     pub fn reset(&mut self) {
         self.drawlist.clear();
-        self.transforms.clear();
+        self.instance_data.clear();
     }
 }
 
