@@ -38,8 +38,8 @@ pub const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping
 };
 
 pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
-    let mut file = File::open(path).unwrap();
-    let spv = ash::util::read_spv(&mut file).unwrap();
+    let mut file = unwrap_result(File::open(path), &format!("Unable to read shader spv file {}", path));
+    let spv = unwrap_result(ash::util::read_spv(&mut file), &format!("Unable to read shader spv file {}", path));
 
     let module_create_info = vk::ShaderModuleCreateInfo {
         code_size: spv.len() * size_of::<u32>(),
