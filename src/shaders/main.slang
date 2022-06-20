@@ -5,22 +5,22 @@ Texture2D global_textures[];
 StructuredBuffer<InstanceData> instance_buffer;
 
 [shader("vertex")]
-VertexOutput main(VertexInput input) {
-    float4x4 model_matrix = instance_buffer[input.instance_id].world_from_model;
-    float4x4 normal_matrix = instance_buffer[input.instance_id].normal_matrix;
+MeshVertexOutput vertex_main(VertexInput vertex) {
+    float4x4 model_matrix = instance_buffer[vertex.instance_id].world_from_model;
+    float4x4 normal_matrix = instance_buffer[vertex.instance_id].normal_matrix;
 
-    float3 world_position = mul(model_matrix, float4(input.position, 1.0)).xyz;
+    float3 world_position = mul(model_matrix, float4(vertex.position, 1.0)).xyz;
     
-    float3 world_tangent = normalize(mul(normal_matrix, float4(input.tangent, 1.0)).xyz);
-    float3 world_bitangent = normalize(mul(normal_matrix, float4(input.bitangent, 1.0)).xyz);
-    float3 world_normal = normalize(mul(normal_matrix, float4(input.normal, 1.0)).xyz);
+    float3 world_tangent = normalize(mul(normal_matrix, float4(vertex.tangent, 1.0)).xyz);
+    float3 world_bitangent = normalize(mul(normal_matrix, float4(vertex.bitangent, 1.0)).xyz);
+    float3 world_normal = normalize(mul(normal_matrix, float4(vertex.normal, 1.0)).xyz);
 
     //Assemble and return output
-    VertexOutput output;
+    MeshVertexOutput output;
     output.clip_out = mul(uniforms.clip_from_world, float4(world_position, 1.0));
     output.f_position = world_position;
     output.f_normal = world_normal;
-    output.f_uvs = input.uvs;
+    output.f_uvs = vertex.uvs;
     output.f_tangent = world_tangent;
     output.f_bitangent = world_bitangent;
 

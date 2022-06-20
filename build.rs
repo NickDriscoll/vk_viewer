@@ -26,6 +26,16 @@ fn main() {
         write!(build_log, "{:?}\n", out).unwrap();
     }
 
+    //Slang shader compilation
+    let out = Command::new("slangc").args(["-stage", "vertex", "-entry", "vertex_main", "-o", ".\\data\\shaders\\vertex_main.spv", ".\\src\\shaders\\main.slang"]).output().unwrap();
+    write!(build_log, "{:?}\n", out).unwrap();
+    let out = Command::new("slangc").args(["-stage", "vertex", "-entry", "vertex_main", "-o", ".\\data\\shaders\\atmosphere_vert.spv", ".\\src\\shaders\\atmosphere.slang"]).output().unwrap();
+    write!(build_log, "{:?}\n", out).unwrap();
+    let out = Command::new("slangc").args(["-stage", "fragment", "-entry", "fragment_main", "-o", ".\\data\\shaders\\atmosphere_vert.spv", ".\\src\\shaders\\atmosphere.slang"]).output().unwrap();
+    write!(build_log, "{:?}\n", out).unwrap();
+    let out = Command::new("slangc").args(["-stage", "fragment", "-entry", "fragment_main", "-o", ".\\data\\shaders\\pbr_metallic_roughness.spv", ".\\src\\shaders\\pbr_metallic_roughness.slang"]).output().unwrap();
+    write!(build_log, "{:?}\n", out).unwrap();
+
     //Copy SDL2 dlls to target directory
     if let Err(e) = std::fs::copy("./redist/SDL2_mixer.dll", "./target/release/SDL2_mixer.dll") {
         write!(build_log, "{}\n", e).unwrap();

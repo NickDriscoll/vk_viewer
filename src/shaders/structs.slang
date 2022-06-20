@@ -14,13 +14,22 @@ struct VertexInput {
 }
 
 //Standard output from a vertex shader
-struct VertexOutput {
+struct MeshVertexOutput {
     float4 clip_out : SV_Position;
     float3 f_position;
     float3 f_normal;
     float2 f_uvs;
     float3 f_tangent;
     float3 f_bitangent;
+}
+
+struct AtmosphereVertex {
+    float3 position: POSITION;
+}
+
+struct AtmosphereVertexOutput {
+    float4 clip_out: SV_Position;
+    float3 view_direction;
 }
 
 //Variables that are constant for a given frame
