@@ -3,7 +3,6 @@ import structs;
 //Bindings
 ConstantBuffer<FrameUniforms> uniforms;
 Sampler2D global_textures[];
-//SamplerState global_samplerstates[];
 
 [[vk::push_constant]]
 cbuffer PushConstants {

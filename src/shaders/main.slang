@@ -5,7 +5,7 @@ Texture2D global_textures[];
 StructuredBuffer<InstanceData> instance_buffer;
 
 [shader("vertex")]
-MeshVertexOutput vertex_main(VertexInput vertex) {
+MeshVertexOutput vertex_main(ModelVertex vertex) {
     float4x4 model_matrix = instance_buffer[vertex.instance_id].world_from_model;
     float4x4 normal_matrix = instance_buffer[vertex.instance_id].normal_matrix;
 
@@ -18,11 +18,11 @@ MeshVertexOutput vertex_main(VertexInput vertex) {
     //Assemble and return output
     MeshVertexOutput output;
     output.clip_out = mul(uniforms.clip_from_world, float4(world_position, 1.0));
-    output.f_position = world_position;
-    output.f_normal = world_normal;
-    output.f_uvs = vertex.uvs;
-    output.f_tangent = world_tangent;
-    output.f_bitangent = world_bitangent;
+    output.position = world_position;
+    output.normal = world_normal;
+    output.uv = vertex.uv;
+    output.tangent = world_tangent;
+    output.bitangent = world_bitangent;
 
     return output;
 }
