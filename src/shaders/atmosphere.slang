@@ -28,14 +28,14 @@ float3 hash( float3 p ) {// replace this by something better
 			  dot(p,float3(269.5,183.3,246.1)),
 			  dot(p,float3(113.5,271.9,124.6)));
 
-	return -1.0 + 2.0*trunc(sin(p)*43758.5453123);
+	return -1.0 + 2.0*frac(sin(p)*43758.5453123);
 }
 
 float noise( in float3 p ) {
-    float3 i = floor( p );
-    float3 f = trunc( p );
-	
-	float3 u = f*f*(3.0-2.0*f);
+    float3 i = floor(p);
+    float3 f = frac(p);
+
+    float3 u = f*f*(3.0-2.0*f);
 
     return lerp( lerp( lerp( dot( hash( i + float3(0.0,0.0,0.0) ), f - float3(0.0,0.0,0.0) ), 
                           dot( hash( i + float3(1.0,0.0,0.0) ), f - float3(1.0,0.0,0.0) ), u.x),
@@ -59,6 +59,7 @@ float3 Unity_Blackbody_float(float Temperature) {
     return color;
 }
 
+[shader("fragment")]
 float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     float3 view_direction = normalize(input.view_direction);
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
