@@ -12,7 +12,7 @@ fn compile_slang_shader(stage: &str, src_file: &str, out_file: &str) -> String {
         &format!("{}/{}", SHADER_OUTPUT_DIR, out_file),
         &format!("{}/{}", SHADER_SRC_DIR, src_file)]
     ).output().unwrap();
-    format!("{:?}", out)
+    unsafe { format!("{}\n{}\n", String::from_utf8_unchecked(out.stdout), String::from_utf8_unchecked(out.stderr)) }
 }
 
 fn main() {
@@ -28,7 +28,7 @@ fn main() {
         let entry = entry.unwrap();
         let name = entry.file_name().into_string().unwrap();
         let out = Command::new("glslc").args(["-I ..", "-fshader-stage=vert", "-o" , &format!("{}/{}.spv", SHADER_OUTPUT_DIR, name), &format!("{}/{}", path, name)]).output().unwrap();
-        write!(build_log, "{:?}\n", out).unwrap();
+        //write!(build_log, "{:?}\n", out).unwrap();
     }
 
     let path = "./src/shaders/fragment";
@@ -36,11 +36,11 @@ fn main() {
         let entry = entry.unwrap();
         let name = entry.file_name().into_string().unwrap();
         let out = Command::new("glslc").args(["-I ..", "-fshader-stage=frag", "-o" , &format!("{}/{}.spv", SHADER_OUTPUT_DIR, name), &format!("{}/{}", path, name)]).output().unwrap();
-        write!(build_log, "{:?}\n", out).unwrap();
+        //write!(build_log, "{:?}\n", out).unwrap();
     }
 
     //Slang shader compilation
-    let out = compile_slang_shader("vertex", "main.slang", "vertex_main.spv");
+    let out = compile_slang_shader("vertex", "model_vertex.slang", "vertex_main.spv");
     write!(build_log, "{}\n", out).unwrap();
     
     let out = compile_slang_shader("vertex", "atmosphere.slang", "atmosphere_vert.spv");
@@ -65,4 +65,5 @@ fn main() {
     if let Err(e) = std::fs::copy("./redist/libmpg123-0.dll", "./target/debug/libmpg123-0.dll") {
         write!(build_log, "{}\n", e).unwrap();            
     }
+    write!(build_log, "Compilation finished.\n").unwrap();
 }
