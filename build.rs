@@ -40,17 +40,19 @@ fn main() {
     }
 
     //Slang shader compilation
-    let out = compile_slang_shader("vertex", "main.slang", "vertex_main.spv");
-    write!(build_log, "{}\n", out).unwrap();
-    
-    let out = compile_slang_shader("vertex", "atmosphere.slang", "atmosphere_vert.spv");
-    write!(build_log, "{}\n", out).unwrap();
-    
-    let out = compile_slang_shader("fragment", "atmosphere.slang", "atmosphere_frag.spv");
-    write!(build_log, "{}\n", out).unwrap();
-    
-    let out = compile_slang_shader("fragment", "pbr_metallic_roughness.slang", "pbr_metallic_roughness.spv");
-    write!(build_log, "{}\n", out).unwrap();
+    let slang_shaders = [
+        ["vertex", "main.slang", "vertex_main.spv"],
+        ["vertex", "atmosphere.slang", "atmosphere_vert.spv"],
+        ["fragment", "atmosphere.slang", "atmosphere_frag.spv"],
+        ["fragment", "pbr_metallic_roughness.slang", "pbr_metallic_roughness.spv"],
+        ["vertex", "imgui.slang", "imgui_vert.spv"],
+        ["fragment", "imgui.slang", "imgui_frag.spv"],
+    ];
+
+    for shader in slang_shaders {
+        let out = compile_slang_shader(shader[0], shader[1], shader[2]);
+        write!(build_log, "{}\n", out).unwrap();
+    }
 
     //Copy SDL2 dlls to target directory
     if let Err(e) = std::fs::copy("./redist/SDL2_mixer.dll", "./target/release/SDL2_mixer.dll") {
