@@ -1,9 +1,5 @@
 import structs;
 
-// Bindings
-[[vk::binding(1, 0)]]
-Sampler2D global_textures[];
-
 static const float PI = 3.14159265359;
 
 // Everything is from https://learnopengl.com/PBR/Theory
@@ -65,11 +61,11 @@ float3 pbr_mettalic_roughness(MeshVertexOutput input, PBRParams params, FrameUni
     kd *= 1.0 - metallic;
 
     // Cook-Torrence specular term evaluation
-    float D = NDFggxtr(params.geometry_normal, halfway, roughness);
+    float D = NDFggxtr(params.surface_normal, halfway, roughness);
     float3 F = ks;
-    float G = geometry_smith(params.geometry_normal, params.view, uniforms.sun_direction.xyz, roughness);
+    float G = geometry_smith(params.surface_normal, params.view, uniforms.sun_direction.xyz, roughness);
     float3 numerator = D * F * G;
-    float denominator = 4.0 * max(dot(params.geometry_normal, params.view), 0.0) * max(dot(params.geometry_normal, uniforms.sun_direction.xyz), 0.0) + 0.0001;
+    float denominator = 4.0 * max(dot(params.surface_normal, params.view), 0.0) * max(dot(params.surface_normal, uniforms.sun_direction.xyz), 0.0) + 0.0001;
     float3 cook_torrence = numerator / denominator;
 
     // Luminance from the sun

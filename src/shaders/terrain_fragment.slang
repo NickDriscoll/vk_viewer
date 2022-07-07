@@ -2,6 +2,7 @@ import structs;
 import lighting;
 
 ConstantBuffer<FrameUniforms> uniforms;
+Sampler2D global_textures[];
 
 [[vk_binding(3, 0)]]
 StructuredBuffer<Material> material_buffer;
@@ -21,23 +22,39 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3x3 TBN = float3x3(tangent, bitangent, normal);
     float2 uvs = input.uv;
 
-    Material grass_material = global_materials[first_material_idx];
-    vec3 grass_color = texture(global_textures[grass_material.color_map_index], uvs).rgb;
-    vec3 grass_normal = normalize(2.0 * texture(global_textures[grass_material.normal_map_index], uvs).xyz - 1.0);
+    Material grass_material = material_buffer[material_idx];
+    Material rock_material = material_buffer[material_idx + 1];
 
-    Material rock_material = global_materials[first_material_idx + 1];
-    vec3 rock_color = texture(global_textures[rock_material.color_map_index], uvs).rgb;
-    vec3 rock_normal = normalize(2.0 * texture(global_textures[rock_material.normal_map_index], uvs).xyz - 1.0);
+    float3 grass_albedo;
+    float3 grass_normal;
+    {
+        float4 sample = global_textures[grass_material.color_map_index].Sample(uvs);
+        if (sample.a < 0.1)
+            discard;
+        grass_albedo = sample.rgb;
+        grass_normal = normalize(2.0 * global_textures[grass_material.normal_map_index].Sample(uvs).xyz - 1.0);
+    }
 
-    float mix_factor = max(0.0, dot(normal, vec3(0.0, 0.0, 1.0)));
+    float3 rock_albedo;
+    float3 rock_normal;
+    {
+        float4 sample = global_textures[rock_material.color_map_index].Sample(uvs);
+        if (sample.a < 0.1)
+            discard;
+        rock_albedo = sample.rgb;
+        rock_normal = normalize(2.0 * global_textures[rock_material.normal_map_index].Sample(uvs).xyz - 1.0);
+    }
+
+    float mix_factor = max(0.0, dot(normal, float3(0.0, 0.0, 1.0)));
     mix_factor = smoothstep(0.60, 0.70, mix_factor);
 
-    vec3 world_normal = TBN * mix(rock_normal, grass_normal, mix_factor);
-    float sun_contribution = max(0.0, dot(world_normal, sun_direction.xyz) + 0.1);
-    sun_contribution *= 1.0 - smoothstep(0.0, -0.05, sun_direction.z);
+    float3 world_normal = mul(lerp(rock_normal, grass_normal, mix_factor), TBN);
 
-    vec3 final_color = mix(rock_color, grass_color, mix_factor);
-    final_color *= max(LIGHTING_MIN, sun_contribution);
+    PBRParams params;
+    params.albedo = lerp(rock_albedo, grass_albedo, mix_factor);
+    params.surface_normal = world_normal;
+    params.geometry_normal = normal;
+    params.view = view;
 
-    return float4(pbr_mettalic_roughness(input, TBN, normal, view, my_mat, uniforms), 1.0);
+    return float4(pbr_mettalic_roughness(input, params, uniforms), 1.0);
 }

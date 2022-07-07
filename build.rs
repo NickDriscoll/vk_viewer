@@ -23,28 +23,13 @@ fn main() {
         println!("{}", e);
     }
 
-    let path = "./src/shaders/vertex";
-    for entry in std::fs::read_dir(path).unwrap() {
-        let entry = entry.unwrap();
-        let name = entry.file_name().into_string().unwrap();
-        let out = Command::new("glslc").args(["-I ..", "-fshader-stage=vert", "-o" , &format!("{}/{}.spv", SHADER_OUTPUT_DIR, name), &format!("{}/{}", path, name)]).output().unwrap();
-        //write!(build_log, "{:?}\n", out).unwrap();
-    }
-
-    let path = "./src/shaders/fragment";
-    for entry in std::fs::read_dir(path).unwrap() {
-        let entry = entry.unwrap();
-        let name = entry.file_name().into_string().unwrap();
-        let out = Command::new("glslc").args(["-I ..", "-fshader-stage=frag", "-o" , &format!("{}/{}.spv", SHADER_OUTPUT_DIR, name), &format!("{}/{}", path, name)]).output().unwrap();
-        //write!(build_log, "{:?}\n", out).unwrap();
-    }
-
     //Slang shader compilation
     let slang_shaders = [
         ["vertex", "model_vertex.slang", "vertex_main.spv"],
         ["vertex", "atmosphere.slang", "atmosphere_vert.spv"],
         ["fragment", "atmosphere.slang", "atmosphere_frag.spv"],
         ["fragment", "model_fragment.slang", "pbr_metallic_roughness.spv"],
+        ["fragment", "terrain_fragment.slang", "terrain.spv"],
         ["vertex", "imgui.slang", "imgui_vert.spv"],
         ["fragment", "imgui.slang", "imgui_frag.spv"],
     ];

@@ -2,6 +2,7 @@ import structs;
 import lighting;
 
 ConstantBuffer<FrameUniforms> uniforms;
+Sampler2D global_textures[];
 
 [[vk_binding(3, 0)]]
 StructuredBuffer<Material> material_buffer;
