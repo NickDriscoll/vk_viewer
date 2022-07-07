@@ -41,10 +41,10 @@ fn main() {
 
     //Slang shader compilation
     let slang_shaders = [
-        ["vertex", "main.slang", "vertex_main.spv"],
+        ["vertex", "model_vertex.slang", "vertex_main.spv"],
         ["vertex", "atmosphere.slang", "atmosphere_vert.spv"],
         ["fragment", "atmosphere.slang", "atmosphere_frag.spv"],
-        ["fragment", "pbr_metallic_roughness.slang", "pbr_metallic_roughness.spv"],
+        ["fragment", "model_fragment.slang", "pbr_metallic_roughness.spv"],
         ["vertex", "imgui.slang", "imgui_vert.spv"],
         ["fragment", "imgui.slang", "imgui_frag.spv"],
     ];

@@ -26,8 +26,3 @@ MeshVertexOutput vertex_main(ModelVertex vertex) {
 
     return output;
 }
-
-[shader("fragment")]
-float4 fragment_main(MeshVertexOutput vertex) {
-
-}
