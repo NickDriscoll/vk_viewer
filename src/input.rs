@@ -126,6 +126,8 @@ pub fn do_input(
     imgui_io.mouse_pos[0] = mouse_state.x() as f32;
     imgui_io.mouse_pos[1] = mouse_state.y() as f32;
 
+    const MAX_MOVEMENT_MULTIPLIER: f32 = 15.0;
+
     if let Some(controller) = &mut input_system.controllers[0] {
         use sdl2::controller::{Axis};
 
@@ -149,7 +151,7 @@ pub fn do_input(
         }
 
         let left_trigger = get_normalized_axis(&controller, Axis::TriggerLeft);
-        movement_multiplier *= 4.0 * left_trigger + 1.0;
+        movement_multiplier *= (MAX_MOVEMENT_MULTIPLIER - 1.0) * left_trigger + 1.0;
 
         const JOYSTICK_DEADZONE: f32 = 0.15;
         let left_joy_vector = {
@@ -176,7 +178,7 @@ pub fn do_input(
     }
 
     if keyboard_state.is_scancode_pressed(Scancode::LShift) {
-        movement_multiplier *= 15.0;
+        movement_multiplier *= MAX_MOVEMENT_MULTIPLIER;
     }
     if keyboard_state.is_scancode_pressed(Scancode::LCtrl) {
         movement_multiplier *= 0.25;

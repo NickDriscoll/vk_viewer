@@ -368,57 +368,54 @@ fn main() {
     //Set up descriptors
     let vk_descriptor_set_layout;
     let vk_descriptor_sets = unsafe {
-        let per_frame_type = vk::DescriptorType::UNIFORM_BUFFER;
-        let uniform_binding = vk::DescriptorSetLayoutBinding {
-            binding: 0,
-            descriptor_type: per_frame_type,
-            descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-            ..Default::default()
-        };
-        let uniform_pool_size = vk::DescriptorPoolSize {
-            ty: per_frame_type,
-            descriptor_count: 1
-        };
+        let mut bindings = Vec::new();
+        let mut pool_sizes = Vec::new();
 
-        let texture_binding = vk::DescriptorSetLayoutBinding {
-            binding: 1,
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: global_textures.size() as u32,
-            stage_flags: vk::ShaderStageFlags::FRAGMENT,
-            ..Default::default()
-        };
-        let sampler_pool_size = vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: global_textures.size() as u32,
-        };
+        struct DescriptorDesc {
+            ty: vk::DescriptorType,
+            stage_flags: vk::ShaderStageFlags,
+            count: u32
+        }
 
-        let transforms_binding = vk::DescriptorSetLayoutBinding {
-            binding: 2,
-            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::VERTEX,
-            ..Default::default()
-        };
-        let transforms_pool_size = vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: 1
-        };
+        let descriptor_descs = [
+            DescriptorDesc {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                count: 1
+            },
+            DescriptorDesc {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                count: global_textures.size() as u32
+            },
+            DescriptorDesc {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                stage_flags: vk::ShaderStageFlags::VERTEX,
+                count: 1
+            },
+            DescriptorDesc {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                count: 1
+            },
+        ];
 
-        let materials_binding = vk::DescriptorSetLayoutBinding {
-            binding: 3,
-            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::FRAGMENT,
-            ..Default::default()
-        };
-        let materials_pool_size = vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: 1
-        };
-
-        let bindings = [uniform_binding, texture_binding, transforms_binding, materials_binding];
-        let pool_sizes = [uniform_pool_size, sampler_pool_size, transforms_pool_size, materials_pool_size];
+        for i in 0..descriptor_descs.len() {
+            let desc = &descriptor_descs[i];
+            let binding = vk::DescriptorSetLayoutBinding {
+                binding: i as u32,
+                descriptor_type: desc.ty,
+                descriptor_count: desc.count,
+                stage_flags: desc.stage_flags,
+                ..Default::default()
+            };
+            bindings.push(binding);
+            let pool_size = vk::DescriptorPoolSize {
+                ty: desc.ty,
+                descriptor_count: 1
+            };
+            pool_sizes.push(pool_size);
+        }
 
         let total_set_count = 1;
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo {

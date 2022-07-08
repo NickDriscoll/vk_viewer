@@ -56,7 +56,7 @@ float3 f_lambert(float3 color)
 
 float3 pbr_mettalic_roughness(MeshVertexOutput input, float3x3 TBN, float3 normal, float3 view, Material my_mat)
 {
-    float roughness = 0.3;
+    float roughness = 100.0;
     float metallic = 0.0;
     float ambient_occlusion = 1.0;
 
@@ -93,22 +93,4 @@ float3 pbr_mettalic_roughness(MeshVertexOutput input, float3x3 TBN, float3 norma
     // Tone-mapping step
     float3 color = Lo + ambient;
     return color / (color + float3(1.0));
-}
-
-[shader("fragment")]
-float4 fragment_main(MeshVertexOutput input) : SV_Target0 {
-    // Assemble input data
-    float3 tangent = normalize(input.tangent);
-    float3 bitangent = normalize(input.bitangent);
-    float3 normal = normalize(input.normal);
-    float3 view = normalize(uniforms.camera_position.xyz - input.position);
-    float3x3 TBN = float3x3(tangent, bitangent, normal);
-    Material my_mat = material_buffer[material_idx];
-
-    return float4(pbr_mettalic_roughness(input, TBN, normal, view, my_mat), 1.0);
-}
-
-[shader("fragment")]
-float4 terrain_fragment_main(MeshVertexOutput input) : SV_Target0 {
-    
 }
