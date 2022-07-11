@@ -3,6 +3,7 @@ import structs;
 ConstantBuffer<FrameUniforms> uniforms;
 Texture2D global_textures[];
 StructuredBuffer<InstanceData> instance_buffer;
+StructuredBuffer<float3> positions;
 
 [shader("vertex")]
 MeshVertexOutput vertex_main(ModelVertex vertex) {

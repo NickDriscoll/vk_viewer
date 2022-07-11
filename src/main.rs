@@ -15,6 +15,7 @@ mod structs;
 mod vkutil;
 
 use ash::vk;
+use gpu_allocator::MemoryLocation;
 use imgui::{DrawCmd, FontAtlasRefMut};
 use sdl2::event::Event;
 use sdl2::mixer;
@@ -341,7 +342,8 @@ fn main() {
         &mut vk,
         uniform_buffer_size,
         uniform_buffer_alignment,
-        vk::BufferUsageFlags::UNIFORM_BUFFER
+        vk::BufferUsageFlags::UNIFORM_BUFFER,
+        MemoryLocation::CpuToGpu
     );
     
     //Allocate buffer for instance data
@@ -352,7 +354,8 @@ fn main() {
         &mut vk,
         buffer_size,
         storage_buffer_alignment,
-        vk::BufferUsageFlags::STORAGE_BUFFER
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu
     );
 
     //Allocate material buffer
@@ -362,7 +365,8 @@ fn main() {
         &mut vk,
         material_size * global_material_slots,
         storage_buffer_alignment,
-        vk::BufferUsageFlags::STORAGE_BUFFER
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu
     );
     
     //Set up descriptors

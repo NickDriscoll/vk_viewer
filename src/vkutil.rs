@@ -58,15 +58,15 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
 
 pub unsafe fn allocate_image(vk: &mut VulkanAPI, image: vk::Image) -> Allocation {
     let requirements = vk.device.get_image_memory_requirements(image);
-    let a = vk.allocator.allocate(&AllocationCreateDesc {
+    let alloc = vk.allocator.allocate(&AllocationCreateDesc {
         name: &format!("VirtualImage {:?}", image),
         requirements,
         location: MemoryLocation::GpuOnly,
         linear: false       //We want tiled memory for images
     }).unwrap();
 
-    vk.device.bind_image_memory(image, a.memory(), a.offset()).unwrap();
-    a
+    vk.device.bind_image_memory(image, alloc.memory(), alloc.offset()).unwrap();
+    alloc
 }
 
 //Macro to fit a given desired size to a given alignment without worrying about the specific integer type
@@ -389,7 +389,7 @@ impl VirtualImage {
 pub unsafe fn upload_image(vk: &mut VulkanAPI, vk_command_buffer: vk::CommandBuffer, image: &VirtualImage, raw_bytes: &[u8]) {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
-    let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC);
+    let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
     staging_buffer.upload_buffer(&raw_bytes);
 
     vk.device.begin_command_buffer(vk_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
@@ -654,7 +654,7 @@ impl GPUBuffer {
     pub fn backing_buffer(&self) -> vk::Buffer { self.buffer }
     pub fn length(&self) -> vk::DeviceSize { self.length }
 
-    pub fn allocate(vk: &mut VulkanAPI, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags) -> Self {
+    pub fn allocate(vk: &mut VulkanAPI, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags, memory_location: MemoryLocation) -> Self {
         let vk_buffer;
         let actual_size = size_to_alignment!(size, alignment);
         let allocation = unsafe {
@@ -670,7 +670,7 @@ impl GPUBuffer {
             let a = vk.allocator.allocate(&AllocationCreateDesc {
                 name: "",
                 requirements: mem_reqs,
-                location: MemoryLocation::CpuToGpu,
+                location: memory_location,
                 linear: true
             }).unwrap();
             vk.device.bind_buffer_memory(vk_buffer, a.memory(), a.offset()).unwrap();
@@ -708,8 +708,8 @@ pub struct VirtualGeometry {
 
 impl VirtualGeometry {
     pub fn create(vk: &mut VulkanAPI, vertices: &[f32], indices: &[u32]) -> Self {
-        let vertex_buffer = GPUBuffer::allocate(vk, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER);
-        let index_buffer = GPUBuffer::allocate(vk, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER);
+        let vertex_buffer = GPUBuffer::allocate(vk, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER, MemoryLocation::CpuToGpu);
+        let index_buffer = GPUBuffer::allocate(vk, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER, MemoryLocation::CpuToGpu);
         vertex_buffer.upload_buffer(vertices);
         index_buffer.upload_buffer(indices);
         VirtualGeometry {

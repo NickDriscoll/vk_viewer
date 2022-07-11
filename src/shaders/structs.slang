@@ -11,6 +11,7 @@ struct ModelVertex {
     float3 normal: NORMAL;
     float2 uv: UVS;
     uint instance_id : SV_InstanceID;
+    uint vertex_id : SV_VertexID;
 }
 
 //Standard output from a vertex shader
@@ -27,8 +28,9 @@ struct AtmosphereVertex {
     float3 position: POSITION;
 }
 
-struct AtmosphereVertexOutput {
-    float4 clip_out: SV_Position;
+struct AtmosphereVertexOutput
+{
+    float4 clip_out : SV_Position;
     float3 view_direction;
 }
 
