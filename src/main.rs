@@ -368,6 +368,16 @@ fn main() {
         vk::BufferUsageFlags::STORAGE_BUFFER,
         MemoryLocation::CpuToGpu
     );
+
+    //Allocate vertex position buffer
+    let max_vertices = 100_000;
+    let positions_storage_buffer = GPUBuffer::allocate(
+        &mut vk,
+        max_vertices * size_of::<glm::TVec3<f32>>() as u64,
+        storage_buffer_alignment,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu
+    );
     
     //Set up descriptors
     let vk_descriptor_set_layout;
@@ -375,37 +385,52 @@ fn main() {
         let mut bindings = Vec::new();
         let mut pool_sizes = Vec::new();
 
-        struct DescriptorDesc {
+        struct BufferDescriptorDesc {
             ty: vk::DescriptorType,
             stage_flags: vk::ShaderStageFlags,
-            count: u32
+            count: u32,
+            buffer: vk::Buffer,
+            offset: u64,
+            length: u64
         }
 
-        let descriptor_descs = [
-            DescriptorDesc {
+        let buffer_descriptor_descs = [
+            BufferDescriptorDesc {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
                 stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                count: 1
+                count: 1,
+                buffer: frame_uniform_buffer.backing_buffer(),
+                offset: 0,
+                length: frame_uniform_buffer.length()
             },
-            DescriptorDesc {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                count: global_textures.size() as u32
-            },
-            DescriptorDesc {
+            BufferDescriptorDesc {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
                 stage_flags: vk::ShaderStageFlags::VERTEX,
-                count: 1
+                count: 1,
+                buffer: transform_storage_buffer.backing_buffer(),
+                offset: 0,
+                length: transform_storage_buffer.length()
             },
-            DescriptorDesc {
+            BufferDescriptorDesc {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                count: 1
+                count: 1,
+                buffer: material_storage_buffer.backing_buffer(),
+                offset: 0,
+                length: material_storage_buffer.length()
             },
+            BufferDescriptorDesc {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                stage_flags: vk::ShaderStageFlags::VERTEX,
+                count: 1,
+                buffer: positions_storage_buffer.backing_buffer(),
+                offset: 0,
+                length: positions_storage_buffer.length()
+            }
         ];
 
-        for i in 0..descriptor_descs.len() {
-            let desc = &descriptor_descs[i];
+        for i in 0..buffer_descriptor_descs.len() {
+            let desc = &buffer_descriptor_descs[i];
             let binding = vk::DescriptorSetLayoutBinding {
                 binding: i as u32,
                 descriptor_type: desc.ty,
@@ -420,6 +445,22 @@ fn main() {
             };
             pool_sizes.push(pool_size);
         }
+
+        //Add global texture descriptor
+        let binding = vk::DescriptorSetLayoutBinding {
+            binding: buffer_descriptor_descs.len() as u32,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: global_textures.size() as u32,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            ..Default::default()
+        };
+        bindings.push(binding);
+        let pool_size = vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: 1
+        };
+        pool_sizes.push(pool_size);
+
 
         let total_set_count = 1;
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
@@ -444,59 +485,34 @@ fn main() {
             p_set_layouts: &vk_descriptor_set_layout,
             ..Default::default()
         };
-        vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap()
+        let descriptor_sets = vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
+
+        let mut desc_writes = Vec::new();
+        let mut infos = Vec::new();
+        for i in 0..buffer_descriptor_descs.len() {
+            let desc = &buffer_descriptor_descs[i];
+            let info = vk::DescriptorBufferInfo {
+                buffer: desc.buffer,
+                offset: desc.offset,
+                range: desc.length
+            };
+            infos.push(info);
+            let write = vk::WriteDescriptorSet {
+                dst_set: descriptor_sets[0],
+                descriptor_count: 1,
+                descriptor_type: desc.ty,
+                p_buffer_info: &infos[i],
+                dst_array_element: 0,
+                dst_binding: i as u32,
+                ..Default::default()
+
+            };
+            desc_writes.push(write);
+        }
+        vk.device.update_descriptor_sets(&desc_writes, &[]);
+
+        descriptor_sets
     };
-
-    //Write constant values to buffer descriptors vkUpdateDescriptorSets()
-    unsafe {
-        let uniform_infos = [
-            vk::DescriptorBufferInfo {
-                buffer: frame_uniform_buffer.backing_buffer(),
-                offset: 0,
-                range: frame_uniform_buffer.length()
-            }
-        ];
-        let storage_info = vk::DescriptorBufferInfo {
-            buffer: transform_storage_buffer.backing_buffer(),
-            offset: 0,
-            range: transform_storage_buffer.length()
-        };
-        let materials_info = vk::DescriptorBufferInfo {
-            buffer: material_storage_buffer.backing_buffer(),
-            offset: 0,
-            range: material_storage_buffer.length()
-        };
-
-        let uniform_write = vk::WriteDescriptorSet {
-            dst_set: vk_descriptor_sets[0],
-            descriptor_count: uniform_infos.len() as u32,
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-            p_buffer_info: uniform_infos.as_ptr(),
-            dst_array_element: 0,
-            dst_binding: 0,
-            ..Default::default()
-        };
-        let storage_write = vk::WriteDescriptorSet {
-            dst_set: vk_descriptor_sets[0],
-            descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            p_buffer_info: &storage_info,
-            dst_array_element: 0,
-            dst_binding: 2,
-            ..Default::default()
-        };
-        let material_write = vk::WriteDescriptorSet {
-            dst_set: vk_descriptor_sets[0],
-            descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            p_buffer_info: &materials_info,
-            dst_array_element: 0,
-            dst_binding: 3,
-            ..Default::default()
-        };
-
-        vk.device.update_descriptor_sets(&[uniform_write, storage_write, material_write], &[]);
-    }
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let vk_pipeline_layout = unsafe {
@@ -740,9 +756,7 @@ fn main() {
 
     //Register each primitive with the renderer
     let mut tree_model_indices = vec![];
-    for prim in tree_data.primitives {
-        let geometry = VirtualGeometry::create(&mut vk, &prim.vertices, &prim.indices);
-        
+    for prim in tree_data.primitives {        
         let color_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, prim.material.color_bytes.as_slice());
         let image_info = vk::DescriptorImageInfo {
             sampler: material_sampler,
@@ -769,6 +783,7 @@ fn main() {
                 normal_idx
             }) as u32;
 
+        let geometry = VirtualGeometry::create(&mut vk, &prim.vertices, &prim.indices);
         let model_idx = renderer.register_model(DrawData {
             geometry,
             material_idx
@@ -1175,7 +1190,7 @@ fn main() {
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 p_image_info: image_infos.as_ptr(),
                 dst_array_element: 0,
-                dst_binding: 1,
+                dst_binding: 4,
                 ..Default::default()
             };
             unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }

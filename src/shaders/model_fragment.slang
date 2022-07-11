@@ -2,10 +2,12 @@ import structs;
 import lighting;
 
 ConstantBuffer<FrameUniforms> uniforms;
-Sampler2D global_textures[];
 
-[[vk_binding(3, 0)]]
+[[vk_binding(2, 0)]]
 StructuredBuffer<Material> material_buffer;
+
+[[vk_binding(4, 0)]]
+Sampler2D global_textures[];
 
 [[vk::push_constant]]
 cbuffer PushConstants
