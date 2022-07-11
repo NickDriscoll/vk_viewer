@@ -47,15 +47,17 @@ struct PBRParams
     float3 surface_normal;
     float3 geometry_normal;
     float3 view;
+    float3 light_direction;
+    float3 light_radiance;
 }
 
-float3 pbr_mettalic_roughness(MeshVertexOutput input, PBRParams params, FrameUniforms uniforms)
+float3 pbr_mettalic_roughness(MeshVertexOutput input, PBRParams params)
 {
     float roughness = 0.3;
     float metallic = 0.0;
     float ambient_occlusion = 1.0;
 
-    float3 halfway = normalize(params.view + uniforms.sun_direction.xyz);
+    float3 halfway = normalize(params.view + params.light_direction);
     float3 ks = fresnel_schlick(float3(0.04), halfway, params.view);
     float3 kd = float3(1.0) - ks;
     kd *= 1.0 - metallic;
@@ -63,15 +65,15 @@ float3 pbr_mettalic_roughness(MeshVertexOutput input, PBRParams params, FrameUni
     // Cook-Torrence specular term evaluation
     float D = NDFggxtr(params.surface_normal, halfway, roughness);
     float3 F = ks;
-    float G = geometry_smith(params.surface_normal, params.view, uniforms.sun_direction.xyz, roughness);
+    float G = geometry_smith(params.surface_normal, params.view, params.light_direction, roughness);
     float3 numerator = D * F * G;
-    float denominator = 4.0 * max(dot(params.surface_normal, params.view), 0.0) * max(dot(params.surface_normal, uniforms.sun_direction.xyz), 0.0) + 0.0001;
+    float denominator = 4.0 * max(dot(params.surface_normal, params.view), 0.0) * max(dot(params.surface_normal, params.light_direction), 0.0) + 0.0001;
     float3 cook_torrence = numerator / denominator;
 
     // Luminance from the sun
-    float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * uniforms.sun_radiance.xyz *
-                max(0.0, dot(params.surface_normal, uniforms.sun_direction.xyz));
-    float sun_contribution = 1.0 - smoothstep(0.0, -0.05, uniforms.sun_direction.z);
+    float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * params.light_radiance *
+                max(0.0, dot(params.surface_normal, params.light_direction));
+    float sun_contribution = 1.0 - smoothstep(0.0, -0.05, params.light_direction.z);
     Lo *= sun_contribution;
     float3 ambient = float3(0.03) * params.albedo * ambient_occlusion;
 

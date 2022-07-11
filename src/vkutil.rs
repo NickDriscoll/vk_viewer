@@ -697,7 +697,12 @@ impl GPUBuffer {
         }
     }
 
-    pub fn upload_subbuffer<T>(&self, in_buffer: &[T], offset: usize) {
+    pub fn upload_subbuffer<T>(&self, in_buffer: &[T], offset: u64) {
+        let end_in_bytes = (in_buffer.len() + offset as usize) * size_of::<f32>();
+        if end_in_bytes as u64 > self.length {
+            panic!("OVERRAN BUFFER AAAAA");
+        }
+
         unsafe {
             let dst_ptr = self.unchecked_ptr();
             let dst_ptr = dst_ptr.offset(offset as isize);

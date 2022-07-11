@@ -5,13 +5,13 @@ struct InstanceData {
 
 //Standard input to a vertex shader
 struct ModelVertex {
-    float3 position : POSITION;
-    float3 tangent : TANGENT;
-    float3 bitangent: BITANGENT;
-    float3 normal: NORMAL;
-    float2 uv: UVS;
+    float3 position;
+    float3 tangent;
+    float3 bitangent;
+    float3 normal;
+    float2 uv;
     uint instance_id : SV_InstanceID;
-    uint vertex_id : SV_VertexID;
+    uint id : SV_VertexID;
 }
 
 //Standard output from a vertex shader
@@ -47,6 +47,7 @@ struct FrameUniforms {
     float time;
     float stars_threshold;
     float stars_exposure;
+    float pos_inter;
 }
 
 struct Material {

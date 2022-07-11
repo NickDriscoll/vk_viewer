@@ -1,6 +1,5 @@
 import structs;
-
-ConstantBuffer<FrameUniforms> uniforms;
+import vertex_bindings;
 
 [[vk_binding(4, 0)]]
 Sampler2D global_textures[];

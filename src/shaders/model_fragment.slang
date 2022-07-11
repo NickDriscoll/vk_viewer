@@ -1,19 +1,6 @@
 import structs;
 import lighting;
-
-ConstantBuffer<FrameUniforms> uniforms;
-
-[[vk_binding(2, 0)]]
-StructuredBuffer<Material> material_buffer;
-
-[[vk_binding(4, 0)]]
-Sampler2D global_textures[];
-
-[[vk::push_constant]]
-cbuffer PushConstants
-{
-    uint material_idx;
-}
+import fragment_bindings;
 
 [shader("fragment")]
 float4 fragment_main(MeshVertexOutput input) : SV_Target0
@@ -38,6 +25,8 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.surface_normal = normalize(mul(sampled_normal, TBN));
     params.geometry_normal = normal;
     params.view = view;
+    params.light_direction = uniforms.sun_direction.xyz;
+    params.light_radiance = uniforms.sun_radiance.rgb;
 
-    return float4(pbr_mettalic_roughness(input, params, uniforms), 1.0);
+    return float4(pbr_mettalic_roughness(input, params), 1.0);
 }

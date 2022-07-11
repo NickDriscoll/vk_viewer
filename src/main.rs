@@ -160,6 +160,9 @@ fn main() {
 
     //Initialize the Vulkan API
     let mut vk = vkutil::VulkanAPI::initialize(&window);
+    
+    //Initialize the renderer
+    let mut renderer = Renderer::init(&mut vk);
 
     //Create command buffer
     let vk_command_buffer = unsafe {
@@ -211,19 +214,16 @@ fn main() {
         (mat, font)
     };
 
-    //Maintain free list for texture allocation
-    let mut global_textures = FreeList::with_capacity(1024);
-
     let default_image_info;
 
-    let default_color_index = unsafe { global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0x80, 0xFF])) as u32};
-    let default_normal_index = unsafe { global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
+    let default_color_index = unsafe { renderer.global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0x80, 0xFF])) as u32};
+    let default_normal_index = unsafe { renderer.global_textures.insert(upload_raw_image(&mut vk, vk_command_buffer, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
     
     //Load environment textures
     let atmosphere_tex_indices = {
-        let sunzenith_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
-        let viewzenith_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
-        let sunview_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
+        let sunzenith_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
+        let viewzenith_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
+        let sunview_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
         [sunzenith_index.to_le_bytes(), viewzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
     };
 
@@ -234,7 +234,7 @@ fn main() {
             let atlas_format = vk::Format::R8_UNORM;
             let descriptor_info = upload_raw_image(&mut vk, vk_command_buffer, point_sampler, atlas_format, atlas_texture.width, atlas_texture.height, atlas_texture.data);
             default_image_info = descriptor_info;
-            let index = global_textures.insert(descriptor_info);
+            let index = renderer.global_textures.insert(descriptor_info);
             
             atlas.clear_tex_data();  //Free atlas memory CPU-side
             atlas.tex_id = imgui::TextureId::new(index);    //Giving Dear Imgui a reference to the font atlas GPU texture
@@ -335,185 +335,6 @@ fn main() {
     //Create the main swapchain for window present
     let mut vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
 
-    //Allocate buffer for frame-constant uniforms
-    let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
-    let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
-    let frame_uniform_buffer = GPUBuffer::allocate(
-        &mut vk,
-        uniform_buffer_size,
-        uniform_buffer_alignment,
-        vk::BufferUsageFlags::UNIFORM_BUFFER,
-        MemoryLocation::CpuToGpu
-    );
-    
-    //Allocate buffer for instance data
-    let storage_buffer_alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
-    let global_transform_slots = 1024 * 1024;
-    let buffer_size = (size_of::<render::InstanceData>() * global_transform_slots) as vk::DeviceSize;
-    let transform_storage_buffer = GPUBuffer::allocate(
-        &mut vk,
-        buffer_size,
-        storage_buffer_alignment,
-        vk::BufferUsageFlags::STORAGE_BUFFER,
-        MemoryLocation::CpuToGpu
-    );
-
-    //Allocate material buffer
-    let global_material_slots = 1024;
-    let material_size = 2 * size_of::<u32>() as u64;
-    let material_storage_buffer = GPUBuffer::allocate(
-        &mut vk,
-        material_size * global_material_slots,
-        storage_buffer_alignment,
-        vk::BufferUsageFlags::STORAGE_BUFFER,
-        MemoryLocation::CpuToGpu
-    );
-
-    //Allocate vertex position buffer
-    let max_vertices = 100_000;
-    let positions_storage_buffer = GPUBuffer::allocate(
-        &mut vk,
-        max_vertices * size_of::<glm::TVec3<f32>>() as u64,
-        storage_buffer_alignment,
-        vk::BufferUsageFlags::STORAGE_BUFFER,
-        MemoryLocation::CpuToGpu
-    );
-    
-    //Set up descriptors
-    let vk_descriptor_set_layout;
-    let vk_descriptor_sets = unsafe {
-        let mut bindings = Vec::new();
-        let mut pool_sizes = Vec::new();
-
-        struct BufferDescriptorDesc {
-            ty: vk::DescriptorType,
-            stage_flags: vk::ShaderStageFlags,
-            count: u32,
-            buffer: vk::Buffer,
-            offset: u64,
-            length: u64
-        }
-
-        let buffer_descriptor_descs = [
-            BufferDescriptorDesc {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                count: 1,
-                buffer: frame_uniform_buffer.backing_buffer(),
-                offset: 0,
-                length: frame_uniform_buffer.length()
-            },
-            BufferDescriptorDesc {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                stage_flags: vk::ShaderStageFlags::VERTEX,
-                count: 1,
-                buffer: transform_storage_buffer.backing_buffer(),
-                offset: 0,
-                length: transform_storage_buffer.length()
-            },
-            BufferDescriptorDesc {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                count: 1,
-                buffer: material_storage_buffer.backing_buffer(),
-                offset: 0,
-                length: material_storage_buffer.length()
-            },
-            BufferDescriptorDesc {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                stage_flags: vk::ShaderStageFlags::VERTEX,
-                count: 1,
-                buffer: positions_storage_buffer.backing_buffer(),
-                offset: 0,
-                length: positions_storage_buffer.length()
-            }
-        ];
-
-        for i in 0..buffer_descriptor_descs.len() {
-            let desc = &buffer_descriptor_descs[i];
-            let binding = vk::DescriptorSetLayoutBinding {
-                binding: i as u32,
-                descriptor_type: desc.ty,
-                descriptor_count: desc.count,
-                stage_flags: desc.stage_flags,
-                ..Default::default()
-            };
-            bindings.push(binding);
-            let pool_size = vk::DescriptorPoolSize {
-                ty: desc.ty,
-                descriptor_count: 1
-            };
-            pool_sizes.push(pool_size);
-        }
-
-        //Add global texture descriptor
-        let binding = vk::DescriptorSetLayoutBinding {
-            binding: buffer_descriptor_descs.len() as u32,
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: global_textures.size() as u32,
-            stage_flags: vk::ShaderStageFlags::FRAGMENT,
-            ..Default::default()
-        };
-        bindings.push(binding);
-        let pool_size = vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 1
-        };
-        pool_sizes.push(pool_size);
-
-
-        let total_set_count = 1;
-        let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
-            max_sets: total_set_count,
-            pool_size_count: pool_sizes.len() as u32,
-            p_pool_sizes: pool_sizes.as_ptr(),
-            ..Default::default()
-        };
-        let descriptor_pool = vk.device.create_descriptor_pool(&descriptor_pool_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-        
-        let descriptor_layout = vk::DescriptorSetLayoutCreateInfo {
-            binding_count: bindings.len() as u32,
-            p_bindings: bindings.as_ptr(),
-            ..Default::default()
-        };
-
-        vk_descriptor_set_layout = vk.device.create_descriptor_set_layout(&descriptor_layout, vkutil::MEMORY_ALLOCATOR).unwrap();
-
-        let vk_alloc_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool,
-            descriptor_set_count: total_set_count,
-            p_set_layouts: &vk_descriptor_set_layout,
-            ..Default::default()
-        };
-        let descriptor_sets = vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
-
-        let mut desc_writes = Vec::new();
-        let mut infos = Vec::new();
-        for i in 0..buffer_descriptor_descs.len() {
-            let desc = &buffer_descriptor_descs[i];
-            let info = vk::DescriptorBufferInfo {
-                buffer: desc.buffer,
-                offset: desc.offset,
-                range: desc.length
-            };
-            infos.push(info);
-            let write = vk::WriteDescriptorSet {
-                dst_set: descriptor_sets[0],
-                descriptor_count: 1,
-                descriptor_type: desc.ty,
-                p_buffer_info: &infos[i],
-                dst_array_element: 0,
-                dst_binding: i as u32,
-                ..Default::default()
-
-            };
-            desc_writes.push(write);
-        }
-        vk.device.update_descriptor_sets(&desc_writes, &[]);
-
-        descriptor_sets
-    };
-
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let vk_pipeline_layout = unsafe {
         let push_constant_range = vk::PushConstantRange {
@@ -525,7 +346,7 @@ fn main() {
             push_constant_range_count: 1,
             p_push_constant_ranges: &push_constant_range,
             set_layout_count: 1,
-            p_set_layouts: &vk_descriptor_set_layout,
+            p_set_layouts: &renderer.descriptor_set_layout,
             ..Default::default()
         };
         
@@ -610,6 +431,8 @@ fn main() {
         };
         let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, main_vertex_config, &main_shader_stages);
         let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
+        main_create_info.shader_stages = &terrain_shader_stages;
+        let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
 
         main_create_info.rasterization_state = Some(vk::PipelineRasterizationStateCreateInfo {
             polygon_mode: vk::PolygonMode::LINE,
@@ -617,9 +440,6 @@ fn main() {
         });
         let wire_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
         main_create_info.rasterization_state = None;
-
-        main_create_info.shader_stages = &terrain_shader_stages;
-        let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
 
         let atmosphere_vert_binding = vk::VertexInputBindingDescription {
             binding: 0,
@@ -730,10 +550,10 @@ fn main() {
     let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
     
     //Loading terrain textures
-    let grass_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
-    let grass_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
-    let rock_color_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
-    let rock_normal_global_index = load_global_bc7(&mut vk, &mut global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
+    let grass_color_global_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
+    let grass_normal_global_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
+    let rock_color_global_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
+    let rock_normal_global_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
 
     let terrain_grass_matidx = global_materials.insert(Material {
         color_idx: grass_color_global_index,
@@ -747,8 +567,15 @@ fn main() {
 
     //Load totoro model
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
-    
-    let mut renderer = Renderer::new();
+    let mut uninterleaved_positions = vec![0.0; totoro_mesh.vertex_array.vertices.len() / 14 * 4];
+    for i in 0..(totoro_mesh.vertex_array.vertices.len()/14) {
+        uninterleaved_positions[4 * i] = totoro_mesh.vertex_array.vertices[14 * i];
+        uninterleaved_positions[4 * i + 1] = totoro_mesh.vertex_array.vertices[14 * i + 1];
+        uninterleaved_positions[4 * i + 2] = totoro_mesh.vertex_array.vertices[14 * i + 2];
+        uninterleaved_positions[4 * i + 3] = 1.0;
+    }
+    let tv_offset = renderer.upload_vertex_positions(&uninterleaved_positions);
+    println!("Offset: {}", tv_offset);
 
     //Load gltf object
     let glb_name = "./data/models/nice_tree.glb";
@@ -763,7 +590,7 @@ fn main() {
             image_view: color_image.vk_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
-        let color_idx = global_textures.insert(image_info) as u32;
+        let color_idx = renderer.global_textures.insert(image_info) as u32;
 
         let normal_idx = match prim.material.normal_bytes {
             Some(bytes) => {
@@ -773,7 +600,7 @@ fn main() {
                     image_view: normal_image.vk_view,
                     image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
                 };
-                global_textures.insert(image_info) as u32
+                renderer.global_textures.insert(image_info) as u32
             }
             None => { default_normal_index }
         };
@@ -836,6 +663,7 @@ fn main() {
     let mut stars_exposure = 200.0;
     let mut trees_width = 1;
     let mut trees_height = 1;
+    let mut pos_inter = 1.0;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
@@ -1066,6 +894,7 @@ fn main() {
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut stars_exposure);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
+            imgui::Slider::new("Pos interpolate", 0.0, 1.0).build(&imgui_ui, &mut pos_inter);
         }
 
         let bb_mats = {
@@ -1174,19 +1003,19 @@ fn main() {
         }
 
         //Update bindless texture sampler descriptors
-        if global_textures.updated {
-            global_textures.updated = false;
+        if renderer.global_textures.updated {
+            renderer.global_textures.updated = false;
 
-            let mut image_infos = vec![default_image_info; global_textures.size() as usize];
-            for i in 0..global_textures.len() {
-                if let Some(info) = global_textures[i] {
+            let mut image_infos = vec![default_image_info; renderer.global_textures.size() as usize];
+            for i in 0..renderer.global_textures.len() {
+                if let Some(info) = renderer.global_textures[i] {
                     image_infos[i] = info;
                 }
             }
 
             let sampler_write = vk::WriteDescriptorSet {
-                dst_set: vk_descriptor_sets[0],
-                descriptor_count: global_textures.size() as u32,
+                dst_set: renderer.descriptor_sets[0],
+                descriptor_count: renderer.global_textures.size() as u32,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 p_image_info: image_infos.as_ptr(),
                 dst_array_element: 0,
@@ -1208,7 +1037,7 @@ fn main() {
                 }
             }
 
-            material_storage_buffer.upload_buffer(&upload_mats);
+            renderer.material_buffer.upload_buffer(&upload_mats);
         }
         
         //Update uniform/storage buffers
@@ -1255,12 +1084,12 @@ fn main() {
                 campos.as_slice(),
                 sundir.as_slice(),
                 &sun_luminance,
-                &[timer.elapsed_time, stars_threshold, stars_exposure]
+                &[timer.elapsed_time, stars_threshold, stars_exposure, pos_inter]
             ].concat();
-            frame_uniform_buffer.upload_buffer(&uniform_buffer);
+            renderer.uniform_buffer.upload_buffer(&uniform_buffer);
 
             //Update model matrix storage buffer
-            transform_storage_buffer.upload_buffer(&renderer.get_instance_data());
+            renderer.instance_buffer.upload_buffer(&renderer.get_instance_data());
         };
 
         //Draw
@@ -1315,7 +1144,7 @@ fn main() {
             vk.device.cmd_begin_render_pass(vk_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             //Once-per-frame bindless descriptor setup
-            vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &vk_descriptor_sets, &[]);
+            vk.device.cmd_bind_descriptor_sets(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &renderer.descriptor_sets, &[]);
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();

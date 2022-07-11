@@ -1,4 +1,6 @@
 use core::slice::Iter;
+use ash::vk::DescriptorImageInfo;
+
 use crate::vkutil::VirtualGeometry;
 use crate::*;
 
@@ -42,7 +44,16 @@ impl InstanceData {
 pub struct Renderer {
     models: OptionVec<DrawData>,
     drawlist: Vec<DrawCall>,
-    instance_data: Vec<InstanceData>
+    instance_data: Vec<InstanceData>,
+
+    pub position_buffer: GPUBuffer,
+    position_offset: u64,
+    pub uniform_buffer: GPUBuffer,
+    pub instance_buffer: GPUBuffer,
+    pub material_buffer: GPUBuffer,
+    pub global_textures: FreeList<DescriptorImageInfo>,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_sets: Vec<vk::DescriptorSet>,
 }
 
 impl Renderer {
@@ -50,24 +61,212 @@ impl Renderer {
         &self.instance_data
     }
 
-    pub fn new() -> Self {
+    pub fn init(vk: &mut VulkanAPI) -> Self {
+        //Maintain free list for texture allocation
+        let global_textures = FreeList::with_capacity(1024);
+
+        //Allocate buffer for frame-constant uniforms
+        let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
+        let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
+        let uniform_buffer = GPUBuffer::allocate(
+            vk,
+            uniform_buffer_size,
+            uniform_buffer_alignment,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            MemoryLocation::CpuToGpu
+        );
+        
+        //Allocate buffer for instance data
+        let storage_buffer_alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
+        let global_transform_slots = 1024 * 1024;
+        let buffer_size = (size_of::<render::InstanceData>() * global_transform_slots) as vk::DeviceSize;
+        let instance_buffer = GPUBuffer::allocate(
+            vk,
+            buffer_size,
+            storage_buffer_alignment,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::CpuToGpu
+        );
+
+        //Allocate material buffer
+        let global_material_slots = 1024;
+        let material_size = 2 * size_of::<u32>() as u64;
+        let material_buffer = GPUBuffer::allocate(
+            vk,
+            material_size * global_material_slots,
+            storage_buffer_alignment,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::CpuToGpu
+        );
+
+        let max_vertices = 100_000;
+        let alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
+        let position_buffer = GPUBuffer::allocate(
+            vk,
+            max_vertices * size_of::<glm::TVec3<f32>>() as u64,
+            alignment,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::CpuToGpu
+        );
+
+        //Set up descriptors
+        let descriptor_set_layout;
+        let descriptor_sets = unsafe {
+            struct BufferDescriptorDesc {
+                ty: vk::DescriptorType,
+                stage_flags: vk::ShaderStageFlags,
+                count: u32,
+                buffer: vk::Buffer,
+                offset: u64,
+                length: u64
+            }
+
+            let buffer_descriptor_descs = [
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    count: 1,
+                    buffer: uniform_buffer.backing_buffer(),
+                    offset: 0,
+                    length: uniform_buffer.length()
+                },
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    count: 1,
+                    buffer: instance_buffer.backing_buffer(),
+                    offset: 0,
+                    length: instance_buffer.length()
+                },
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                    count: 1,
+                    buffer: material_buffer.backing_buffer(),
+                    offset: 0,
+                    length: material_buffer.length()
+                },
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    count: 1,
+                    buffer: position_buffer.backing_buffer(),
+                    offset: 0,
+                    length: position_buffer.length()
+                }
+            ];
+            
+            let mut bindings = Vec::new();
+            let mut pool_sizes = Vec::new();
+
+            for i in 0..buffer_descriptor_descs.len() {
+                let desc = &buffer_descriptor_descs[i];
+                let binding = vk::DescriptorSetLayoutBinding {
+                    binding: i as u32,
+                    descriptor_type: desc.ty,
+                    descriptor_count: desc.count,
+                    stage_flags: desc.stage_flags,
+                    ..Default::default()
+                };
+                bindings.push(binding);
+                let pool_size = vk::DescriptorPoolSize {
+                    ty: desc.ty,
+                    descriptor_count: 1
+                };
+                pool_sizes.push(pool_size);
+            }
+
+            //Add global texture descriptor
+            let binding = vk::DescriptorSetLayoutBinding {
+                binding: buffer_descriptor_descs.len() as u32,
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: global_textures.size() as u32,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                ..Default::default()
+            };
+            bindings.push(binding);
+            let pool_size = vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: 1
+            };
+            pool_sizes.push(pool_size);
+
+            let total_set_count = 1;
+            let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
+                max_sets: total_set_count,
+                pool_size_count: pool_sizes.len() as u32,
+                p_pool_sizes: pool_sizes.as_ptr(),
+                ..Default::default()
+            };
+            let descriptor_pool = vk.device.create_descriptor_pool(&descriptor_pool_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            
+            let descriptor_layout = vk::DescriptorSetLayoutCreateInfo {
+                binding_count: bindings.len() as u32,
+                p_bindings: bindings.as_ptr(),
+                ..Default::default()
+            };
+
+            descriptor_set_layout = vk.device.create_descriptor_set_layout(&descriptor_layout, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+            let vk_alloc_info = vk::DescriptorSetAllocateInfo {
+                descriptor_pool,
+                descriptor_set_count: total_set_count,
+                p_set_layouts: &descriptor_set_layout,
+                ..Default::default()
+            };
+            let descriptor_sets = vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
+
+            let mut desc_writes = Vec::new();
+            let mut infos = Vec::new();
+            for i in 0..buffer_descriptor_descs.len() {
+                let desc = &buffer_descriptor_descs[i];
+                let info = vk::DescriptorBufferInfo {
+                    buffer: desc.buffer,
+                    offset: desc.offset,
+                    range: desc.length
+                };
+                infos.push(info);
+                let write = vk::WriteDescriptorSet {
+                    dst_set: descriptor_sets[0],
+                    descriptor_count: 1,
+                    descriptor_type: desc.ty,
+                    p_buffer_info: &infos[i],
+                    dst_array_element: 0,
+                    dst_binding: i as u32,
+                    ..Default::default()
+                };
+                desc_writes.push(write);
+            }
+            vk.device.update_descriptor_sets(&desc_writes, &[]);
+
+            descriptor_sets
+        };
+
         Renderer {
             models: OptionVec::new(),
             drawlist: Vec::new(),
-            instance_data: Vec::new()
-        }
-    }
-
-    pub fn with_capacity(size: usize) -> Self {
-        Renderer {
-            models: OptionVec::with_capacity(size),
-            drawlist: Vec::with_capacity(size),
-            instance_data: Vec::with_capacity(size)
+            instance_data: Vec::new(),
+            global_textures,
+            descriptor_set_layout,
+            descriptor_sets,
+            position_buffer,
+            position_offset: 0,
+            uniform_buffer,
+            instance_buffer,
+            material_buffer
         }
     }
 
     pub fn register_model(&mut self, data: DrawData) -> usize {
         self.models.insert(data)
+    }
+    
+    pub fn upload_vertex_positions(&mut self, positions: &[f32]) -> u64 {
+        let old_offset = self.position_offset;
+        let new_offset = old_offset + (positions.len() * size_of::<f32>()) as u64;
+        self.position_buffer.upload_subbuffer(positions, old_offset);
+        self.position_offset = new_offset;
+        old_offset
     }
 
     pub fn get_model(&self, idx: usize) -> &Option<DrawData> {
@@ -107,6 +306,7 @@ impl Renderer {
     }
 }
 
+//Values that will be uniform to a particular view. Probably shouldn't be called "FrameUniforms"
 pub struct FrameUniforms {
     pub clip_from_screen: glm::TMat4<f32>,
     pub clip_from_world: glm::TMat4<f32>,
@@ -118,5 +318,6 @@ pub struct FrameUniforms {
     pub sun_radiance: glm::TVec3<f32>,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
-	pub stars_exposure: f32   // modifies the overall strength of the stars
+	pub stars_exposure: f32,  // modifies the overall strength of the stars
+    pub pos_inter: f32
 }
