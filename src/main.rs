@@ -40,6 +40,10 @@ fn crash_with_error_dialog(message: &str) -> ! {
     tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
     panic!("{}", message);
 }
+fn crash_with_error_dialog_titled(title: &str, message: &str) -> ! {
+    tfd::message_box_ok(title, &message.replace("'", ""), tfd::MessageBoxIcon::Error);
+    panic!("{}", message);
+}
 
 fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
     match res {
@@ -340,7 +344,7 @@ fn main() {
         let push_constant_range = vk::PushConstantRange {
             stage_flags: push_constant_shader_stage_flags,
             offset: 0,
-            size: 3 * size_of::<u32>() as u32
+            size: vk.push_constant_size
         };
         let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
             push_constant_range_count: 1,
@@ -567,15 +571,57 @@ fn main() {
 
     //Load totoro model
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
-    let mut uninterleaved_positions = vec![0.0; totoro_mesh.vertex_array.vertices.len() / 14 * 4];
-    for i in 0..(totoro_mesh.vertex_array.vertices.len()/14) {
-        uninterleaved_positions[4 * i] = totoro_mesh.vertex_array.vertices[14 * i];
-        uninterleaved_positions[4 * i + 1] = totoro_mesh.vertex_array.vertices[14 * i + 1];
-        uninterleaved_positions[4 * i + 2] = totoro_mesh.vertex_array.vertices[14 * i + 2];
-        uninterleaved_positions[4 * i + 3] = 1.0;
+
+    struct VertexFetchOffsets {
+        pub position_offset: u32,
+        pub tangent_offset: u32,
+        pub bitangent_offset: u32,
+        pub uv_offset: u32,
     }
-    let tv_offset = renderer.upload_vertex_positions(&uninterleaved_positions);
-    println!("Offset: {}", tv_offset);
+
+    fn upload_uninterleaved_vertices(renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
+        let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / 14 * 4];
+        let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / 14 * 4];
+        let mut uninterleaved_bitangents = vec![0.0; vertex_buffer.len() / 14 * 4];
+        let mut uninterleaved_uvs = vec![0.0; vertex_buffer.len() / 14 * 2];
+        for i in 0..(vertex_buffer.len()/14) {
+            uninterleaved_positions[4 * i] = vertex_buffer[14 * i];
+            uninterleaved_positions[4 * i + 1] = vertex_buffer[14 * i + 1];
+            uninterleaved_positions[4 * i + 2] = vertex_buffer[14 * i + 2];
+            uninterleaved_positions[4 * i + 3] = 1.0;
+
+            uninterleaved_tangents[4 * i] = vertex_buffer[14 * i + 3];
+            uninterleaved_tangents[4 * i + 1] = vertex_buffer[14 * i + 4];
+            uninterleaved_tangents[4 * i + 2] = vertex_buffer[14 * i + 5];
+            uninterleaved_tangents[4 * i + 3] = 0.0;
+
+            uninterleaved_bitangents[4 * i] = vertex_buffer[14 * i + 6];
+            uninterleaved_bitangents[4 * i + 1] = vertex_buffer[14 * i + 7];
+            uninterleaved_bitangents[4 * i + 2] = vertex_buffer[14 * i + 8];
+            uninterleaved_bitangents[4 * i + 3] = 0.0;
+
+            uninterleaved_uvs[2 * i] = vertex_buffer[14 * i + 12];
+            uninterleaved_uvs[2 * i + 1] = vertex_buffer[14 * i + 13];
+        }
+        
+        let position_offset = renderer.upload_vertex_positions(&uninterleaved_positions);
+        let tangent_offset = renderer.upload_vertex_tangents(&uninterleaved_tangents);
+        let bitangent_offset = renderer.upload_vertex_bitangents(&uninterleaved_bitangents);
+        let uv_offset = renderer.upload_vertex_uvs(&uninterleaved_uvs);
+
+        VertexFetchOffsets {
+            position_offset,
+            tangent_offset,
+            bitangent_offset,
+            uv_offset
+        }
+    }
+
+    //Extract totoro positions
+    let totoro_offsets = upload_uninterleaved_vertices(&mut renderer, &totoro_mesh.vertex_array.vertices);
+
+    //Extract terrain positions
+    let terrain_offsets = upload_uninterleaved_vertices(&mut renderer, &terrain_vertices);
 
     //Load gltf object
     let glb_name = "./data/models/nice_tree.glb";
@@ -606,13 +652,19 @@ fn main() {
         };
 
         let material_idx = global_materials.insert(Material {
-                color_idx,
-                normal_idx
-            }) as u32;
+            color_idx,
+            normal_idx
+        }) as u32;
+
+        let offsets = upload_uninterleaved_vertices(&mut renderer, &prim.vertices);
 
         let geometry = VirtualGeometry::create(&mut vk, &prim.vertices, &prim.indices);
         let model_idx = renderer.register_model(DrawData {
             geometry,
+            position_offset: offsets.position_offset,
+            tangent_offset: offsets.tangent_offset,
+            bitangent_offset: offsets.bitangent_offset,
+            uv_offset: offsets.uv_offset,
             material_idx
         });
         tree_model_indices.push(model_idx);
@@ -633,10 +685,18 @@ fn main() {
 
     let terrain_model_idx = renderer.register_model(DrawData {
         geometry: terrain_geometry,
+        position_offset: terrain_offsets.position_offset,
+        tangent_offset: terrain_offsets.tangent_offset,
+        bitangent_offset: terrain_offsets.bitangent_offset,
+        uv_offset: terrain_offsets.uv_offset,
         material_idx: terrain_grass_matidx
     });
     let totoro_model_idx = renderer.register_model(DrawData{
         geometry: totoro_geometry,
+        position_offset: totoro_offsets.position_offset,
+        tangent_offset: totoro_offsets.tangent_offset,
+        bitangent_offset: totoro_offsets.bitangent_offset,
+        uv_offset: totoro_offsets.uv_offset,
         material_idx: totoro_matidx
     });
 
@@ -654,7 +714,7 @@ fn main() {
     let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
-    
+
     let mut sun_speed = 0.003;
     let mut sun_pitch = 0.118;
     let mut sun_yaw = 0.783;
@@ -663,7 +723,7 @@ fn main() {
     let mut stars_exposure = 200.0;
     let mut trees_width = 1;
     let mut trees_height = 1;
-    let mut pos_inter = 1.0;
+    let mut prog_inter = 0.0;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
@@ -706,6 +766,7 @@ fn main() {
             }
         }
 
+        //Handle needing to resize the window
         unsafe {
             if input_output.resize_window {
                 vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
@@ -894,7 +955,7 @@ fn main() {
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut stars_exposure);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
-            imgui::Slider::new("Pos interpolate", 0.0, 1.0).build(&imgui_ui, &mut pos_inter);
+            imgui::Slider::new("Prog interpolate", 0.0, 1.0).build(&imgui_ui, &mut prog_inter);
         }
 
         let bb_mats = {
@@ -1019,7 +1080,7 @@ fn main() {
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 p_image_info: image_infos.as_ptr(),
                 dst_array_element: 0,
-                dst_binding: 4,
+                dst_binding: 7,
                 ..Default::default()
             };
             unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
@@ -1084,13 +1145,13 @@ fn main() {
                 campos.as_slice(),
                 sundir.as_slice(),
                 &sun_luminance,
-                &[timer.elapsed_time, stars_threshold, stars_exposure, pos_inter]
+                &[timer.elapsed_time, stars_threshold, stars_exposure, prog_inter]
             ].concat();
             renderer.uniform_buffer.upload_buffer(&uniform_buffer);
-
-            //Update model matrix storage buffer
-            renderer.instance_buffer.upload_buffer(&renderer.get_instance_data());
         };
+
+        //Update model matrix storage buffer
+        renderer.instance_buffer.upload_buffer(&renderer.get_instance_data());
 
         //Draw
         unsafe {
@@ -1154,7 +1215,13 @@ fn main() {
                     last_bound_pipeline = drawcall.pipeline;
                 }
                 if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
-                    let pcs = [model.material_idx.to_le_bytes(), 0u32.to_le_bytes(), 0u32.to_le_bytes()].concat();
+                    let pcs = [
+                        model.material_idx.to_le_bytes(),
+                        model.position_offset.to_le_bytes(),
+                        model.tangent_offset.to_le_bytes(),
+                        model.bitangent_offset.to_le_bytes(),
+                        model.uv_offset.to_le_bytes(),
+                    ].concat();
                     vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
                     vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[model.geometry.vertex_buffer.backing_buffer()], &[0 as u64]);
                     vk.device.cmd_bind_index_buffer(vk_command_buffer, model.geometry.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
@@ -1166,7 +1233,7 @@ fn main() {
             vk.device.cmd_bind_pipeline(vk_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
             vk.device.cmd_push_constants(vk_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, atmosphere_tex_indices.as_slice());
             vk.device.cmd_bind_vertex_buffers(vk_command_buffer, 0, &[atmosphere_geometry.vertex_buffer.backing_buffer()], &[0 as u64]);
-            vk.device.cmd_bind_index_buffer(vk_command_buffer, atmosphere_geometry.index_buffer.backing_buffer(), (0) as vk::DeviceSize, vk::IndexType::UINT32);
+            vk.device.cmd_bind_index_buffer(vk_command_buffer, atmosphere_geometry.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk_command_buffer, atmosphere_geometry.index_count, 1, 0, 0, 0);
 
             //Record Dear ImGUI drawing commands

@@ -21,6 +21,10 @@ pub struct DrawCall {
 //In other words, the data required to draw a specific kind of thing
 pub struct DrawData {
     pub geometry: VirtualGeometry,
+    pub position_offset: u32,
+    pub tangent_offset: u32,
+    pub bitangent_offset: u32,
+    pub uv_offset: u32,
     pub material_idx: u32
 }
 
@@ -48,6 +52,12 @@ pub struct Renderer {
 
     pub position_buffer: GPUBuffer,
     position_offset: u64,
+    pub tangent_buffer: GPUBuffer,
+    tangent_offset: u64,
+    pub bitangent_buffer: GPUBuffer,
+    bitangent_offset: u64,
+    pub uv_buffer: GPUBuffer,
+    uv_offset: u64,
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
@@ -57,6 +67,8 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    //pub const FRAMES_IN_FLIGHT: usize = 2;
+
     pub fn get_instance_data(&self) -> &Vec<InstanceData> {
         &self.instance_data
     }
@@ -99,11 +111,40 @@ impl Renderer {
             MemoryLocation::CpuToGpu
         );
 
-        let max_vertices = 100_000;
+        let max_vertices = 1024 * 1024 * 16;
         let alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
+
+        //Allocate position buffer
         let position_buffer = GPUBuffer::allocate(
             vk,
-            max_vertices * size_of::<glm::TVec3<f32>>() as u64,
+            max_vertices * size_of::<glm::TVec4<f32>>() as u64,
+            alignment,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::CpuToGpu
+        );
+
+        //Allocate tangent buffer
+        let tangent_buffer = GPUBuffer::allocate(
+            vk,
+            max_vertices * size_of::<glm::TVec4<f32>>() as u64,
+            alignment,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::CpuToGpu
+        );
+
+        //Allocate bitangent buffer
+        let bitangent_buffer = GPUBuffer::allocate(
+            vk,
+            max_vertices * size_of::<glm::TVec4<f32>>() as u64,
+            alignment,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::CpuToGpu
+        );
+
+        //Allocate uv buffer
+        let uv_buffer = GPUBuffer::allocate(
+            vk,
+            max_vertices * size_of::<glm::TVec2<f32>>() as u64,
             alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER,
             MemoryLocation::CpuToGpu
@@ -153,6 +194,30 @@ impl Renderer {
                     buffer: position_buffer.backing_buffer(),
                     offset: 0,
                     length: position_buffer.length()
+                },
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    count: 1,
+                    buffer: tangent_buffer.backing_buffer(),
+                    offset: 0,
+                    length: tangent_buffer.length()
+                },
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    count: 1,
+                    buffer: bitangent_buffer.backing_buffer(),
+                    offset: 0,
+                    length: bitangent_buffer.length()
+                },
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    count: 1,
+                    buffer: uv_buffer.backing_buffer(),
+                    offset: 0,
+                    length: uv_buffer.length()
                 }
             ];
             
@@ -251,6 +316,12 @@ impl Renderer {
             descriptor_sets,
             position_buffer,
             position_offset: 0,
+            tangent_buffer,
+            tangent_offset: 0,
+            bitangent_buffer,
+            bitangent_offset: 0,
+            uv_buffer,
+            uv_offset: 0,
             uniform_buffer,
             instance_buffer,
             material_buffer
@@ -260,13 +331,29 @@ impl Renderer {
     pub fn register_model(&mut self, data: DrawData) -> usize {
         self.models.insert(data)
     }
+
+    fn upload_vertex_attribute(data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
+        let old_offset = *offset;
+        let new_offset = old_offset + (data.len() * size_of::<f32>()) as u64;
+        buffer.upload_subbuffer(data, old_offset);
+        *offset = new_offset;
+        old_offset.try_into().unwrap()
+    }
     
-    pub fn upload_vertex_positions(&mut self, positions: &[f32]) -> u64 {
-        let old_offset = self.position_offset;
-        let new_offset = old_offset + (positions.len() * size_of::<f32>()) as u64;
-        self.position_buffer.upload_subbuffer(positions, old_offset);
-        self.position_offset = new_offset;
-        old_offset
+    pub fn upload_vertex_positions(&mut self, positions: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(positions, &self.position_buffer, &mut self.position_offset) / 16
+    }
+    
+    pub fn upload_vertex_tangents(&mut self, tangents: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(tangents, &self.tangent_buffer, &mut self.tangent_offset) / 16
+    }
+    
+    pub fn upload_vertex_bitangents(&mut self, bitangents: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(bitangents, &self.bitangent_buffer, &mut self.bitangent_offset) / 16
+    }
+    
+    pub fn upload_vertex_uvs(&mut self, uvs: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(uvs, &self.uv_buffer, &mut self.uv_offset) / 8
     }
 
     pub fn get_model(&self, idx: usize) -> &Option<DrawData> {
@@ -319,5 +406,5 @@ pub struct FrameUniforms {
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
 	pub stars_exposure: f32,  // modifies the overall strength of the stars
-    pub pos_inter: f32
+    pub prog_inter: f32
 }

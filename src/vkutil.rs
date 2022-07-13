@@ -488,7 +488,8 @@ pub struct VulkanAPI {
     pub allocator: Allocator,
     pub surface: vk::SurfaceKHR,
     pub ext_surface: ash::extensions::khr::Surface,
-    pub queue_family_index: u32
+    pub queue_family_index: u32,
+    pub push_constant_size: u32
 }
 
 impl VulkanAPI {
@@ -586,6 +587,12 @@ impl VulkanAPI {
             }
             buffer_device_address = buffer_address_features.buffer_device_address != 0;
 
+            let min_pc_size = 20;
+            let pc_working_size = vk_physical_device_properties.limits.max_push_constants_size;
+            if pc_working_size < 20 {
+                crash_with_error_dialog_titled("Your Vulkan implementation sucks, dude", &format!("Your system only supports {} push constant bytes,\nbut this application requires at least {}.", pc_working_size, min_pc_size));
+            }
+
             let mut i = 0;
             for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
                 if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
@@ -637,7 +644,8 @@ impl VulkanAPI {
             allocator,
             surface: vk_surface,
             ext_surface: vk_ext_surface,
-            queue_family_index: vk_queue_family_index
+            queue_family_index: vk_queue_family_index,
+            push_constant_size: vk_physical_device_properties.limits.max_push_constants_size
         }
     }
 }

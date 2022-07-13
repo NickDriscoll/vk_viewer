@@ -47,7 +47,7 @@ struct FrameUniforms {
     float time;
     float stars_threshold;
     float stars_exposure;
-    float pos_inter;
+    float prog_inter;
 }
 
 struct Material {

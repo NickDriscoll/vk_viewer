@@ -1,19 +1,6 @@
 import structs;
 import lighting;
-
-ConstantBuffer<FrameUniforms> uniforms;
-
-[[vk_binding(2, 0)]]
-StructuredBuffer<Material> material_buffer;
-
-[[vk_binding(4, 0)]]
-Sampler2D global_textures[];
-
-[[vk::push_constant]]
-cbuffer PushConstants
-{
-    uint material_idx;
-}
+import fragment_bindings;
 
 float4 fragment_main(MeshVertexOutput input) : SV_Target0
 {
@@ -49,7 +36,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     float mix_factor = max(0.0, dot(normal, float3(0.0, 0.0, 1.0)));
     mix_factor = smoothstep(0.60, 0.70, mix_factor);
-
+    
     float3 world_normal = mul(lerp(rock_normal, grass_normal, mix_factor), TBN);
 
     PBRParams params;
