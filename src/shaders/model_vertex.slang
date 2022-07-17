@@ -9,14 +9,16 @@ MeshVertexOutput vertex_main(ModelVertex vertex) {
     float3 position = vertex_positions[vertex.id + position_buffer_offset].xyz;
     float3 world_position = mul(model_matrix, float4(lerp(vertex.position, position, uniforms.prog_inter), 1.0)).xyz;
 
-    float3 tangent = vertex_tangents[vertex.id + tangent_buffer_offset].xyz;
-    float3 world_tangent = normalize(mul(normal_matrix, float4(lerp(vertex.tangent, tangent, uniforms.prog_inter), 1.0)).xyz);
+    float4 tan = vertex_tangents[vertex.id + tangent_buffer_offset];
+    float bitangent_sign = tan.a;
+    float3 tangent = tan.xyz;
+    float3 world_tangent = normalize(mul(normal_matrix, float4(lerp(vertex.tangent.xyz, tangent, uniforms.prog_inter), 1.0)).xyz);
 
-    float3 bitangent = vertex_bitangents[vertex.id + bitangent_buffer_offset].xyz;
-    float3 world_bitangent = normalize(mul(normal_matrix, float4(lerp(vertex.bitangent, bitangent, uniforms.prog_inter), 1.0)).xyz);
-
-    float3 normal = cross(tangent, bitangent);
+    float3 normal = vertex_normals[vertex.id + normal_buffer_offset].xyz;
     float3 world_normal = normalize(mul(normal_matrix, float4(lerp(vertex.normal, normal, uniforms.prog_inter), 1.0)).xyz);
+
+    float3 bitangent = bitangent_sign * cross(normal, tangent);
+    float3 world_bitangent = normalize(mul(normal_matrix, float4(lerp(vertex.bitangent, bitangent, uniforms.prog_inter), 1.0)).xyz);
 
     float2 uv = vertex_uvs[vertex.id + uv_buffer_offset];
 

@@ -69,8 +69,8 @@ pub struct Renderer {
     position_offset: u64,
     pub tangent_buffer: GPUBuffer,
     tangent_offset: u64,
-    pub bitangent_buffer: GPUBuffer,
-    bitangent_offset: u64,
+    pub normal_buffer: GPUBuffer,
+    normal_offset: u64,
     pub uv_buffer: GPUBuffer,
     uv_offset: u64,
     pub uniform_buffer: GPUBuffer,
@@ -147,8 +147,8 @@ impl Renderer {
             MemoryLocation::CpuToGpu
         );
 
-        //Allocate bitangent buffer
-        let bitangent_buffer = GPUBuffer::allocate(
+        //Allocate normal buffer
+        let normal_buffer = GPUBuffer::allocate(
             vk,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
             alignment,
@@ -222,9 +222,9 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
-                    buffer: bitangent_buffer.backing_buffer(),
+                    buffer: normal_buffer.backing_buffer(),
                     offset: 0,
-                    length: bitangent_buffer.length()
+                    length: normal_buffer.length()
                 },
                 BufferDescriptorDesc {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
@@ -329,8 +329,8 @@ impl Renderer {
             position_offset: 0,
             tangent_buffer,
             tangent_offset: 0,
-            bitangent_buffer,
-            bitangent_offset: 0,
+            normal_buffer,
+            normal_offset: 0,
             uv_buffer,
             uv_offset: 0,
             uniform_buffer,
@@ -343,28 +343,28 @@ impl Renderer {
         self.models.insert(data)
     }
 
-    fn upload_vertex_attribute(data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
+    fn upload_vertex_attribute(vk: &mut VulkanAPI, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
         let old_offset = *offset;
         let new_offset = old_offset + data.len() as u64;
-        buffer.upload_subbuffer(data, old_offset);
+        buffer.upload_subbuffer(vk, data, old_offset);
         *offset = new_offset;
         old_offset.try_into().unwrap()
     }
     
-    pub fn upload_vertex_positions(&mut self, positions: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(positions, &self.position_buffer, &mut self.position_offset) / 4
+    pub fn upload_vertex_positions(&mut self, vk: &mut VulkanAPI, positions: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(vk, positions, &self.position_buffer, &mut self.position_offset) / 4
     }
     
-    pub fn upload_vertex_tangents(&mut self, tangents: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(tangents, &self.tangent_buffer, &mut self.tangent_offset) / 4
+    pub fn upload_vertex_tangents(&mut self, vk: &mut VulkanAPI, tangents: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(vk, tangents, &self.tangent_buffer, &mut self.tangent_offset) / 4
     }
     
-    pub fn upload_vertex_bitangents(&mut self, bitangents: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(bitangents, &self.bitangent_buffer, &mut self.bitangent_offset) / 4
+    pub fn upload_vertex_normals(&mut self, vk: &mut VulkanAPI, normals: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(vk, normals, &self.normal_buffer, &mut self.normal_offset) / 4
     }
     
-    pub fn upload_vertex_uvs(&mut self, uvs: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(uvs, &self.uv_buffer, &mut self.uv_offset) / 2
+    pub fn upload_vertex_uvs(&mut self, vk: &mut VulkanAPI, uvs: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(vk, uvs, &self.uv_buffer, &mut self.uv_offset) / 2
     }
 
     pub fn get_model(&self, idx: usize) -> &Option<DrawData> {

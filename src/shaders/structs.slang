@@ -6,7 +6,7 @@ struct InstanceData {
 //Standard input to a vertex shader
 struct ModelVertex {
     float3 position;
-    float3 tangent;
+    float4 tangent;
     float3 bitangent;
     float3 normal;
     float2 uv;
