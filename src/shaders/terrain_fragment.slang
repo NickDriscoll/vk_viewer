@@ -47,5 +47,5 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.light_direction = uniforms.sun_direction.xyz;
     params.light_radiance = uniforms.sun_radiance.rgb;
 
-    return float4(pbr_mettalic_roughness(input, params), 1.0);
+    return float4(pbr_mettalic_roughness(params), 1.0);
 }

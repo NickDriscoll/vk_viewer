@@ -51,7 +51,7 @@ struct PBRParams
     float3 light_radiance;
 }
 
-float3 pbr_mettalic_roughness(MeshVertexOutput input, PBRParams params)
+float3 pbr_mettalic_roughness(PBRParams params)
 {
     float roughness = 0.3;
     float metallic = 0.0;

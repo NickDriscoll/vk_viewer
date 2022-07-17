@@ -700,8 +700,8 @@ impl GPUBuffer {
 
     pub fn upload_buffer<T>(&self, in_buffer: &[T]) {
         unsafe {
-            let dst_ptr = self.unchecked_ptr();
-            ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut T, in_buffer.len());
+            let dst_ptr = self.unchecked_ptr() as *mut T;
+            ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr, in_buffer.len());
         }
     }
 
@@ -712,7 +712,7 @@ impl GPUBuffer {
         }
 
         unsafe {
-            let dst_ptr = self.unchecked_ptr();
+            let dst_ptr = self.unchecked_ptr() as *mut T;
             let dst_ptr = dst_ptr.offset(offset as isize);
             ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut T, in_buffer.len());
         }

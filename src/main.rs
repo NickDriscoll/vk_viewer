@@ -252,10 +252,7 @@ fn main() {
     //Create free list for materials
     let mut global_materials = FreeList::with_capacity(256);
 
-    let totoro_matidx = global_materials.insert(Material {
-        color_idx: default_color_index,
-        normal_idx: default_normal_index
-    }) as u32;
+    let totoro_matidx = global_materials.insert(Material::new([1.0, 0.9, 0.9, 1.0], default_color_index, default_normal_index)) as u32;
 
     //Create swapchain extension object
     let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk.instance, &vk.device);
@@ -559,15 +556,8 @@ fn main() {
     let rock_color_global_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     let rock_normal_global_index = load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, vk_command_buffer, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
 
-    let terrain_grass_matidx = global_materials.insert(Material {
-        color_idx: grass_color_global_index,
-        normal_idx: grass_normal_global_index
-    }) as u32;
-
-    let terrain_rock_matidx = global_materials.insert(Material {
-        color_idx: rock_color_global_index,
-        normal_idx: rock_normal_global_index
-    }) as u32;
+    let terrain_grass_matidx = global_materials.insert(Material::new([1.0; 4], grass_color_global_index, grass_normal_global_index)) as u32;
+    let terrain_rock_matidx = global_materials.insert(Material::new([1.0; 4], rock_color_global_index, rock_normal_global_index)) as u32;
 
     //Load totoro model
     let totoro_mesh = OzyMesh::load("./data/models/totoro.ozy").unwrap();
@@ -651,10 +641,7 @@ fn main() {
             None => { default_normal_index }
         };
 
-        let material_idx = global_materials.insert(Material {
-            color_idx,
-            normal_idx
-        }) as u32;
+        let material_idx = global_materials.insert(Material::new(prim.material.base_color, color_idx, normal_idx)) as u32;
 
         let offsets = upload_uninterleaved_vertices(&mut renderer, &prim.vertices);
 
@@ -1093,8 +1080,7 @@ fn main() {
             let mut upload_mats = Vec::with_capacity(global_materials.len());
             for i in 0..global_materials.len() {
                 if let Some(mat) = &global_materials[i] {
-                    upload_mats.push(mat.color_idx);
-                    upload_mats.push(mat.normal_idx);
+                    upload_mats.push(mat);
                 }
             }
 

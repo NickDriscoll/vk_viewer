@@ -6,8 +6,19 @@ use crate::*;
 
 #[derive(Debug)]
 pub struct Material {
+    pub base_color: [f32; 4],
     pub color_idx: u32,
     pub normal_idx: u32
+}
+
+impl Material {
+    pub fn new(base_color: [f32; 4], color_idx: u32, normal_idx: u32) -> Self {
+        Material {
+            base_color,
+            color_idx,
+            normal_idx
+        }
+    }
 }
 
 pub struct DrawCall {
@@ -334,26 +345,26 @@ impl Renderer {
 
     fn upload_vertex_attribute(data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
         let old_offset = *offset;
-        let new_offset = old_offset + (data.len() * size_of::<f32>()) as u64;
+        let new_offset = old_offset + data.len() as u64;
         buffer.upload_subbuffer(data, old_offset);
         *offset = new_offset;
         old_offset.try_into().unwrap()
     }
     
     pub fn upload_vertex_positions(&mut self, positions: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(positions, &self.position_buffer, &mut self.position_offset) / 16
+        Self::upload_vertex_attribute(positions, &self.position_buffer, &mut self.position_offset) / 4
     }
     
     pub fn upload_vertex_tangents(&mut self, tangents: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(tangents, &self.tangent_buffer, &mut self.tangent_offset) / 16
+        Self::upload_vertex_attribute(tangents, &self.tangent_buffer, &mut self.tangent_offset) / 4
     }
     
     pub fn upload_vertex_bitangents(&mut self, bitangents: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(bitangents, &self.bitangent_buffer, &mut self.bitangent_offset) / 16
+        Self::upload_vertex_attribute(bitangents, &self.bitangent_buffer, &mut self.bitangent_offset) / 4
     }
     
     pub fn upload_vertex_uvs(&mut self, uvs: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(uvs, &self.uv_buffer, &mut self.uv_offset) / 8
+        Self::upload_vertex_attribute(uvs, &self.uv_buffer, &mut self.uv_offset) / 2
     }
 
     pub fn get_model(&self, idx: usize) -> &Option<DrawData> {

@@ -10,6 +10,7 @@ pub enum GLTFImageType {
 }
 
 pub struct GLTFMaterial {
+    pub base_color: [f32; 4],
     pub color_bytes: Vec<u8>,
     pub color_imagetype: GLTFImageType,
     pub normal_bytes: Option<Vec<u8>>,
@@ -169,6 +170,7 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
             };
 
             let mat = GLTFMaterial {
+                base_color: pbr_model.base_color_factor(),
                 color_bytes,
                 color_imagetype: GLTFImageType::PNG,
                 normal_bytes,
