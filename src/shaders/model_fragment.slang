@@ -15,7 +15,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     PBRParams params;
 
     // Discard the fragment if the alpha is below threshold
-    float4 color_sample = global_textures[my_mat.color_map_index].Sample(input.uv);
+    float4 color_sample = my_mat.base_color * global_textures[my_mat.color_map_index].Sample(input.uv);
     if (color_sample.a < 0.1)
         discard;
     params.albedo = color_sample.rgb;

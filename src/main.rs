@@ -252,7 +252,7 @@ fn main() {
     //Create free list for materials
     let mut global_materials = FreeList::with_capacity(256);
 
-    let totoro_matidx = global_materials.insert(Material::new([1.0, 0.9, 0.9, 1.0], default_color_index, default_normal_index)) as u32;
+    let totoro_matidx = global_materials.insert(Material::new([1.0, 0.5, 0.5, 1.0], default_color_index, default_normal_index)) as u32;
 
     //Create swapchain extension object
     let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk.instance, &vk.device);
@@ -1080,7 +1080,7 @@ fn main() {
             let mut upload_mats = Vec::with_capacity(global_materials.len());
             for i in 0..global_materials.len() {
                 if let Some(mat) = &global_materials[i] {
-                    upload_mats.push(mat);
+                    upload_mats.push(mat.clone());
                 }
             }
 

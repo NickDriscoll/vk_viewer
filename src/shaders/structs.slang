@@ -54,4 +54,6 @@ struct Material {
     float4 base_color;
     uint color_map_index;
     uint normal_map_index;
+    uint pad0;
+    uint pad1;
 };

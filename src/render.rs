@@ -4,11 +4,13 @@ use ash::vk::DescriptorImageInfo;
 use crate::vkutil::VirtualGeometry;
 use crate::*;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Material {
     pub base_color: [f32; 4],
     pub color_idx: u32,
-    pub normal_idx: u32
+    pub normal_idx: u32,
+    pad0: u32,
+    pad1: u32
 }
 
 impl Material {
@@ -16,7 +18,9 @@ impl Material {
         Material {
             base_color,
             color_idx,
-            normal_idx
+            normal_idx,
+            pad0: 0,
+            pad1: 0
         }
     }
 }
@@ -292,8 +296,6 @@ impl Renderer {
             };
             let descriptor_sets = vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
 
-            let mut desc_writes = Vec::new();
-            let mut infos = Vec::new();
             for i in 0..buffer_descriptor_descs.len() {
                 let desc = &buffer_descriptor_descs[i];
                 let info = vk::DescriptorBufferInfo {
@@ -301,19 +303,17 @@ impl Renderer {
                     offset: desc.offset,
                     range: desc.length
                 };
-                infos.push(info);
                 let write = vk::WriteDescriptorSet {
                     dst_set: descriptor_sets[0],
                     descriptor_count: 1,
                     descriptor_type: desc.ty,
-                    p_buffer_info: &infos[i],
+                    p_buffer_info: &info,
                     dst_array_element: 0,
                     dst_binding: i as u32,
                     ..Default::default()
                 };
-                desc_writes.push(write);
+                vk.device.update_descriptor_sets(&[write], &[]);
             }
-            vk.device.update_descriptor_sets(&desc_writes, &[]);
 
             descriptor_sets
         };

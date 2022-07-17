@@ -98,6 +98,7 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
             let position_vec = get_f32_semantic(&glb, &prim, Semantic::Positions).unwrap();
             let normal_vec = get_f32_semantic(&glb, &prim, Semantic::Normals).unwrap();
             let tangent_vec = get_f32_semantic(&glb, &prim, Semantic::Tangents).unwrap();
+
             let texcoord_vec = get_f32_semantic(&glb, &prim, Semantic::TexCoords(0)).unwrap();
 
             //Now, interleave the mesh data
@@ -150,8 +151,15 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
             let mat = prim.material();
             let pbr_model = mat.pbr_metallic_roughness();
 
-            let tex_data_source = pbr_model.base_color_texture().unwrap().texture().source().source();
-            let color_bytes = png_bytes_from_source(&glb, tex_data_source);
+            let color_bytes = match pbr_model.base_color_texture() {
+                Some(t) => {
+                    let source = t.texture().source().source();
+                    png_bytes_from_source(&glb, source)
+                }
+                None => {
+                    vec![]
+                }
+            };
 
             let normal_bytes = match mat.normal_texture() {
                 Some(texture) => {
