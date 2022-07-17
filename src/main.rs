@@ -657,6 +657,54 @@ fn main() {
         tree_model_indices.push(model_idx);
     }
 
+    //Load totoro as glb
+    let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
+
+    //Register each primitive with the renderer
+    let mut totoro_model_indices = vec![];
+    for prim in totoro_data.primitives {
+        let color_idx;
+        if prim.material.color_bytes.len() != 0 {
+            let color_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, prim.material.color_bytes.as_slice());
+            let image_info = vk::DescriptorImageInfo {
+                sampler: material_sampler,
+                image_view: color_image.vk_view,
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+            };
+            color_idx = renderer.global_textures.insert(image_info) as u32;
+        } else {
+            color_idx = default_color_index;
+        }
+
+        let normal_idx = match prim.material.normal_bytes {
+            Some(bytes) => {
+                let normal_image = VirtualImage::from_png_bytes(&mut vk, vk_command_buffer, bytes.as_slice());
+                let image_info = vk::DescriptorImageInfo {
+                    sampler: material_sampler,
+                    image_view: normal_image.vk_view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                };
+                renderer.global_textures.insert(image_info) as u32
+            }
+            None => { default_normal_index }
+        };
+
+        let material_idx = global_materials.insert(Material::new(prim.material.base_color, color_idx, normal_idx)) as u32;
+
+        let offsets = upload_uninterleaved_vertices(&mut renderer, &prim.vertices);
+
+        let geometry = VirtualGeometry::create(&mut vk, &prim.vertices, &prim.indices);
+        let model_idx = renderer.register_model(DrawData {
+            geometry,
+            position_offset: offsets.position_offset,
+            tangent_offset: offsets.tangent_offset,
+            bitangent_offset: offsets.bitangent_offset,
+            uv_offset: offsets.uv_offset,
+            material_idx
+        });
+        totoro_model_indices.push(model_idx);
+    }
+
     let terrain_geometry;
     let totoro_geometry;
     let atmosphere_geometry;
@@ -958,6 +1006,10 @@ fn main() {
 
         for idx in &tree_model_indices {
             renderer.queue_drawcall(*idx, main_pipeline, &bb_mats);
+        }
+
+        for idx in &totoro_model_indices {
+            renderer.queue_drawcall(*idx, main_pipeline, &[glm::identity::<f32, 4>()]);
         }
         
         //Update sun's position

@@ -96,19 +96,28 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
             //We always expect position data to be present
             use gltf::Semantic;
             let position_vec = get_f32_semantic(&glb, &prim, Semantic::Positions).unwrap();
-            let normal_vec = get_f32_semantic(&glb, &prim, Semantic::Normals).unwrap();
-            let tangent_vec = get_f32_semantic(&glb, &prim, Semantic::Tangents).unwrap();
 
-            let texcoord_vec = get_f32_semantic(&glb, &prim, Semantic::TexCoords(0)).unwrap();
+            let normal_vec = match get_f32_semantic(&glb, &prim, Semantic::Normals) {
+                Some(v) => { v }
+                None => { vec![0.0; position_vec.len()] }
+            };
+            let tangent_vec = match get_f32_semantic(&glb, &prim, Semantic::Tangents) {
+                Some(v) => { v }
+                None => { vec![0.0; position_vec.len() / 3 * 4] }
+            };
+            let texcoord_vec = match get_f32_semantic(&glb, &prim, Semantic::TexCoords(0)) {
+                Some(v) => { v }
+                None => { vec![0.0; position_vec.len() / 3 * 2] }
+            };
 
             //Now, interleave the mesh data
             let mut vertex_buffer = vec![0.0f32; position_vec.len() + normal_vec.len() + 6 * tangent_vec.len() / 4 + texcoord_vec.len()];
             for i in 0..(vertex_buffer.len() / 14) {
-                let current_idx = i * 14;
                 let normal = glm::vec3(normal_vec[3 * i], normal_vec[3 * i + 1], normal_vec[3 * i + 2]);
                 let tangent = glm::vec3(tangent_vec[4 * i], tangent_vec[4 * i + 1], tangent_vec[4 * i + 2]);
-                let bitangent = glm::cross(&normal, &tangent);
+                let bitangent = tangent_vec[4 * i + 3] * glm::cross(&normal, &tangent);
 
+                let current_idx = i * 14;
                 vertex_buffer[current_idx] = position_vec[3 * i];
                 vertex_buffer[current_idx + 1] = position_vec[3 * i + 1];
                 vertex_buffer[current_idx + 2] = position_vec[3 * i + 2];
