@@ -459,11 +459,41 @@ impl VirtualImage {
     }
 }
 
+pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, offset: u64, raw_data: &[T]) {
+    //Create staging buffer and upload raw buffer data
+    let bytes_size = (raw_data.len() * size_of::<T>()) as vk::DeviceSize;
+    let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+    staging_buffer.upload_buffer(vk, &raw_data);
+
+    vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+
+    let copy = vk::BufferCopy {
+        src_offset: 0,
+        dst_offset: offset * size_of::<T>() as u64,
+        size: bytes_size
+    };
+    vk.device.cmd_copy_buffer(vk.graphics_command_buffer, staging_buffer.backing_buffer(), dst_buffer, &[copy]);
+
+    vk.device.end_command_buffer(vk.graphics_command_buffer).unwrap();
+
+    let submit_info = vk::SubmitInfo {
+        command_buffer_count: 1,
+        p_command_buffers: &vk.graphics_command_buffer,
+        ..Default::default()
+    };
+    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+    let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
+    vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
+    vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+    vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
+    vk.device.destroy_buffer(staging_buffer.backing_buffer(), vkutil::MEMORY_ALLOCATOR);
+}
+
 pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: &[u8]) {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-    staging_buffer.upload_buffer(&raw_bytes);
+    staging_buffer.upload_buffer(vk, &raw_bytes);
 
     vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
@@ -543,7 +573,6 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: 
         p_command_buffers: &vk.graphics_command_buffer,
         ..Default::default()
     };
-
     let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
     let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
@@ -796,15 +825,12 @@ impl GPUBuffer {
 
     fn unchecked_ptr(&self) -> *mut c_void { self.allocation.mapped_ptr().unwrap().as_ptr() }
 
-    pub fn upload_buffer<T>(&self, in_buffer: &[T]) {
-        unsafe {
-            let dst_ptr = self.unchecked_ptr() as *mut T;
-            ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr, in_buffer.len());
-        }
+    pub fn upload_buffer<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T]) {
+        self.upload_subbuffer(vk, in_buffer, 0);
     }
 
     pub fn upload_subbuffer<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T], offset: u64) {
-        let end_in_bytes = (in_buffer.len() + offset as usize) * size_of::<f32>();
+        let end_in_bytes = (in_buffer.len() + offset as usize) * size_of::<T>();
         if end_in_bytes as u64 > self.length {
             crash_with_error_dialog("OVERRAN BUFFER AAAAA");
         }
@@ -817,7 +843,7 @@ impl GPUBuffer {
                     ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut T, in_buffer.len());
                 }
                 None => {
-                    
+                    upload_GPU_buffer(vk, self.buffer, offset, in_buffer);
                 }
             }
         }
@@ -834,8 +860,8 @@ impl VirtualGeometry {
     pub fn create(vk: &mut VulkanAPI, vertices: &[f32], indices: &[u32]) -> Self {
         let vertex_buffer = GPUBuffer::allocate(vk, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER, MemoryLocation::CpuToGpu);
         let index_buffer = GPUBuffer::allocate(vk, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER, MemoryLocation::CpuToGpu);
-        vertex_buffer.upload_buffer(vertices);
-        index_buffer.upload_buffer(indices);
+        vertex_buffer.upload_buffer(vk, vertices);
+        index_buffer.upload_buffer(vk, indices);
         VirtualGeometry {
             vertex_buffer,
             index_buffer,

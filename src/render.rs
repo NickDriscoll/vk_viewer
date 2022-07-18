@@ -128,14 +128,15 @@ impl Renderer {
 
         let max_vertices = 1024 * 1024 * 16;
         let alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
+        let usage_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
 
         //Allocate position buffer
         let position_buffer = GPUBuffer::allocate(
             vk,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
             alignment,
-            vk::BufferUsageFlags::STORAGE_BUFFER,
-            MemoryLocation::CpuToGpu
+            usage_flags,
+            MemoryLocation::GpuOnly
         );
 
         //Allocate tangent buffer
@@ -143,8 +144,8 @@ impl Renderer {
             vk,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
             alignment,
-            vk::BufferUsageFlags::STORAGE_BUFFER,
-            MemoryLocation::CpuToGpu
+            usage_flags,
+            MemoryLocation::GpuOnly
         );
 
         //Allocate normal buffer
@@ -152,8 +153,8 @@ impl Renderer {
             vk,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
             alignment,
-            vk::BufferUsageFlags::STORAGE_BUFFER,
-            MemoryLocation::CpuToGpu
+            usage_flags,
+            MemoryLocation::GpuOnly
         );
 
         //Allocate uv buffer
@@ -161,8 +162,8 @@ impl Renderer {
             vk,
             max_vertices * size_of::<glm::TVec2<f32>>() as u64,
             alignment,
-            vk::BufferUsageFlags::STORAGE_BUFFER,
-            MemoryLocation::CpuToGpu
+            usage_flags,
+            MemoryLocation::GpuOnly
         );
 
         //Set up descriptors
@@ -417,5 +418,4 @@ pub struct FrameUniforms {
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
 	pub stars_exposure: f32,  // modifies the overall strength of the stars
-    pub prog_inter: f32
 }

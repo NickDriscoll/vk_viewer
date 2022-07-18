@@ -58,12 +58,12 @@ fn time_from_epoch_ms() -> u128 {
     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
 }
 
-fn regenerate_terrain(spec: &mut TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry, fixed_seed: bool) {
+fn regenerate_terrain(vk: &mut VulkanAPI, spec: &mut TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry, fixed_seed: bool) {
     if !fixed_seed {
         spec.seed = time_from_epoch_ms();
     }
     let plane_vertices = spec.generate_vertices();
-    terrain_geometry.vertex_buffer.upload_buffer(&plane_vertices);
+    terrain_geometry.vertex_buffer.upload_buffer(vk, &plane_vertices);
 }
 
 //Entry point
@@ -71,7 +71,7 @@ fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
     let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
-    let mut window_size = glm::vec2(1280, 720);
+    let mut window_size = glm::vec2(1280, 1024);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
@@ -657,7 +657,6 @@ fn main() {
     let mut stars_exposure = 200.0;
     let mut trees_width = 1;
     let mut trees_height = 1;
-    let mut prog_inter = 0.0;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
@@ -696,7 +695,7 @@ fn main() {
         if input_output.gui_toggle { debug_gui.do_gui = !debug_gui.do_gui }
         if input_output.regen_terrain {
             if let Some(ter) = renderer.get_model(terrain_model_idx) {
-                regenerate_terrain(&mut terrain, &ter.geometry, terrain_fixed_seed);
+                regenerate_terrain(&mut vk, &mut terrain, &ter.geometry, terrain_fixed_seed);
             }
         }
 
@@ -769,13 +768,13 @@ fn main() {
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
-                        regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
+                        regenerate_terrain(&mut vk, &mut terrain, &terrain_model.geometry, terrain_fixed_seed);
                     }
                 }
 
                 if terrain_interactive_generation && parameters_changed {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
-                        regenerate_terrain(&mut terrain, &terrain_model.geometry, terrain_fixed_seed);
+                        regenerate_terrain(&mut vk, &mut terrain, &terrain_model.geometry, terrain_fixed_seed);
                     }
                 }
 
@@ -891,7 +890,6 @@ fn main() {
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut stars_exposure);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
-            imgui::Slider::new("Prog interpolate", 0.0, 1.0).build(&imgui_ui, &mut prog_inter);
         }
 
         let bb_mats = {
@@ -1033,7 +1031,7 @@ fn main() {
                 }
             }
 
-            renderer.material_buffer.upload_buffer(&upload_mats);
+            renderer.material_buffer.upload_buffer(&mut vk, &upload_mats);
         }
         
         //Update uniform/storage buffers
@@ -1080,13 +1078,13 @@ fn main() {
                 campos.as_slice(),
                 sundir.as_slice(),
                 &sun_luminance,
-                &[timer.elapsed_time, stars_threshold, stars_exposure, prog_inter]
+                &[timer.elapsed_time, stars_threshold, stars_exposure]
             ].concat();
-            renderer.uniform_buffer.upload_buffer(&uniform_buffer);
+            renderer.uniform_buffer.upload_buffer(&mut vk, &uniform_buffer);
         };
 
         //Update model matrix storage buffer
-        renderer.instance_buffer.upload_buffer(&renderer.get_instance_data());
+        renderer.instance_buffer.upload_buffer(&mut vk, &renderer.get_instance_data());
 
         //Draw
         unsafe {
