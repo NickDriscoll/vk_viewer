@@ -475,13 +475,13 @@ fn main() {
     }
 
     fn upload_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
-        let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / 14 * 4];
-        let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / 14 * 4];
-        let mut uninterleaved_bitangents = vec![0.0; vertex_buffer.len() / 14 * 4];
-        let mut uninterleaved_normals = vec![0.0; vertex_buffer.len() / 14 * 4];
-        let mut uninterleaved_uvs = vec![0.0; vertex_buffer.len() / 14 * 2];
-
         let floats_per_vertex = 15;
+        let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+        let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+        let mut uninterleaved_bitangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+        let mut uninterleaved_normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+        let mut uninterleaved_uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
+
         for i in 0..(vertex_buffer.len() / floats_per_vertex) {
             uninterleaved_positions[4 * i] = vertex_buffer[floats_per_vertex * i];
             uninterleaved_positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
@@ -849,7 +849,7 @@ fn main() {
                 totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
             }
 
-            let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 0.75);
+            let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 30.0);
             let pos = totoro_lookat_pos + lookat_target;
             let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
             campos = glm::vec4(pos.x, pos.y, pos.z, 1.0);
