@@ -805,7 +805,7 @@ fn main() {
  
         //Totoro update
         let a = ozy::routines::uniform_scale(2.0);
-        let b = glm::translation(&totoro_position);
+        let b = glm::translation(&totoro_position) * glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
         let totoro_model_matrix = b * a;
         for idx in &totoro_model_indices {
             renderer.queue_drawcall(*idx, main_pipeline, &[totoro_model_matrix]);

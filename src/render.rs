@@ -49,6 +49,8 @@ fn minor(m: &[f32], r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: u
            m[4*r0+c2] * (m[4*r1+c0] * m[4*r2+c1] - m[4*r2+c0] * m[4*r1+c1]);
 }
 
+//TL;DR use cofactor instead of transpose(inverse(world_from_model))
+//https://github.com/graphitemaster/normals_revisited
 fn cofactor(src: &[f32], dst: &mut [f32]) {
     dst[ 0] =  minor(src, 1, 2, 3, 1, 2, 3);
     dst[ 1] = -minor(src, 1, 2, 3, 0, 2, 3);
@@ -75,37 +77,6 @@ pub struct InstanceData {
 
 impl InstanceData {
     pub fn new(world_from_model: glm::TMat4<f32>) -> Self {
-        //TL;DR use cofactor instead of transpose(inverse(world_from_model))
-        //https://github.com/graphitemaster/normals_revisited
-        /*
-            float minor(const float m[16], int r0, int r1, int r2, int c0, int c1, int c2) {
-                 return m[4*r0+c0] * (m[4*r1+c1] * m[4*r2+c2] - m[4*r2+c1] * m[4*r1+c2]) -
-                        m[4*r0+c1] * (m[4*r1+c0] * m[4*r2+c2] - m[4*r2+c0] * m[4*r1+c2]) +
-                        m[4*r0+c2] * (m[4*r1+c0] * m[4*r2+c1] - m[4*r2+c0] * m[4*r1+c1]);
-            }
-
-            void cofactor(const float src[16], float dst[16]) {
-                dst[ 0] =  minor(src, 1, 2, 3, 1, 2, 3);
-                dst[ 1] = -minor(src, 1, 2, 3, 0, 2, 3);
-                dst[ 2] =  minor(src, 1, 2, 3, 0, 1, 3);
-                dst[ 3] = -minor(src, 1, 2, 3, 0, 1, 2);
-                dst[ 4] = -minor(src, 0, 2, 3, 1, 2, 3);
-                dst[ 5] =  minor(src, 0, 2, 3, 0, 2, 3);
-                dst[ 6] = -minor(src, 0, 2, 3, 0, 1, 3);
-                dst[ 7] =  minor(src, 0, 2, 3, 0, 1, 2);
-                dst[ 8] =  minor(src, 0, 1, 3, 1, 2, 3);
-                dst[ 9] = -minor(src, 0, 1, 3, 0, 2, 3);
-                dst[10] =  minor(src, 0, 1, 3, 0, 1, 3);
-                dst[11] = -minor(src, 0, 1, 3, 0, 1, 2);
-                dst[12] = -minor(src, 0, 1, 2, 1, 2, 3);
-                dst[13] =  minor(src, 0, 1, 2, 0, 2, 3);
-                dst[14] = -minor(src, 0, 1, 2, 0, 1, 3);
-                dst[15] =  minor(src, 0, 1, 2, 0, 1, 2);
-            }
-        */
-        //let normal_matrix = glm::mat4_to_mat3(&world_from_model);
-        //let normal_matrix = glm::transpose(&glm::mat3_to_mat4(&glm::affine_inverse(normal_matrix)));
-
         let mut normal_matrix: glm::TMat4<f32> = glm::identity();
         cofactor(world_from_model.as_slice(), normal_matrix.as_mut_slice());
 
