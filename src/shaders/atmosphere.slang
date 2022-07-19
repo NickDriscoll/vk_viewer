@@ -13,12 +13,24 @@ cbuffer PushConstants {
     uint sunview_idx;
 }
 
+static const float3 SKYBOX_VERTEX_POSITIONS[] = {
+	-1.0, -1.0, -1.0,
+	1.0, -1.0, -1.0,
+	-1.0, 1.0, -1.0,
+	1.0, 1.0, -1.0,
+	-1.0, -1.0, 1.0,
+	-1.0, 1.0, 1.0,
+	1.0, -1.0, 1.0,
+	1.0, 1.0, 1.0
+};
+
 [shader("vertex")]
 AtmosphereVertexOutput vertex_main(AtmosphereVertex vertex) {
     AtmosphereVertexOutput output;
-    output.view_direction = vertex.position;
+    float3 position = SKYBOX_VERTEX_POSITIONS[vertex.id];
+    output.view_direction = position;
     
-    float4 screen_space_pos = mul(uniforms.clip_from_skybox, float4(vertex.position, 1.0));
+    float4 screen_space_pos = mul(uniforms.clip_from_skybox, float4(position, 1.0));
     output.clip_out = screen_space_pos.xyww;
     return output;
 }
@@ -73,7 +85,7 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     viewzenith_color *= pow(1.0 - viewzenith_dot, 4.0);
 
     float3 sunview_color = global_textures[sunview_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
-    sunview_color *= pow(sunview_dot, 1.0);
+    sunview_color *= pow(sunview_dot, 4.0);
 
     //Used to bring out the stars/dim the sun
     float nighttime_factor = smoothstep(-0.1, 0.0, uniforms.sun_direction.z);

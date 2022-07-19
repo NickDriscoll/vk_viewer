@@ -465,6 +465,9 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, o
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
     staging_buffer.upload_buffer(vk, &raw_data);
 
+    //Wait on the fence before beginning command recording
+    vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
     vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
     let copy = vk::BufferCopy {
@@ -481,11 +484,9 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, o
         p_command_buffers: &vk.graphics_command_buffer,
         ..Default::default()
     };
-    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
     let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
-    vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
-    vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-    vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
+    vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
+    vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     vk.device.destroy_buffer(staging_buffer.backing_buffer(), vkutil::MEMORY_ALLOCATOR);
 }
 
@@ -495,6 +496,9 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: 
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
     staging_buffer.upload_buffer(vk, &raw_bytes);
 
+    //Wait on the fence before beginning command recording
+    vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
     vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
     let subresource_range = vk::ImageSubresourceRange {
@@ -573,11 +577,9 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: 
         p_command_buffers: &vk.graphics_command_buffer,
         ..Default::default()
     };
-    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
     let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
-    vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
-    vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-    vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
+    vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
+    vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     vk.device.destroy_buffer(staging_buffer.backing_buffer(), vkutil::MEMORY_ALLOCATOR);
 }
 
@@ -592,7 +594,8 @@ pub struct VulkanAPI {
     pub ext_surface: ash::extensions::khr::Surface,
     pub graphics_queue_family_index: u32,
     pub push_constant_size: u32,
-    pub graphics_command_buffer: vk::CommandBuffer
+    pub graphics_command_buffer: vk::CommandBuffer,
+    pub graphics_command_buffer_fence: vk::Fence
 }
 
 impl VulkanAPI {
@@ -762,6 +765,14 @@ impl VulkanAPI {
             vk_device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()[0]
         };
 
+        let graphics_command_buffer_fence = unsafe {
+            let create_info = vk::FenceCreateInfo {
+                flags: vk::FenceCreateFlags::SIGNALED,
+                ..Default::default()
+            };
+            vk_device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        };
+
         VulkanAPI {
             instance: vk_instance,
             physical_device: vk_physical_device,
@@ -772,7 +783,8 @@ impl VulkanAPI {
             ext_surface: vk_ext_surface,
             graphics_queue_family_index,
             push_constant_size: min_pc_size,
-            graphics_command_buffer
+            graphics_command_buffer,
+            graphics_command_buffer_fence
         }
     }
 }
@@ -1056,6 +1068,15 @@ impl Display {
 pub struct VertexInputConfiguration<'a> {
     pub binding_descriptions: &'a [vk::VertexInputBindingDescription],
     pub attribute_descriptions: &'a [vk::VertexInputAttributeDescription]    
+}
+
+impl<'a> VertexInputConfiguration<'a> {
+    pub fn empty() -> Self {
+        VertexInputConfiguration {
+            binding_descriptions: &[],
+            attribute_descriptions: &[]
+        }
+    }
 }
 
 pub struct VirtualPipelineCreateInfo<'a> {

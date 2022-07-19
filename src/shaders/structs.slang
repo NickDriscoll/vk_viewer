@@ -20,7 +20,7 @@ struct MeshVertexOutput {
 }
 
 struct AtmosphereVertex {
-    float3 position: POSITION;
+    uint id : SV_VertexID;
 }
 
 struct AtmosphereVertexOutput

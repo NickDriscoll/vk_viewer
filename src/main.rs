@@ -58,12 +58,103 @@ fn time_from_epoch_ms() -> u128 {
     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
 }
 
-fn regenerate_terrain(vk: &mut VulkanAPI, spec: &mut TerrainSpec, terrain_geometry: &vkutil::VirtualGeometry, fixed_seed: bool) {
+fn regenerate_terrain(vk: &mut VulkanAPI, spec: &mut TerrainSpec, fixed_seed: bool) -> Vec<f32> {
     if !fixed_seed {
         spec.seed = time_from_epoch_ms();
     }
-    let plane_vertices = spec.generate_vertices();
-    terrain_geometry.vertex_buffer.upload_buffer(vk, &plane_vertices);
+    spec.generate_vertices()
+}
+
+struct VertexFetchOffsets {
+    pub position_offset: u32,
+    pub tangent_offset: u32,
+    pub normal_offset: u32,
+    pub uv_offset: u32,
+}
+
+fn upload_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
+    let floats_per_vertex = 15;
+    let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uninterleaved_bitangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uninterleaved_normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uninterleaved_uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
+
+    for i in 0..(vertex_buffer.len() / floats_per_vertex) {
+        uninterleaved_positions[4 * i] = vertex_buffer[floats_per_vertex * i];
+        uninterleaved_positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
+        uninterleaved_positions[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 2];
+        uninterleaved_positions[4 * i + 3] = 1.0;
+
+        uninterleaved_tangents[4 * i] = vertex_buffer[floats_per_vertex * i + 3];
+        uninterleaved_tangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 4];
+        uninterleaved_tangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 5];
+        uninterleaved_tangents[4 * i + 3] = vertex_buffer[floats_per_vertex * i + 6];
+
+        uninterleaved_bitangents[4 * i] = vertex_buffer[floats_per_vertex * i + 7];
+        uninterleaved_bitangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 8];
+        uninterleaved_bitangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 9];
+        uninterleaved_bitangents[4 * i + 3] = 0.0;
+
+        uninterleaved_normals[4 * i] = vertex_buffer[floats_per_vertex * i + 10];
+        uninterleaved_normals[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 11];
+        uninterleaved_normals[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 12];
+        uninterleaved_normals[4 * i + 3] = 0.0;
+
+        uninterleaved_uvs[2 * i] = vertex_buffer[floats_per_vertex * i + 13];
+        uninterleaved_uvs[2 * i + 1] = vertex_buffer[floats_per_vertex * i + 14];
+    }
+    
+    let position_offset = renderer.append_vertex_positions(vk, &uninterleaved_positions);
+    let tangent_offset = renderer.append_vertex_tangents(vk, &uninterleaved_tangents);
+    let normal_offset = renderer.append_vertex_normals(vk, &uninterleaved_normals);
+    let uv_offset = renderer.append_vertex_uvs(vk, &uninterleaved_uvs);
+
+    VertexFetchOffsets {
+        position_offset,
+        tangent_offset,
+        normal_offset,
+        uv_offset
+    }
+}
+
+fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32], offset: u64) {
+    let floats_per_vertex = 15;
+    let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uninterleaved_bitangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uninterleaved_normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uninterleaved_uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
+
+    for i in 0..(vertex_buffer.len() / floats_per_vertex) {
+        uninterleaved_positions[4 * i] = vertex_buffer[floats_per_vertex * i];
+        uninterleaved_positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
+        uninterleaved_positions[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 2];
+        uninterleaved_positions[4 * i + 3] = 1.0;
+
+        uninterleaved_tangents[4 * i] = vertex_buffer[floats_per_vertex * i + 3];
+        uninterleaved_tangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 4];
+        uninterleaved_tangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 5];
+        uninterleaved_tangents[4 * i + 3] = vertex_buffer[floats_per_vertex * i + 6];
+
+        uninterleaved_bitangents[4 * i] = vertex_buffer[floats_per_vertex * i + 7];
+        uninterleaved_bitangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 8];
+        uninterleaved_bitangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 9];
+        uninterleaved_bitangents[4 * i + 3] = 0.0;
+
+        uninterleaved_normals[4 * i] = vertex_buffer[floats_per_vertex * i + 10];
+        uninterleaved_normals[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 11];
+        uninterleaved_normals[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 12];
+        uninterleaved_normals[4 * i + 3] = 0.0;
+
+        uninterleaved_uvs[2 * i] = vertex_buffer[floats_per_vertex * i + 13];
+        uninterleaved_uvs[2 * i + 1] = vertex_buffer[floats_per_vertex * i + 14];
+    }
+    
+    renderer.replace_vertex_positions(vk, &uninterleaved_positions, offset);
+    renderer.replace_vertex_tangents(vk, &uninterleaved_tangents, offset);
+    renderer.replace_vertex_normals(vk, &uninterleaved_normals, offset);
+    renderer.replace_vertex_uvs(vk, &uninterleaved_uvs, offset);
 }
 
 //Entry point
@@ -291,54 +382,7 @@ fn main() {
 
         let pipeline_creator = vkutil::PipelineCreator::init(vk_pipeline_layout);
 
-        let vert_binding = vk::VertexInputBindingDescription {
-            binding: 0,
-            stride: 15 * size_of::<f32>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX
-        };
-
-        let position_attribute = vk::VertexInputAttributeDescription {
-            location: 0,
-            binding: 0,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: 0
-        };
-
-        let tangent_attribute = vk::VertexInputAttributeDescription {
-            location: 1,
-            binding: 0,
-            format: vk::Format::R32G32B32A32_SFLOAT,
-            offset: 3 * size_of::<f32>() as u32
-        };
-
-        let bitangent_attribute = vk::VertexInputAttributeDescription {
-            location: 2,
-            binding: 0,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: 7 * size_of::<f32>() as u32
-        };
-
-        let normal_attribute = vk::VertexInputAttributeDescription {
-            location: 3,
-            binding: 0,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: 10 * size_of::<f32>() as u32
-        };
-
-        let uv_attribute = vk::VertexInputAttributeDescription {
-            location: 4,
-            binding: 0,
-            format: vk::Format::R32G32_SFLOAT,
-            offset: 13 * size_of::<f32>() as u32
-        };
-
-        let bindings = [vert_binding];
-        let attrs = [position_attribute, tangent_attribute, bitangent_attribute, normal_attribute, uv_attribute];
-        let main_vertex_config = vkutil::VertexInputConfiguration {
-            binding_descriptions: &bindings,
-            attribute_descriptions: &attrs
-        };
-        let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, main_vertex_config, &main_shader_stages);
+        let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &main_shader_stages);
         let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
         main_create_info.shader_stages = &terrain_shader_stages;
         let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
@@ -350,26 +394,7 @@ fn main() {
         let wire_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
         main_create_info.rasterization_state = None;
 
-        let atmosphere_vert_binding = vk::VertexInputBindingDescription {
-            binding: 0,
-            stride: 3 * size_of::<f32>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX
-        };
-
-        let atmosphere_position_attribute = vk::VertexInputAttributeDescription {
-            location: 0,
-            binding: 0,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: 0
-        };
-
-        let bindings = [atmosphere_vert_binding];
-        let attrs = [atmosphere_position_attribute];
-        let atm_vertex_config = vkutil::VertexInputConfiguration {
-            binding_descriptions: &bindings,
-            attribute_descriptions: &attrs
-        };
-        let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, atm_vertex_config, &atm_shader_stages);
+        let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &atm_shader_stages);
         let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
 
         let im_vert_binding = vk::VertexInputBindingDescription {
@@ -467,59 +492,6 @@ fn main() {
     let terrain_grass_matidx = global_materials.insert(Material::new([1.0; 4], grass_color_global_index, grass_normal_global_index)) as u32;
     let terrain_rock_matidx = global_materials.insert(Material::new([1.0; 4], rock_color_global_index, rock_normal_global_index)) as u32;
 
-    struct VertexFetchOffsets {
-        pub position_offset: u32,
-        pub tangent_offset: u32,
-        pub normal_offset: u32,
-        pub uv_offset: u32,
-    }
-
-    fn upload_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
-        let floats_per_vertex = 15;
-        let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-        let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-        let mut uninterleaved_bitangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-        let mut uninterleaved_normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-        let mut uninterleaved_uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
-
-        for i in 0..(vertex_buffer.len() / floats_per_vertex) {
-            uninterleaved_positions[4 * i] = vertex_buffer[floats_per_vertex * i];
-            uninterleaved_positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
-            uninterleaved_positions[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 2];
-            uninterleaved_positions[4 * i + 3] = 1.0;
-
-            uninterleaved_tangents[4 * i] = vertex_buffer[floats_per_vertex * i + 3];
-            uninterleaved_tangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 4];
-            uninterleaved_tangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 5];
-            uninterleaved_tangents[4 * i + 3] = vertex_buffer[floats_per_vertex * i + 6];
-
-            uninterleaved_bitangents[4 * i] = vertex_buffer[floats_per_vertex * i + 7];
-            uninterleaved_bitangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 8];
-            uninterleaved_bitangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 9];
-            uninterleaved_bitangents[4 * i + 3] = 0.0;
-
-            uninterleaved_normals[4 * i] = vertex_buffer[floats_per_vertex * i + 10];
-            uninterleaved_normals[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 11];
-            uninterleaved_normals[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 12];
-            uninterleaved_normals[4 * i + 3] = 0.0;
-
-            uninterleaved_uvs[2 * i] = vertex_buffer[floats_per_vertex * i + 13];
-            uninterleaved_uvs[2 * i + 1] = vertex_buffer[floats_per_vertex * i + 14];
-        }
-        
-        let position_offset = renderer.upload_vertex_positions(vk, &uninterleaved_positions);
-        let tangent_offset = renderer.upload_vertex_tangents(vk, &uninterleaved_tangents);
-        let normal_offset = renderer.upload_vertex_normals(vk, &uninterleaved_normals);
-        let uv_offset = renderer.upload_vertex_uvs(vk, &uninterleaved_uvs);
-
-        VertexFetchOffsets {
-            position_offset,
-            tangent_offset,
-            normal_offset,
-            uv_offset
-        }
-    }
-
     //Extract terrain positions
     let terrain_offsets = upload_uninterleaved_vertices(&mut vk, &mut renderer, &terrain_vertices);
 
@@ -615,11 +587,37 @@ fn main() {
         totoro_model_indices.push(model_idx);
     }
 
+    const ATMOSPHERE_INDICES: [u32; 36] = [
+		//Front
+		0, 1, 2,
+		3, 2, 1,
+        
+        //Left
+		0, 2, 4,
+		2, 5, 4,
+
+		//Right
+		3, 1, 6,
+		7, 3, 6,
+
+		//Back
+		5, 7, 4,
+		7, 6, 4,
+
+		//Bottom
+	    4, 1, 0,
+    	4, 6, 1,
+        
+        //Top
+		7, 5, 2,
+		7, 2, 3
+	];
+
     let terrain_geometry;
     let atmosphere_geometry;
     {        
         terrain_geometry = VirtualGeometry::create(&mut vk, &terrain_vertices, &terrain_indices);
-        atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ozy::prims::skybox_cube_index_buffer());
+        atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ATMOSPHERE_INDICES);
 
         drop(terrain_vertices);
         drop(terrain_indices);
@@ -667,14 +665,6 @@ fn main() {
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
 
-    let vk_submission_fence = unsafe {
-        let create_info = vk::FenceCreateInfo {
-            flags: vk::FenceCreateFlags::SIGNALED,
-            ..Default::default()
-        };
-        vk.device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-    };
-
     let mut input_system = input::InputSystem::init(&sdl_context);
 
     //Main application loop
@@ -695,14 +685,15 @@ fn main() {
         if input_output.gui_toggle { debug_gui.do_gui = !debug_gui.do_gui }
         if input_output.regen_terrain {
             if let Some(ter) = renderer.get_model(terrain_model_idx) {
-                regenerate_terrain(&mut vk, &mut terrain, &ter.geometry, terrain_fixed_seed);
+                let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
+                replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, terrain_offsets.position_offset.into());
             }
         }
 
         //Handle needing to resize the window
         unsafe {
             if input_output.resize_window {
-                vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+                vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
                 for framebuffer in vk_display.swapchain_framebuffers {
@@ -768,13 +759,15 @@ fn main() {
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
-                        regenerate_terrain(&mut vk, &mut terrain, &terrain_model.geometry, terrain_fixed_seed);
+                        let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
+                        replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, terrain_offsets.position_offset.into());
                     }
                 }
 
                 if terrain_interactive_generation && parameters_changed {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
-                        regenerate_terrain(&mut vk, &mut terrain, &terrain_model.geometry, terrain_fixed_seed);
+                        let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
+                        replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, terrain_offsets.position_offset.into());
                     }
                 }
 
@@ -984,8 +977,8 @@ fn main() {
 
         //We need to wait until it's safe to write GPU data
         unsafe {
-            vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
-            vk.device.reset_fences(&[vk_submission_fence]).unwrap();
+            vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+            vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
         }
 
         //Destroy Dear ImGUI allocations from last frame
@@ -1235,7 +1228,7 @@ fn main() {
             };
 
             let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
-            vk.device.queue_submit(queue, &[submit_info], vk_submission_fence).unwrap();
+            vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
@@ -1253,6 +1246,6 @@ fn main() {
 
     //Cleanup
     unsafe {
-        vk.device.wait_for_fences(&[vk_submission_fence], true, vk::DeviceSize::MAX).unwrap();
+        vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     }
 }

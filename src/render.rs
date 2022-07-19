@@ -379,20 +379,40 @@ impl Renderer {
         old_offset.try_into().unwrap()
     }
     
-    pub fn upload_vertex_positions(&mut self, vk: &mut VulkanAPI, positions: &[f32]) -> u32 {
+    pub fn append_vertex_positions(&mut self, vk: &mut VulkanAPI, positions: &[f32]) -> u32 {
         Self::upload_vertex_attribute(vk, positions, &self.position_buffer, &mut self.position_offset) / 4
     }
     
-    pub fn upload_vertex_tangents(&mut self, vk: &mut VulkanAPI, tangents: &[f32]) -> u32 {
+    pub fn append_vertex_tangents(&mut self, vk: &mut VulkanAPI, tangents: &[f32]) -> u32 {
         Self::upload_vertex_attribute(vk, tangents, &self.tangent_buffer, &mut self.tangent_offset) / 4
     }
     
-    pub fn upload_vertex_normals(&mut self, vk: &mut VulkanAPI, normals: &[f32]) -> u32 {
+    pub fn append_vertex_normals(&mut self, vk: &mut VulkanAPI, normals: &[f32]) -> u32 {
         Self::upload_vertex_attribute(vk, normals, &self.normal_buffer, &mut self.normal_offset) / 4
     }
     
-    pub fn upload_vertex_uvs(&mut self, vk: &mut VulkanAPI, uvs: &[f32]) -> u32 {
+    pub fn append_vertex_uvs(&mut self, vk: &mut VulkanAPI, uvs: &[f32]) -> u32 {
         Self::upload_vertex_attribute(vk, uvs, &self.uv_buffer, &mut self.uv_offset) / 2
+    }
+
+    pub fn replace_vertex_positions(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+        let mut my_offset = offset;
+        Self::upload_vertex_attribute(vk, data, &self.position_buffer, &mut my_offset);
+    }
+
+    pub fn replace_vertex_tangents(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+        let mut my_offset = offset;
+        Self::upload_vertex_attribute(vk, data, &self.tangent_buffer, &mut my_offset);
+    }
+
+    pub fn replace_vertex_normals(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+        let mut my_offset = offset;
+        Self::upload_vertex_attribute(vk, data, &self.normal_buffer, &mut my_offset);
+    }
+
+    pub fn replace_vertex_uvs(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+        let mut my_offset = offset;
+        Self::upload_vertex_attribute(vk, data, &self.uv_buffer, &mut my_offset);
     }
 
     pub fn get_model(&self, idx: usize) -> &Option<DrawData> {
