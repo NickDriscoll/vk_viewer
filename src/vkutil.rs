@@ -649,6 +649,7 @@ impl VulkanAPI {
         //Create the Vulkan device
         let vk_physical_device;
         let vk_physical_device_properties;
+        let min_pc_size = 20;
         let mut graphics_queue_family_index = 0;
         let buffer_device_address;
         let vk_device = unsafe {
@@ -694,7 +695,6 @@ impl VulkanAPI {
             }
             buffer_device_address = buffer_address_features.buffer_device_address != 0;
 
-            let min_pc_size = 20;
             let pc_working_size = vk_physical_device_properties.limits.max_push_constants_size;
             if pc_working_size < min_pc_size {
                 crash_with_error_dialog_titled("Your Vulkan implementation sucks, dude", &format!("Your system only supports {} push constant bytes,\nbut this application requires at least {}.", pc_working_size, min_pc_size));
@@ -717,7 +717,7 @@ impl VulkanAPI {
             };
             
             if !vk_ext_surface.get_physical_device_surface_support(vk_physical_device, graphics_queue_family_index, vk_surface).unwrap() {
-                panic!("The physical device queue doesn't support swapchain present!");
+                crash_with_error_dialog("Swapchain present is unavailable on the selected device queue.\nThe application will now exit.");
             }
 
             let extension_names = [ash::extensions::khr::Swapchain::name().as_ptr()];
@@ -771,7 +771,7 @@ impl VulkanAPI {
             surface: vk_surface,
             ext_surface: vk_ext_surface,
             graphics_queue_family_index,
-            push_constant_size: vk_physical_device_properties.limits.max_push_constants_size,
+            push_constant_size: min_pc_size,
             graphics_command_buffer
         }
     }
