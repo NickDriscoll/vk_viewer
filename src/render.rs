@@ -37,6 +37,7 @@ pub struct DrawCall {
 pub struct DrawData {
     //pub geometry: VirtualGeometry,
     pub index_buffer: GPUBuffer,
+    pub index_count: u32,
     pub position_offset: u32,
     pub tangent_offset: u32,
     pub bitangent_offset: u32,
@@ -448,22 +449,22 @@ impl Renderer {
     }
 
     pub fn replace_vertex_positions(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
-        let mut my_offset = offset;
+        let mut my_offset = offset * 4;
         Self::upload_vertex_attribute(vk, data, &self.position_buffer, &mut my_offset);
     }
 
     pub fn replace_vertex_tangents(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
-        let mut my_offset = offset;
+        let mut my_offset = offset * 4;
         Self::upload_vertex_attribute(vk, data, &self.tangent_buffer, &mut my_offset);
     }
 
     pub fn replace_vertex_normals(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
-        let mut my_offset = offset;
+        let mut my_offset = offset * 4;
         Self::upload_vertex_attribute(vk, data, &self.normal_buffer, &mut my_offset);
     }
 
     pub fn replace_vertex_uvs(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
-        let mut my_offset = offset;
+        let mut my_offset = offset * 2;
         Self::upload_vertex_attribute(vk, data, &self.uv_buffer, &mut my_offset);
     }
 

@@ -444,7 +444,6 @@ fn main() {
     };
 
     let terrain_vertices = terrain.generate_vertices();
-    let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
     
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
@@ -460,7 +459,7 @@ fn main() {
     let tree_data = gltfutil::gltf_meshdata(glb_name);
 
     fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData) -> Vec<usize> {
-        let mut totoro_model_indices = vec![];
+        let mut indices = vec![];
         for prim in &data.primitives {
             let color_idx;
             if prim.material.color_bytes.len() != 0 {
@@ -502,15 +501,16 @@ fn main() {
             index_buffer.upload_buffer(vk, &prim.indices);
             let model_idx = renderer.register_model(DrawData {
                 index_buffer,
+                index_count: prim.indices.len().try_into().unwrap(),
                 position_offset: offsets.position_offset,
                 tangent_offset: offsets.tangent_offset,
                 bitangent_offset: offsets.normal_offset,
                 uv_offset: offsets.uv_offset,
                 material_idx
             });
-            totoro_model_indices.push(model_idx);
+            indices.push(model_idx);
         }
-        totoro_model_indices
+        indices
     }
 
     //Register each primitive with the renderer
@@ -552,6 +552,7 @@ fn main() {
 
     //Upload terrain geometry
     let terrain_model_idx = {
+        let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
         let terrain_offsets = uninterleave_and_upload_vertices(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = GPUBuffer::allocate(
@@ -562,9 +563,9 @@ fn main() {
             MemoryLocation::GpuOnly
         );
         index_buffer.upload_buffer(&mut vk, &terrain_indices);
-        drop(terrain_indices);
         renderer.register_model(DrawData {
             index_buffer,
+            index_count: terrain_indices.len().try_into().unwrap(),
             position_offset: terrain_offsets.position_offset,
             tangent_offset: terrain_offsets.tangent_offset,
             bitangent_offset: terrain_offsets.normal_offset,
@@ -1094,7 +1095,7 @@ fn main() {
                     ].concat();
                     vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
                     vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                    vk.device.cmd_draw_indexed(vk.graphics_command_buffer, (model.index_buffer.length() / size_of::<u32>() as u64) as u32, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                    vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }
 
