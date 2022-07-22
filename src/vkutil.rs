@@ -37,6 +37,19 @@ pub const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping
     a: vk::ComponentSwizzle::A,
 };
 
+//Macro to fit a given desired size to a given alignment without worrying about the specific integer type
+macro_rules! size_to_alignment {
+    ($in_size:ident, $alignment:expr) => {
+        {
+            let mut final_size = $in_size;
+            if $alignment > 0 {
+                final_size = (final_size + ($alignment - 1)) & !($alignment - 1);   //Alignment is 2^N where N is a whole number
+            }
+            final_size
+        }
+    };
+}
+
 pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
     let mut file = unwrap_result(File::open(path), &format!("Unable to read shader spv file {}", path));
     let spv = unwrap_result(ash::util::read_spv(&mut file), &format!("Unable to read shader spv file {}", path));
@@ -140,19 +153,6 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         image_view: view,
         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
     }
-}
-
-//Macro to fit a given desired size to a given alignment without worrying about the specific integer type
-macro_rules! size_to_alignment {
-    ($in_size:ident, $alignment:expr) => {
-        {
-            let mut final_size = $in_size;
-            if $alignment > 0 {
-                final_size = (final_size + ($alignment - 1)) & !($alignment - 1);   //Alignment is 2^N where N is a whole number
-            }
-            final_size
-        }
-    };
 }
 
 pub enum ColorSpace {

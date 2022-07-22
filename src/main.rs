@@ -26,14 +26,14 @@ use std::ffi::CStr;
 use std::mem::size_of;
 use std::time::SystemTime;
 
-use ozy::io::OzyMesh;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
 use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualGeometry, VirtualImage, VulkanAPI};
 use structs::{Camera, NoiseParameters, TerrainSpec};
-use render::{DrawData, Renderer, FrameUniforms, Material};
+use render::{DrawData, Renderer, Material};
 
+use crate::gltfutil::GLTFData;
 use crate::gui::{Imgui, ImguiFrame};
 
 fn crash_with_error_dialog(message: &str) -> ! {
@@ -72,7 +72,7 @@ struct VertexFetchOffsets {
     pub uv_offset: u32,
 }
 
-fn upload_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
+fn uninterleave_and_upload_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
     let floats_per_vertex = 15;
     let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
     let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
@@ -186,47 +186,13 @@ fn main() {
     //Initialize the renderer
     let mut renderer = Renderer::init(&mut vk);
 
-    //Create texture samplers
-    let (material_sampler, point_sampler) = unsafe {
-        let sampler_info = vk::SamplerCreateInfo {
-            min_filter: vk::Filter::LINEAR,
-            mag_filter: vk::Filter::LINEAR,
-            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-            address_mode_u: vk::SamplerAddressMode::REPEAT,
-            address_mode_v: vk::SamplerAddressMode::REPEAT,
-            address_mode_w: vk::SamplerAddressMode::REPEAT,
-            mip_lod_bias: 0.0,
-            anisotropy_enable: vk::FALSE,
-            compare_enable: vk::FALSE,
-            min_lod: 0.0,
-            max_lod: vk::LOD_CLAMP_NONE,
-            border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
-            unnormalized_coordinates: vk::FALSE,
-            ..Default::default()
-        };
-        let mat = vk.device.create_sampler(&sampler_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-        
-        let sampler_info = vk::SamplerCreateInfo {
-            min_filter: vk::Filter::NEAREST,
-            mag_filter: vk::Filter::NEAREST,
-            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
-            ..sampler_info
-        };
-        let font = vk.device.create_sampler(&sampler_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-        
-        (mat, font)
-    };
-
     let default_image_info;
 
-    let default_color_index = unsafe { renderer.global_textures.insert(vkutil::upload_raw_image(&mut vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
-    let default_normal_index = unsafe { renderer.global_textures.insert(vkutil::upload_raw_image(&mut vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
-    
     //Load environment textures
     let atmosphere_tex_indices = {
-        let sunzenith_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
-        let viewzenith_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
-        let sunview_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
+        let sunzenith_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
+        let viewzenith_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
+        let sunview_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
         [sunzenith_index.to_le_bytes(), viewzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
     };
 
@@ -235,7 +201,7 @@ fn main() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
             let atlas_format = vk::Format::R8_UNORM;
-            let descriptor_info = vkutil::upload_raw_image(&mut vk, point_sampler, atlas_format, atlas_texture.width, atlas_texture.height, atlas_texture.data);
+            let descriptor_info = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_texture.width, atlas_texture.height, atlas_texture.data);
             default_image_info = descriptor_info;
             let index = renderer.global_textures.insert(descriptor_info);
             
@@ -248,10 +214,7 @@ fn main() {
         }
     };
 
-    //Create free list for materials
-    let mut global_materials = FreeList::with_capacity(256);
-
-    let totoro_matidx = global_materials.insert(Material::new([1.0, 0.5, 0.5, 1.0], default_color_index, default_normal_index)) as u32;
+    let totoro_matidx = renderer.global_materials.insert(Material::new([1.0, 0.5, 0.5, 1.0], renderer.default_color_idx, renderer.default_normal_idx)) as u32;
 
     //Create swapchain extension object
     let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk.instance, &vk.device);
@@ -484,108 +447,80 @@ fn main() {
     let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
     
     //Loading terrain textures
-    let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
-    let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
-    let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
-    let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
+    let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
+    let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
+    let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
+    let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
 
-    let terrain_grass_matidx = global_materials.insert(Material::new([1.0; 4], grass_color_global_index, grass_normal_global_index)) as u32;
-    let terrain_rock_matidx = global_materials.insert(Material::new([1.0; 4], rock_color_global_index, rock_normal_global_index)) as u32;
-
-    //Extract terrain positions
-    let terrain_offsets = upload_uninterleaved_vertices(&mut vk, &mut renderer, &terrain_vertices);
+    let terrain_grass_matidx = renderer.global_materials.insert(Material::new([1.0; 4], grass_color_global_index, grass_normal_global_index)) as u32;
+    let terrain_rock_matidx = renderer.global_materials.insert(Material::new([1.0; 4], rock_color_global_index, rock_normal_global_index)) as u32;
 
     //Load gltf object
     let glb_name = "./data/models/nice_tree.glb";
     let tree_data = gltfutil::gltf_meshdata(glb_name);
 
-    //Register each primitive with the renderer
-    let mut tree_model_indices = vec![];
-    for prim in tree_data.primitives {        
-        let color_image = VirtualImage::from_png_bytes(&mut vk, prim.material.color_bytes.as_slice());
-        let image_info = vk::DescriptorImageInfo {
-            sampler: material_sampler,
-            image_view: color_image.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let color_idx = renderer.global_textures.insert(image_info) as u32;
-
-        let normal_idx = match prim.material.normal_bytes {
-            Some(bytes) => {
-                let normal_image = VirtualImage::from_png_bytes(&mut vk, bytes.as_slice());
+    fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData) -> Vec<usize> {
+        let mut totoro_model_indices = vec![];
+        for prim in &data.primitives {
+            let color_idx;
+            if prim.material.color_bytes.len() != 0 {
+                let color_image = VirtualImage::from_png_bytes(vk, prim.material.color_bytes.as_slice());
                 let image_info = vk::DescriptorImageInfo {
-                    sampler: material_sampler,
-                    image_view: normal_image.vk_view,
+                    sampler: renderer.material_sampler,
+                    image_view: color_image.vk_view,
                     image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
                 };
-                renderer.global_textures.insert(image_info) as u32
+                color_idx = renderer.global_textures.insert(image_info) as u32;
+            } else {
+                color_idx = renderer.default_color_idx;
             }
-            None => { default_normal_index }
-        };
 
-        let material_idx = global_materials.insert(Material::new(prim.material.base_color, color_idx, normal_idx)) as u32;
+            let normal_idx = match &prim.material.normal_bytes {
+                Some(bytes) => {
+                    let normal_image = VirtualImage::from_png_bytes(vk, bytes.as_slice());
+                    let image_info = vk::DescriptorImageInfo {
+                        sampler: renderer.material_sampler,
+                        image_view: normal_image.vk_view,
+                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                    };
+                    renderer.global_textures.insert(image_info) as u32
+                }
+                None => { renderer.default_normal_idx }
+            };
 
-        let offsets = upload_uninterleaved_vertices(&mut vk, &mut renderer, &prim.vertices);
+            let material_idx = renderer.global_materials.insert(Material::new(prim.material.base_color, color_idx, normal_idx)) as u32;
 
-        let geometry = VirtualGeometry::create(&mut vk, &prim.vertices, &prim.indices);
-        let model_idx = renderer.register_model(DrawData {
-            geometry,
-            position_offset: offsets.position_offset,
-            tangent_offset: offsets.tangent_offset,
-            bitangent_offset: offsets.normal_offset,
-            uv_offset: offsets.uv_offset,
-            material_idx
-        });
-        tree_model_indices.push(model_idx);
+            let offsets = uninterleave_and_upload_vertices(vk, renderer, &prim.vertices);
+
+            let index_buffer = GPUBuffer::allocate(
+                vk,
+                (prim.indices.len() * size_of::<u32>()) as vk::DeviceSize,
+                0,
+                vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuOnly
+            );
+            index_buffer.upload_buffer(vk, &prim.indices);
+            let model_idx = renderer.register_model(DrawData {
+                index_buffer,
+                position_offset: offsets.position_offset,
+                tangent_offset: offsets.tangent_offset,
+                bitangent_offset: offsets.normal_offset,
+                uv_offset: offsets.uv_offset,
+                material_idx
+            });
+            totoro_model_indices.push(model_idx);
+        }
+        totoro_model_indices
     }
+
+    //Register each primitive with the renderer
+    let tree_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &tree_data);
 
     //Load totoro as glb
     let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
 
     //Register each primitive with the renderer
-    let mut totoro_model_indices = vec![];
-    for prim in totoro_data.primitives {
-        let color_idx;
-        if prim.material.color_bytes.len() != 0 {
-            let color_image = VirtualImage::from_png_bytes(&mut vk, prim.material.color_bytes.as_slice());
-            let image_info = vk::DescriptorImageInfo {
-                sampler: material_sampler,
-                image_view: color_image.vk_view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-            };
-            color_idx = renderer.global_textures.insert(image_info) as u32;
-        } else {
-            color_idx = default_color_index;
-        }
-
-        let normal_idx = match prim.material.normal_bytes {
-            Some(bytes) => {
-                let normal_image = VirtualImage::from_png_bytes(&mut vk, bytes.as_slice());
-                let image_info = vk::DescriptorImageInfo {
-                    sampler: material_sampler,
-                    image_view: normal_image.vk_view,
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                };
-                renderer.global_textures.insert(image_info) as u32
-            }
-            None => { default_normal_index }
-        };
-
-        let material_idx = global_materials.insert(Material::new(prim.material.base_color, color_idx, normal_idx)) as u32;
-
-        let offsets = upload_uninterleaved_vertices(&mut vk, &mut renderer, &prim.vertices);
-
-        let geometry = VirtualGeometry::create(&mut vk, &prim.vertices, &prim.indices);
-        let model_idx = renderer.register_model(DrawData {
-            geometry,
-            position_offset: offsets.position_offset,
-            tangent_offset: offsets.tangent_offset,
-            bitangent_offset: offsets.normal_offset,
-            uv_offset: offsets.uv_offset,
-            material_idx
-        });
-        totoro_model_indices.push(model_idx);
-    }
+    let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data);
 
     const ATMOSPHERE_INDICES: [u32; 36] = [
 		//Front
@@ -613,24 +548,30 @@ fn main() {
 		7, 2, 3
 	];
 
-    let terrain_geometry;
-    let atmosphere_geometry;
-    {        
-        terrain_geometry = VirtualGeometry::create(&mut vk, &terrain_vertices, &terrain_indices);
-        atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ATMOSPHERE_INDICES);
+    let atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ATMOSPHERE_INDICES);
 
+    //Upload terrain geometry
+    let terrain_model_idx = {
+        let terrain_offsets = uninterleave_and_upload_vertices(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
+        let index_buffer = GPUBuffer::allocate(
+            &mut vk,
+            (terrain_indices.len() * size_of::<u32>()) as vk::DeviceSize,
+            0,
+            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            MemoryLocation::GpuOnly
+        );
+        index_buffer.upload_buffer(&mut vk, &terrain_indices);
         drop(terrain_indices);
-    }
-
-    let terrain_model_idx = renderer.register_model(DrawData {
-        geometry: terrain_geometry,
-        position_offset: terrain_offsets.position_offset,
-        tangent_offset: terrain_offsets.tangent_offset,
-        bitangent_offset: terrain_offsets.normal_offset,
-        uv_offset: terrain_offsets.uv_offset,
-        material_idx: terrain_grass_matidx
-    });
+        renderer.register_model(DrawData {
+            index_buffer,
+            position_offset: terrain_offsets.position_offset,
+            tangent_offset: terrain_offsets.tangent_offset,
+            bitangent_offset: terrain_offsets.normal_offset,
+            uv_offset: terrain_offsets.uv_offset,
+            material_idx: terrain_grass_matidx
+        })
+    };
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -676,7 +617,7 @@ fn main() {
 
         //Input sampling
         let imgui_io = imgui_context.io_mut();
-        let input_output = match input::do_input(&mut input_system, &timer, imgui_io) {
+        let input_output = match input_system.do_thing(&timer, imgui_io) {
             UserInput::Output(o) => { o }
             UserInput::ExitProgram => { break 'running; }
         };
@@ -685,8 +626,9 @@ fn main() {
         if input_output.gui_toggle { debug_gui.do_gui = !debug_gui.do_gui }
         if input_output.regen_terrain {
             if let Some(ter) = renderer.get_model(terrain_model_idx) {
+                let offset = ter.position_offset;
                 let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
-                replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, terrain_offsets.position_offset.into());
+                replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, offset.into());
             }
         }
 
@@ -759,15 +701,17 @@ fn main() {
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
+                        let vert_offset = terrain_model.position_offset;
                         let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
-                        replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, terrain_offsets.position_offset.into());
+                        replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, vert_offset.into());
                     }
                 }
 
                 if terrain_interactive_generation && parameters_changed {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
+                        let vert_offset = terrain_model.position_offset;
                         let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
-                        replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, terrain_offsets.position_offset.into());
+                        replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, vert_offset.into());
                     }
                 }
 
@@ -1014,12 +958,12 @@ fn main() {
         }
 
         //Update bindless material definitions
-        if global_materials.updated {
-            global_materials.updated = false;
+        if renderer.global_materials.updated {
+            renderer.global_materials.updated = false;
 
-            let mut upload_mats = Vec::with_capacity(global_materials.len());
-            for i in 0..global_materials.len() {
-                if let Some(mat) = &global_materials[i] {
+            let mut upload_mats = Vec::with_capacity(renderer.global_materials.len());
+            for i in 0..renderer.global_materials.len() {
+                if let Some(mat) = &renderer.global_materials[i] {
                     upload_mats.push(mat.clone());
                 }
             }
@@ -1149,16 +1093,14 @@ fn main() {
                         model.uv_offset.to_le_bytes(),
                     ].concat();
                     vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                    vk.device.cmd_bind_vertex_buffers(vk.graphics_command_buffer, 0, &[model.geometry.vertex_buffer.backing_buffer()], &[0 as u64]);
-                    vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.geometry.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                    vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.geometry.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                    vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                    vk.device.cmd_draw_indexed(vk.graphics_command_buffer, (model.index_buffer.length() / size_of::<u32>() as u64) as u32, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }
 
             //Record atmosphere rendering commands
             vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
             vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, atmosphere_tex_indices.as_slice());
-            vk.device.cmd_bind_vertex_buffers(vk.graphics_command_buffer, 0, &[atmosphere_geometry.vertex_buffer.backing_buffer()], &[0 as u64]);
             vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, atmosphere_geometry.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
             vk.device.cmd_draw_indexed(vk.graphics_command_buffer, atmosphere_geometry.index_count, 1, 0, 0, 0);
 

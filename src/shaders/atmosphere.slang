@@ -88,7 +88,7 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     sunview_color *= pow(sunview_dot, 4.0);
 
     //Used to bring out the stars/dim the sun
-    float nighttime_factor = smoothstep(-0.1, 0.0, uniforms.sun_direction.z);
+    float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
     
     // Stars computation:
 	float stars = pow(clamp(noise(view_direction * 200.0f), 0.0f, 1.0f), uniforms.stars_threshold) * uniforms.stars_exposure;

@@ -9,8 +9,8 @@ pub struct Material {
     pub base_color: [f32; 4],
     pub color_idx: u32,
     pub normal_idx: u32,
-    pad0: u32,
-    pad1: u32
+    _pad0: u32,
+    _pad1: u32
 }
 
 impl Material {
@@ -19,8 +19,8 @@ impl Material {
             base_color,
             color_idx,
             normal_idx,
-            pad0: 0,
-            pad1: 0
+            _pad0: 0,
+            _pad1: 0
         }
     }
 }
@@ -35,7 +35,8 @@ pub struct DrawCall {
 //This is a struct that contains mesh and material data
 //In other words, the data required to draw a specific kind of thing
 pub struct DrawData {
-    pub geometry: VirtualGeometry,
+    //pub geometry: VirtualGeometry,
+    pub index_buffer: GPUBuffer,
     pub position_offset: u32,
     pub tangent_offset: u32,
     pub bitangent_offset: u32,
@@ -49,7 +50,7 @@ fn minor(m: &[f32], r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: u
            m[4*r0+c2] * (m[4*r1+c0] * m[4*r2+c1] - m[4*r2+c0] * m[4*r1+c1]);
 }
 
-//TL;DR use cofactor instead of transpose(inverse(world_from_model))
+//TL;DR use cofactor instead of transpose(inverse(world_from_model)) for normal matrix
 //https://github.com/graphitemaster/normals_revisited
 fn cofactor(src: &[f32], dst: &mut [f32]) {
     dst[ 0] =  minor(src, 1, 2, 3, 1, 2, 3);
@@ -77,6 +78,8 @@ pub struct InstanceData {
 
 impl InstanceData {
     pub fn new(world_from_model: glm::TMat4<f32>) -> Self {
+        //TL;DR use cofactor instead of transpose(inverse(world_from_model)) for normal matrix
+        //https://github.com/graphitemaster/normals_revisited
         let mut normal_matrix: glm::TMat4<f32> = glm::identity();
         cofactor(world_from_model.as_slice(), normal_matrix.as_mut_slice());
 
@@ -88,7 +91,12 @@ impl InstanceData {
 }
 
 pub struct Renderer {
-    models: OptionVec<DrawData>,
+    //pub uniforms: FrameUniforms,
+    pub default_color_idx: u32,
+    pub default_normal_idx: u32,
+    pub material_sampler: vk::Sampler,
+    pub point_sampler: vk::Sampler,
+    primitives: OptionVec<DrawData>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
 
@@ -104,6 +112,7 @@ pub struct Renderer {
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
     pub global_textures: FreeList<DescriptorImageInfo>,
+    pub global_materials: FreeList<Material>,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
 }
@@ -117,7 +126,7 @@ impl Renderer {
 
     pub fn init(vk: &mut VulkanAPI) -> Self {
         //Maintain free list for texture allocation
-        let global_textures = FreeList::with_capacity(1024);
+        let mut global_textures = FreeList::with_capacity(1024);
 
         //Allocate buffer for frame-constant uniforms
         let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
@@ -346,11 +355,54 @@ impl Renderer {
             descriptor_sets
         };
 
+        //Create texture samplers
+        let (material_sampler, point_sampler) = unsafe {
+            let sampler_info = vk::SamplerCreateInfo {
+                min_filter: vk::Filter::LINEAR,
+                mag_filter: vk::Filter::LINEAR,
+                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                address_mode_u: vk::SamplerAddressMode::REPEAT,
+                address_mode_v: vk::SamplerAddressMode::REPEAT,
+                address_mode_w: vk::SamplerAddressMode::REPEAT,
+                mip_lod_bias: 0.0,
+                anisotropy_enable: vk::FALSE,
+                compare_enable: vk::FALSE,
+                min_lod: 0.0,
+                max_lod: vk::LOD_CLAMP_NONE,
+                border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
+                unnormalized_coordinates: vk::FALSE,
+                ..Default::default()
+            };
+            let mat = vk.device.create_sampler(&sampler_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            
+            let sampler_info = vk::SamplerCreateInfo {
+                min_filter: vk::Filter::NEAREST,
+                mag_filter: vk::Filter::NEAREST,
+                mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+                ..sampler_info
+            };
+            let font = vk.device.create_sampler(&sampler_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            
+            (mat, font)
+        };
+
+        let default_color_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
+        let default_normal_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
+
+        //Create free list for materials
+        let global_materials = FreeList::with_capacity(256);
+
         Renderer {
-            models: OptionVec::new(),
+            //uniforms,
+            default_color_idx,
+            default_normal_idx,
+            material_sampler,
+            point_sampler,
+            primitives: OptionVec::new(),
             drawlist: Vec::new(),
             instance_data: Vec::new(),
             global_textures,
+            global_materials,
             descriptor_set_layout,
             descriptor_sets,
             position_buffer,
@@ -368,7 +420,7 @@ impl Renderer {
     }
 
     pub fn register_model(&mut self, data: DrawData) -> usize {
-        self.models.insert(data)
+        self.primitives.insert(data)
     }
 
     fn upload_vertex_attribute(vk: &mut VulkanAPI, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
@@ -416,11 +468,11 @@ impl Renderer {
     }
 
     pub fn get_model(&self, idx: usize) -> &Option<DrawData> {
-        &self.models[idx]
+        &self.primitives[idx]
     }
 
     pub fn queue_drawcall(&mut self, model_idx: usize, pipeline: vk::Pipeline, transforms: &[glm::TMat4<f32>]) {
-        if let None = &self.models[model_idx] {
+        if let None = &self.primitives[model_idx] {
             tfd::message_box_ok("No model at supplied index", &format!("No model loaded at index {}", model_idx), tfd::MessageBoxIcon::Error);
             return;
         }
@@ -464,5 +516,8 @@ pub struct FrameUniforms {
     pub sun_radiance: glm::TVec3<f32>,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
-	pub stars_exposure: f32,  // modifies the overall strength of the stars
+	pub stars_exposure: f32,  // modifies the overall strength of the stars,
+    pub sunzenith_idx: u32,
+    pub viewzenith_idx: u32,
+    pub sunview_idx: u32
 }
