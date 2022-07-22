@@ -65,6 +65,13 @@ fn regenerate_terrain(vk: &mut VulkanAPI, spec: &mut TerrainSpec, fixed_seed: bo
     spec.generate_vertices()
 }
 
+struct UninterleavedVertices {
+    pub positions: Vec<f32>,
+    pub tangents: Vec<f32>,
+    pub normals: Vec<f32>,
+    pub uvs: Vec<f32>,
+}
+
 struct VertexFetchOffsets {
     pub position_offset: u32,
     pub tangent_offset: u32,
@@ -72,43 +79,48 @@ struct VertexFetchOffsets {
     pub uv_offset: u32,
 }
 
-fn uninterleave_and_upload_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
+fn uninterleave_vertex_buffer(vertex_buffer: &[f32]) -> UninterleavedVertices {
     let floats_per_vertex = 15;
-    let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uninterleaved_bitangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uninterleaved_normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uninterleaved_uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
+    let mut positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
+    let mut uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
 
     for i in 0..(vertex_buffer.len() / floats_per_vertex) {
-        uninterleaved_positions[4 * i] = vertex_buffer[floats_per_vertex * i];
-        uninterleaved_positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
-        uninterleaved_positions[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 2];
-        uninterleaved_positions[4 * i + 3] = 1.0;
+        positions[4 * i] = vertex_buffer[floats_per_vertex * i];
+        positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
+        positions[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 2];
+        positions[4 * i + 3] = 1.0;
 
-        uninterleaved_tangents[4 * i] = vertex_buffer[floats_per_vertex * i + 3];
-        uninterleaved_tangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 4];
-        uninterleaved_tangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 5];
-        uninterleaved_tangents[4 * i + 3] = vertex_buffer[floats_per_vertex * i + 6];
+        tangents[4 * i] = vertex_buffer[floats_per_vertex * i + 3];
+        tangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 4];
+        tangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 5];
+        tangents[4 * i + 3] = vertex_buffer[floats_per_vertex * i + 6];
 
-        uninterleaved_bitangents[4 * i] = vertex_buffer[floats_per_vertex * i + 7];
-        uninterleaved_bitangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 8];
-        uninterleaved_bitangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 9];
-        uninterleaved_bitangents[4 * i + 3] = 0.0;
+        normals[4 * i] = vertex_buffer[floats_per_vertex * i + 10];
+        normals[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 11];
+        normals[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 12];
+        normals[4 * i + 3] = 0.0;
 
-        uninterleaved_normals[4 * i] = vertex_buffer[floats_per_vertex * i + 10];
-        uninterleaved_normals[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 11];
-        uninterleaved_normals[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 12];
-        uninterleaved_normals[4 * i + 3] = 0.0;
-
-        uninterleaved_uvs[2 * i] = vertex_buffer[floats_per_vertex * i + 13];
-        uninterleaved_uvs[2 * i + 1] = vertex_buffer[floats_per_vertex * i + 14];
+        uvs[2 * i] = vertex_buffer[floats_per_vertex * i + 13];
+        uvs[2 * i + 1] = vertex_buffer[floats_per_vertex * i + 14];
     }
+
+    UninterleavedVertices {
+        positions,
+        tangents,
+        normals,
+        uvs
+    }
+}
+
+fn uninterleave_and_upload_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
+    let attributes = uninterleave_vertex_buffer(vertex_buffer);
     
-    let position_offset = renderer.append_vertex_positions(vk, &uninterleaved_positions);
-    let tangent_offset = renderer.append_vertex_tangents(vk, &uninterleaved_tangents);
-    let normal_offset = renderer.append_vertex_normals(vk, &uninterleaved_normals);
-    let uv_offset = renderer.append_vertex_uvs(vk, &uninterleaved_uvs);
+    let position_offset = renderer.append_vertex_positions(vk, &attributes.positions);
+    let tangent_offset = renderer.append_vertex_tangents(vk, &attributes.tangents);
+    let normal_offset = renderer.append_vertex_normals(vk, &attributes.normals);
+    let uv_offset = renderer.append_vertex_uvs(vk, &attributes.uvs);
 
     VertexFetchOffsets {
         position_offset,
@@ -119,42 +131,12 @@ fn uninterleave_and_upload_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer,
 }
 
 fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32], offset: u64) {
-    let floats_per_vertex = 15;
-    let mut uninterleaved_positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uninterleaved_tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uninterleaved_bitangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uninterleaved_normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uninterleaved_uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
-
-    for i in 0..(vertex_buffer.len() / floats_per_vertex) {
-        uninterleaved_positions[4 * i] = vertex_buffer[floats_per_vertex * i];
-        uninterleaved_positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
-        uninterleaved_positions[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 2];
-        uninterleaved_positions[4 * i + 3] = 1.0;
-
-        uninterleaved_tangents[4 * i] = vertex_buffer[floats_per_vertex * i + 3];
-        uninterleaved_tangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 4];
-        uninterleaved_tangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 5];
-        uninterleaved_tangents[4 * i + 3] = vertex_buffer[floats_per_vertex * i + 6];
-
-        uninterleaved_bitangents[4 * i] = vertex_buffer[floats_per_vertex * i + 7];
-        uninterleaved_bitangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 8];
-        uninterleaved_bitangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 9];
-        uninterleaved_bitangents[4 * i + 3] = 0.0;
-
-        uninterleaved_normals[4 * i] = vertex_buffer[floats_per_vertex * i + 10];
-        uninterleaved_normals[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 11];
-        uninterleaved_normals[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 12];
-        uninterleaved_normals[4 * i + 3] = 0.0;
-
-        uninterleaved_uvs[2 * i] = vertex_buffer[floats_per_vertex * i + 13];
-        uninterleaved_uvs[2 * i + 1] = vertex_buffer[floats_per_vertex * i + 14];
-    }
+    let attributes = uninterleave_vertex_buffer(vertex_buffer);
     
-    renderer.replace_vertex_positions(vk, &uninterleaved_positions, offset);
-    renderer.replace_vertex_tangents(vk, &uninterleaved_tangents, offset);
-    renderer.replace_vertex_normals(vk, &uninterleaved_normals, offset);
-    renderer.replace_vertex_uvs(vk, &uninterleaved_uvs, offset);
+    renderer.replace_vertex_positions(vk, &attributes.positions, offset);
+    renderer.replace_vertex_tangents(vk, &attributes.tangents, offset);
+    renderer.replace_vertex_normals(vk, &attributes.normals, offset);
+    renderer.replace_vertex_uvs(vk, &attributes.uvs, offset);
 }
 
 //Entry point
