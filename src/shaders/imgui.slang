@@ -2,7 +2,7 @@ import structs;
 
 ConstantBuffer<FrameUniforms> uniforms;
 
-[[vk_binding(7, 0)]]
+[[vk_binding(8, 0)]]
 Sampler2D global_textures[];
 
 [[vk::push_constant]]

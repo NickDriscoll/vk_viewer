@@ -41,7 +41,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     PBRParams params;
     params.albedo = lerp(rock_albedo, grass_albedo, mix_factor);
-    params.surface_normal = world_normal;
+    params.shading_normal = world_normal;
     params.geometry_normal = normal;
     params.view = view;
     params.light_direction = uniforms.sun_direction.xyz;

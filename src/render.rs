@@ -109,6 +109,8 @@ pub struct Renderer {
     normal_offset: u64,
     pub uv_buffer: GPUBuffer,
     uv_offset: u64,
+    pub imgui_buffer: GPUBuffer,
+    imgui_offset: u64,
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
@@ -203,6 +205,16 @@ impl Renderer {
             MemoryLocation::GpuOnly
         );
 
+        //Allocate imgui buffer
+        let max_imgui_vertices = 1024 * 1024;
+        let imgui_buffer = GPUBuffer::allocate(
+            vk,
+            8 * max_imgui_vertices * size_of::<f32>() as u64,
+            alignment,
+            usage_flags,
+            MemoryLocation::CpuToGpu
+        );
+
         //Set up descriptors
         let descriptor_set_layout;
         let descriptor_sets = unsafe {
@@ -271,6 +283,14 @@ impl Renderer {
                     buffer: uv_buffer.backing_buffer(),
                     offset: 0,
                     length: uv_buffer.length()
+                },
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    count: 1,
+                    buffer: imgui_buffer.backing_buffer(),
+                    offset: 0,
+                    length: imgui_buffer.length()
                 }
             ];
             
@@ -414,6 +434,8 @@ impl Renderer {
             normal_offset: 0,
             uv_buffer,
             uv_offset: 0,
+            imgui_buffer,
+            imgui_offset: 0,
             uniform_buffer,
             instance_buffer,
             material_buffer
@@ -466,6 +488,11 @@ impl Renderer {
     pub fn replace_vertex_uvs(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
         let mut my_offset = offset * 2;
         Self::upload_vertex_attribute(vk, data, &self.uv_buffer, &mut my_offset);
+    }
+
+    pub fn replace_imgui_vertices(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+        let mut my_offset = offset * 8;
+        Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 
     pub fn get_model(&self, idx: usize) -> &Option<DrawData> {

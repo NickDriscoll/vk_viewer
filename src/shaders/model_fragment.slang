@@ -22,7 +22,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     // Get normal vector at this point
     float3 sampled_normal = 2.0 * global_textures[my_mat.normal_map_index].Sample(input.uv).xyz - 1.0;
-    params.surface_normal = normalize(mul(sampled_normal, TBN));
+    params.shading_normal = normalize(mul(sampled_normal, TBN));
     params.geometry_normal = normal;
     params.view = view;
     params.light_direction = uniforms.sun_direction.xyz;
