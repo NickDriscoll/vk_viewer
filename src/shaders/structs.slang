@@ -19,10 +19,6 @@ struct MeshVertexOutput {
     float3 bitangent;
 }
 
-struct AtmosphereVertex {
-    uint id : SV_VertexID;
-}
-
 struct AtmosphereVertexOutput
 {
     float4 clip_out : SV_Position;

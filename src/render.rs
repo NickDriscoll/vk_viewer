@@ -35,12 +35,11 @@ pub struct DrawCall {
 //This is a struct that contains mesh and material data
 //In other words, the data required to draw a specific kind of thing
 pub struct DrawData {
-    //pub geometry: VirtualGeometry,
     pub index_buffer: GPUBuffer,
     pub index_count: u32,
     pub position_offset: u32,
     pub tangent_offset: u32,
-    pub bitangent_offset: u32,
+    pub normal_offset: u32,
     pub uv_offset: u32,
     pub material_idx: u32
 }
@@ -491,7 +490,7 @@ impl Renderer {
     }
 
     pub fn replace_imgui_vertices(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
-        let mut my_offset = offset * 8;
+        let mut my_offset = offset * DevGui::FLOATS_PER_VERTEX as u64;
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 

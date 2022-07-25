@@ -2,6 +2,9 @@ import structs;
 
 ConstantBuffer<FrameUniforms> uniforms;
 
+[[vk_binding(7, 0)]]
+StructuredBuffer<ImguiVertex> imgui_vertices;
+
 [[vk_binding(8, 0)]]
 Sampler2D global_textures[];
 
@@ -9,6 +12,7 @@ Sampler2D global_textures[];
 cbuffer PushConstants
 {
     uint font_idx;
+    uint imgui_vertex_offset;
 }
 
 struct ImguiVertex {
@@ -24,11 +28,12 @@ struct ImguiVertexOutput {
 }
 
 [shader("vertex")]
-ImguiVertexOutput vertex_main(ImguiVertex input) {
+ImguiVertexOutput vertex_main(uint id : SV_VertexID) {
+    ImguiVertex vert = imgui_vertices[id + imgui_vertex_offset];
     ImguiVertexOutput out;
-    out.color = input.color;
-    out.uv = input.uv;
-    out.clip_out = mul(uniforms.clip_from_screen, float4(input.position, 0.0, 1.0));
+    out.color = vert.color;
+    out.uv = vert.uv;
+    out.clip_out = mul(uniforms.clip_from_screen, float4(vert.position, 0.0, 1.0));
 
     return out;
 }

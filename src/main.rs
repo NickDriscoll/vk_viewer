@@ -374,7 +374,7 @@ fn main() {
             binding_descriptions: &im_bindings,
             attribute_descriptions: &im_attrs
         };
-        let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, im_vertex_config, &im_shader_stages);
+        let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &im_shader_stages);
 
         let im_depthstencil = vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: vk::FALSE,
@@ -485,7 +485,7 @@ fn main() {
                 index_count: prim.indices.len().try_into().unwrap(),
                 position_offset: offsets.position_offset,
                 tangent_offset: offsets.tangent_offset,
-                bitangent_offset: offsets.normal_offset,
+                normal_offset: offsets.normal_offset,
                 uv_offset: offsets.uv_offset,
                 material_idx
             });
@@ -549,7 +549,7 @@ fn main() {
             index_count: terrain_indices.len().try_into().unwrap(),
             position_offset: terrain_offsets.position_offset,
             tangent_offset: terrain_offsets.tangent_offset,
-            bitangent_offset: terrain_offsets.normal_offset,
+            normal_offset: terrain_offsets.normal_offset,
             uv_offset: terrain_offsets.uv_offset,
             material_idx: terrain_grass_matidx
         })
@@ -861,7 +861,6 @@ fn main() {
             let last_frame = &dev_gui.frames[dev_gui.current_frame.overflowing_sub(1).0 % DevGui::FRAMES_IN_FLIGHT];
 
             let should_reset_offset = imgui_draw_data.total_vtx_count as u64 <= last_frame.start_offset;
-            println!("{}", should_reset_offset);
             let start_offset = if should_reset_offset {
                 0
             } else {
@@ -870,16 +869,13 @@ fn main() {
             let mut current_offset = start_offset;
 
             if imgui_draw_data.total_vtx_count > 0 {
-                let vert_size = 8;  //Size in floats
-
-                
                 for list in imgui_draw_data.draw_lists() {
                     let vtx_buffer = list.vtx_buffer();
-                    let mut verts = vec![0.0; vtx_buffer.len() * vert_size];
+                    let mut verts = vec![0.0; vtx_buffer.len() * DevGui::FLOATS_PER_VERTEX];
 
                     let mut current_vertex = 0;
                     for vtx in vtx_buffer.iter() {
-                        let idx = current_vertex * vert_size;
+                        let idx = current_vertex * DevGui::FLOATS_PER_VERTEX;
                         verts[idx]     = vtx.pos[0];
                         verts[idx + 1] = vtx.pos[1];
                         verts[idx + 2] = vtx.uv[0];
@@ -900,7 +896,7 @@ fn main() {
 
                     offsets.push(current_offset);
                     renderer.replace_imgui_vertices(&mut vk, &verts, current_offset);
-                    current_offset += verts.len() as u64;
+                    current_offset += vtx_buffer.len() as u64;
 
                     let g = VirtualGeometry::create(&mut vk, &verts, &inds);
                     geos.push(g);
@@ -1092,7 +1088,7 @@ fn main() {
                         model.material_idx.to_le_bytes(),
                         model.position_offset.to_le_bytes(),
                         model.tangent_offset.to_le_bytes(),
-                        model.bitangent_offset.to_le_bytes(),
+                        model.normal_offset.to_le_bytes(),
                         model.uv_offset.to_le_bytes(),
                     ].concat();
                     vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
@@ -1117,8 +1113,8 @@ fn main() {
                     match cmd {
                         DrawCmd::Elements {count, cmd_params} => {
                             let i_offset = cmd_params.idx_offset;
-                            let v_offset = cmd_params.vtx_offset;
-                            let v_buffer = &gui_frame.geometries[i].vertex_buffer;
+                            //let v_offset = cmd_params.vtx_offset;
+                            //let v_buffer = &gui_frame.geometries[i].vertex_buffer;
                             let i_buffer = &gui_frame.geometries[i].index_buffer;
 
                             let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
@@ -1138,16 +1134,17 @@ fn main() {
                                 }
                             };
                             vk.device.cmd_set_scissor(vk.graphics_command_buffer, 0, &[scissor_rect]);
-                         
-                            let tex_id = cmd_params.texture_id.id() as u32;
-                            if tex_id != prev_tex_id {
-                                prev_tex_id = tex_id;
-                                vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &tex_id.to_le_bytes());
-                            }
 
-                            vk.device.cmd_bind_vertex_buffers(vk.graphics_command_buffer, 0, &[v_buffer.backing_buffer()], &[0]);
+                            let tex_id = cmd_params.texture_id.id() as u32;
+                            let pcs = [
+                                tex_id.to_le_bytes(),
+                                (gui_frame.offsets[i] as u32).to_le_bytes()
+                            ].concat();
+                            vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+
+                            //vk.device.cmd_bind_vertex_buffers(vk.graphics_command_buffer, 0, &[v_buffer.backing_buffer()], &[0]);
                             vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, i_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                            vk.device.cmd_draw_indexed(vk.graphics_command_buffer, *count as u32, 1, i_offset as u32, v_offset as i32, 0);
+                            vk.device.cmd_draw_indexed(vk.graphics_command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
                         }
                         DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
                         DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }

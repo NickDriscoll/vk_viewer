@@ -10,6 +10,7 @@ pub struct DevGui {
 
 impl DevGui {
     pub const FRAMES_IN_FLIGHT: usize = 2;
+    pub const FLOATS_PER_VERTEX: usize = 8;
 
     pub fn new() -> Self {
         let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);

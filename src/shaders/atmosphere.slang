@@ -25,9 +25,9 @@ static const float3 SKYBOX_VERTEX_POSITIONS[] = {
 };
 
 [shader("vertex")]
-AtmosphereVertexOutput vertex_main(AtmosphereVertex vertex) {
+AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     AtmosphereVertexOutput output;
-    float3 position = SKYBOX_VERTEX_POSITIONS[vertex.id];
+    float3 position = SKYBOX_VERTEX_POSITIONS[vertex_id];
     output.view_direction = position;
     
     float4 screen_space_pos = mul(uniforms.clip_from_skybox, float4(position, 1.0));
