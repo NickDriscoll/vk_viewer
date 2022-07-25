@@ -37,8 +37,7 @@ use crate::gltfutil::GLTFData;
 use crate::gui::{DevGui, DevGuiFrame};
 
 fn crash_with_error_dialog(message: &str) -> ! {
-    tfd::message_box_ok("Oops...", &message.replace("'", ""), tfd::MessageBoxIcon::Error);
-    panic!("{}", message);
+    crash_with_error_dialog_titled("Oops...", message);
 }
 fn crash_with_error_dialog_titled(title: &str, message: &str) -> ! {
     tfd::message_box_ok(title, &message.replace("'", ""), tfd::MessageBoxIcon::Error);
@@ -856,26 +855,32 @@ fn main() {
         {
             let mut geos = Vec::with_capacity(16);
             let mut cmds = Vec::with_capacity(16);
-
-            let last_frame = &dev_gui.frames[(dev_gui.current_frame - 1) % DevGui::FRAMES_IN_FLIGHT];
-
+            let mut offsets = Vec::with_capacity(16);
             let imgui_draw_data = imgui_ui.render();
+
+            let last_frame = &dev_gui.frames[dev_gui.current_frame.overflowing_sub(1).0 % DevGui::FRAMES_IN_FLIGHT];
+
+            let should_reset_offset = imgui_draw_data.total_vtx_count as u64 <= last_frame.start_offset;
+            println!("{}", should_reset_offset);
+            let start_offset = if should_reset_offset {
+                0
+            } else {
+                last_frame.end_offset
+            };
+            let mut current_offset = start_offset;
+
             if imgui_draw_data.total_vtx_count > 0 {
-                let mut current_offset = if dev_gui.current_frame == 0 {
-                    0
-                } else {
-                    last_frame.end_offset
-                };
+                let vert_size = 8;  //Size in floats
+
                 
                 for list in imgui_draw_data.draw_lists() {
-                    let vert_size = 8;  //Size in floats
                     let vtx_buffer = list.vtx_buffer();
                     let mut verts = vec![0.0; vtx_buffer.len() * vert_size];
 
                     let mut current_vertex = 0;
                     for vtx in vtx_buffer.iter() {
                         let idx = current_vertex * vert_size;
-                        verts[idx] =     vtx.pos[0];
+                        verts[idx]     = vtx.pos[0];
                         verts[idx + 1] = vtx.pos[1];
                         verts[idx + 2] = vtx.uv[0];
                         verts[idx + 3] = vtx.uv[1];
@@ -893,6 +898,7 @@ fn main() {
                         inds[i] = idx_buffer[i] as u32;
                     }
 
+                    offsets.push(current_offset);
                     renderer.replace_imgui_vertices(&mut vk, &verts, current_offset);
                     current_offset += verts.len() as u64;
 
@@ -906,9 +912,9 @@ fn main() {
             }
 
             dev_gui.frames[dev_gui.current_frame] = DevGuiFrame {
-                offsets: Vec::new(),
-                start_offset: 0,
-                end_offset: 0,
+                offsets,
+                start_offset,
+                end_offset: current_offset,
                 geometries: geos,
                 draw_cmd_lists: cmds
             };
