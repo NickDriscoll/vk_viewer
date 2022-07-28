@@ -1,6 +1,7 @@
 import structs;
 import lighting;
 import fragment_bindings;
+import bindings.global_textures;
 
 float4 fragment_main(MeshVertexOutput input) : SV_Target0
 {

@@ -70,11 +70,3 @@ impl TerrainSpec {
 
     }
 }
-
-//A prop is a simple interactive model
-pub struct Prop {
-    pub position: glm::TVec3<f32>,
-    pub rotation: glm::Quat,
-    pub scale: glm::TVec3<f32>,
-    pub model_indices: Vec<u32>
-}

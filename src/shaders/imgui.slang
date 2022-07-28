@@ -1,12 +1,10 @@
 import structs;
+import bindings.global_textures;
 
 ConstantBuffer<FrameUniforms> uniforms;
 
 [[vk_binding(7, 0)]]
 StructuredBuffer<ImguiVertex> imgui_vertices;
-
-[[vk_binding(8, 0)]]
-Sampler2D global_textures[];
 
 [[vk::push_constant]]
 cbuffer PushConstants
