@@ -583,6 +583,18 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: 
     vk.device.destroy_buffer(staging_buffer.backing_buffer(), vkutil::MEMORY_ALLOCATOR);
 }
 
+pub fn make_index_buffer(vk: &mut VulkanAPI, indices: &[u32]) -> GPUBuffer {
+    let index_buffer = GPUBuffer::allocate(
+        vk,
+        (indices.len() * size_of::<u32>()) as vk::DeviceSize,
+        0,
+        vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        MemoryLocation::GpuOnly
+    );
+    index_buffer.upload_buffer(vk, indices);
+    index_buffer
+}
+
 //All the variables that Vulkan needs
 pub struct VulkanAPI {
     pub instance: ash::Instance,

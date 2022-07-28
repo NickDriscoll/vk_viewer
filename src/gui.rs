@@ -1,5 +1,5 @@
 use imgui::DrawCmd;
-use crate::vkutil::VirtualGeometry;
+use crate::vkutil::{VirtualGeometry, GPUBuffer};
 
 pub struct DevGui {
     pub frames: Vec<DevGuiFrame>,
@@ -30,7 +30,7 @@ pub struct DevGuiFrame {
     pub offsets: Vec<u64>,
     pub start_offset: u64,
     pub end_offset: u64,
-    pub geometries: Vec<VirtualGeometry>,
+    pub index_buffers: Vec<GPUBuffer>,
     pub draw_cmd_lists: Vec<Vec<DrawCmd>>
 }
 
@@ -40,7 +40,7 @@ impl Default for DevGuiFrame {
             offsets: Vec::new(),
             start_offset: 0,
             end_offset: 0,
-            geometries: Vec::new(),
+            index_buffers: Vec::new(),
             draw_cmd_lists: Vec::new()
         }
     }

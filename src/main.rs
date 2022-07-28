@@ -340,40 +340,6 @@ fn main() {
 
         let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &atm_shader_stages);
         let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
-
-        let im_vert_binding = vk::VertexInputBindingDescription {
-            binding: 0,
-            stride: 8 * size_of::<f32>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX
-        };
-
-        let im_position_attribute = vk::VertexInputAttributeDescription {
-            location: 0,
-            binding: 0,
-            format: vk::Format::R32G32_SFLOAT,
-            offset: 0
-        };
-
-        let im_uv_attribute = vk::VertexInputAttributeDescription {
-            location: 1,
-            binding: 0,
-            format: vk::Format::R32G32_SFLOAT,
-            offset: 2 * size_of::<f32>() as u32
-        };
-
-        let im_color_attribute = vk::VertexInputAttributeDescription {
-            location: 2,
-            binding: 0,
-            format: vk::Format::R32G32B32A32_SFLOAT,
-            offset: 4 * size_of::<f32>() as u32
-        };
-
-        let im_bindings = [im_vert_binding];
-        let im_attrs = [im_position_attribute, im_uv_attribute, im_color_attribute];
-        let im_vertex_config = vkutil::VertexInputConfiguration {
-            binding_descriptions: &im_bindings,
-            attribute_descriptions: &im_attrs
-        };
         let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &im_shader_stages);
 
         let im_depthstencil = vk::PipelineDepthStencilStateCreateInfo {
@@ -472,14 +438,7 @@ fn main() {
 
             let offsets = uninterleave_and_upload_vertices(vk, renderer, &prim.vertices);
 
-            let index_buffer = GPUBuffer::allocate(
-                vk,
-                (prim.indices.len() * size_of::<u32>()) as vk::DeviceSize,
-                0,
-                vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                MemoryLocation::GpuOnly
-            );
-            index_buffer.upload_buffer(vk, &prim.indices);
+            let index_buffer = vkutil::make_index_buffer(vk, &prim.indices);
             let model_idx = renderer.register_model(DrawData {
                 index_buffer,
                 index_count: prim.indices.len().try_into().unwrap(),
@@ -503,47 +462,12 @@ fn main() {
     //Register each primitive with the renderer
     let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data);
 
-    const ATMOSPHERE_INDICES: [u32; 36] = [
-		//Front
-		0, 1, 2,
-		3, 2, 1,
-        
-        //Left
-		0, 2, 4,
-		2, 5, 4,
-
-		//Right
-		3, 1, 6,
-		7, 3, 6,
-
-		//Back
-		5, 7, 4,
-		7, 6, 4,
-
-		//Bottom
-	    4, 1, 0,
-    	4, 6, 1,
-        
-        //Top
-		7, 5, 2,
-		7, 2, 3
-	];
-
-    let atmosphere_geometry = VirtualGeometry::create(&mut vk, &ozy::prims::skybox_cube_vertex_buffer(), &ATMOSPHERE_INDICES);
-
     //Upload terrain geometry
     let terrain_model_idx = {
         let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
         let terrain_offsets = uninterleave_and_upload_vertices(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
-        let index_buffer = GPUBuffer::allocate(
-            &mut vk,
-            (terrain_indices.len() * size_of::<u32>()) as vk::DeviceSize,
-            0,
-            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            MemoryLocation::GpuOnly
-        );
-        index_buffer.upload_buffer(&mut vk, &terrain_indices);
+        let index_buffer = vkutil::make_index_buffer(&mut vk, &terrain_indices);
         renderer.register_model(DrawData {
             index_buffer,
             index_count: terrain_indices.len().try_into().unwrap(),
@@ -853,7 +777,7 @@ fn main() {
         
         //Dear ImGUI virtual geo allocations
         {
-            let mut geos = Vec::with_capacity(16);
+            let mut index_buffers = Vec::with_capacity(16);
             let mut cmds = Vec::with_capacity(16);
             let mut offsets = Vec::with_capacity(16);
             let imgui_draw_data = imgui_ui.render();
@@ -898,8 +822,8 @@ fn main() {
                     renderer.replace_imgui_vertices(&mut vk, &verts, current_offset);
                     current_offset += vtx_buffer.len() as u64;
 
-                    let g = VirtualGeometry::create(&mut vk, &verts, &inds);
-                    geos.push(g);
+                    let index_buffer = vkutil::make_index_buffer(&mut vk, &inds);
+                    index_buffers.push(index_buffer);
 
                     let mut cmd_list = Vec::with_capacity(list.commands().count());
                     for command in list.commands() { cmd_list.push(command); }
@@ -911,7 +835,7 @@ fn main() {
                 offsets,
                 start_offset,
                 end_offset: current_offset,
-                geometries: geos,
+                index_buffers,
                 draw_cmd_lists: cmds
             };
         };
@@ -927,9 +851,9 @@ fn main() {
         //Destroy Dear ImGUI allocations from last frame
         {
             let last_frame = (dev_gui.current_frame + 1) % DevGui::FRAMES_IN_FLIGHT;
-            let geo_count = dev_gui.frames[last_frame].geometries.len();
-            for geo in dev_gui.frames[last_frame].geometries.drain(0..geo_count) {
-                geo.delete(&mut vk);
+            let geo_count = dev_gui.frames[last_frame].index_buffers.len();
+            for geo in dev_gui.frames[last_frame].index_buffers.drain(0..geo_count) {
+                geo.free(&mut vk);
             }
         }
 
@@ -1052,7 +976,6 @@ fn main() {
                     extent: vk_display.extent
                 }
             };
-
             let scissor_area = vk::Rect2D {
                 offset: vk::Offset2D::default(),
                 extent: vk::Extent2D {
@@ -1100,11 +1023,9 @@ fn main() {
             //Record atmosphere rendering commands
             vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
             vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, atmosphere_tex_indices.as_slice());
-            vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, atmosphere_geometry.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-            vk.device.cmd_draw_indexed(vk.graphics_command_buffer, atmosphere_geometry.index_count, 1, 0, 0, 0);
+            vk.device.cmd_draw(vk.graphics_command_buffer, 36, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands
-            let mut prev_tex_id = u32::MAX;
             vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);
             let gui_frame = &dev_gui.frames[dev_gui.current_frame];
             for i in 0..gui_frame.draw_cmd_lists.len() {
@@ -1113,9 +1034,7 @@ fn main() {
                     match cmd {
                         DrawCmd::Elements {count, cmd_params} => {
                             let i_offset = cmd_params.idx_offset;
-                            //let v_offset = cmd_params.vtx_offset;
-                            //let v_buffer = &gui_frame.geometries[i].vertex_buffer;
-                            let i_buffer = &gui_frame.geometries[i].index_buffer;
+                            let i_buffer = gui_frame.index_buffers[i].backing_buffer();
 
                             let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
                             let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
@@ -1141,9 +1060,7 @@ fn main() {
                                 (gui_frame.offsets[i] as u32).to_le_bytes()
                             ].concat();
                             vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-
-                            //vk.device.cmd_bind_vertex_buffers(vk.graphics_command_buffer, 0, &[v_buffer.backing_buffer()], &[0]);
-                            vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, i_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                            vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, i_buffer, 0, vk::IndexType::UINT32);
                             vk.device.cmd_draw_indexed(vk.graphics_command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
                         }
                         DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }

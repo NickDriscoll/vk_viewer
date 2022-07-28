@@ -1,7 +1,6 @@
 use core::slice::Iter;
 use ash::vk::DescriptorImageInfo;
 
-use crate::vkutil::VirtualGeometry;
 use crate::*;
 
 #[derive(Clone, Debug)]
