@@ -38,6 +38,7 @@ struct FrameUniforms {
     float time;
     float stars_threshold;
     float stars_exposure;
+    float fog_density;
 }
 
 struct Material {

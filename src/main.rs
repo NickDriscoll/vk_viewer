@@ -498,6 +498,7 @@ fn main() {
     let mut sun_luminance = [2.0, 2.0, 2.0, 0.0];
     let mut stars_threshold = 8.0;
     let mut stars_exposure = 200.0;
+    let mut fog_density = 0.001;
     let mut trees_width = 1;
     let mut trees_height = 1;
     
@@ -729,6 +730,7 @@ fn main() {
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
             imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut stars_threshold);
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut stars_exposure);
+            imgui::Slider::new("Fog density", 0.0, 1.0).build(&imgui_ui, &mut fog_density);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
@@ -901,7 +903,7 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.05, 1000.0);
+            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 1.0, 1000.0);
             let projection_matrix = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
@@ -933,7 +935,7 @@ fn main() {
                 campos.as_slice(),
                 sundir.as_slice(),
                 &sun_luminance,
-                &[timer.elapsed_time, stars_threshold, stars_exposure]
+                &[timer.elapsed_time, stars_threshold, stars_exposure, fog_density]
             ].concat();
             renderer.uniform_buffer.upload_buffer(&mut vk, &uniform_buffer);
         };

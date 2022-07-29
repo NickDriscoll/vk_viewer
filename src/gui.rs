@@ -1,5 +1,5 @@
 use imgui::DrawCmd;
-use crate::vkutil::{VirtualGeometry, GPUBuffer};
+use crate::vkutil::{GPUBuffer};
 
 pub struct DevGui {
     pub frames: Vec<DevGuiFrame>,

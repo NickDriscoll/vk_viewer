@@ -166,7 +166,7 @@ impl Renderer {
             vk,
             material_size * global_material_slots,
             storage_buffer_alignment,
-            vk::BufferUsageFlags::STORAGE_BUFFER,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             MemoryLocation::CpuToGpu
         );
 
@@ -549,7 +549,8 @@ pub struct FrameUniforms {
     pub sun_radiance: glm::TVec3<f32>,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
-	pub stars_exposure: f32,  // modifies the overall strength of the stars,
+	pub stars_exposure: f32,  // modifies the overall strength of the stars
+    pub fog_density: f32,
     pub sunzenith_idx: u32,
     pub viewzenith_idx: u32,
     pub sunview_idx: u32

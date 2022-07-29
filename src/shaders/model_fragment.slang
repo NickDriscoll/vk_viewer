@@ -29,5 +29,13 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.light_direction = uniforms.sun_direction.xyz;
     params.light_radiance = uniforms.sun_radiance.rgb;
 
-    return float4(pbr_mettalic_roughness(params), 1.0);
+    float3 lit_color = pbr_mettalic_roughness(params);
+
+    // Apply fog like GL_EXP2
+    float real_depth = length(uniforms.camera_position.xyz - input.position);
+    float base = 0.001 * uniforms.fog_density * real_depth;
+    float fog_factor = exp(-(base * base));
+
+    float3 final_color = lerp(float3(1.0), lit_color, fog_factor);
+    return float4(final_color, 1.0);
 }

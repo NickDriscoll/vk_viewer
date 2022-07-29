@@ -874,30 +874,6 @@ impl GPUBuffer {
     }
 }
 
-pub struct VirtualGeometry {
-    pub vertex_buffer: GPUBuffer,
-    pub index_buffer: GPUBuffer,
-    pub index_count: u32
-}
-
-impl VirtualGeometry {
-    pub fn create(vk: &mut VulkanAPI, vertices: &[f32], indices: &[u32]) -> Self {
-        let vertex_buffer = GPUBuffer::allocate(vk, (vertices.len() * size_of::<f32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::VERTEX_BUFFER, MemoryLocation::CpuToGpu);
-        let index_buffer = GPUBuffer::allocate(vk, (indices.len() * size_of::<u32>()) as vk::DeviceSize, 0, vk::BufferUsageFlags::INDEX_BUFFER, MemoryLocation::CpuToGpu);
-        vertex_buffer.upload_buffer(vk, vertices);
-        index_buffer.upload_buffer(vk, indices);
-        VirtualGeometry {
-            vertex_buffer,
-            index_buffer,
-            index_count: indices.len() as u32
-        }
-    }
-
-    pub fn delete(self, vk: &mut VulkanAPI) {
-        vk.allocator.free(self.vertex_buffer.allocation).unwrap();
-    }
-}
-
 pub struct Display {
     pub swapchain: vk::SwapchainKHR,
     pub extent: vk::Extent2D,
