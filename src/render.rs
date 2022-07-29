@@ -4,7 +4,7 @@ use ash::vk::DescriptorImageInfo;
 use crate::*;
 
 #[derive(Clone, Debug)]
-pub struct Material {
+pub struct MaterialData {
     pub base_color: [f32; 4],
     pub color_idx: u32,
     pub normal_idx: u32,
@@ -12,9 +12,9 @@ pub struct Material {
     _pad1: u32
 }
 
-impl Material {
+impl MaterialData {
     pub fn new(base_color: [f32; 4], color_idx: u32, normal_idx: u32) -> Self {
-        Material {
+        MaterialData {
             base_color,
             color_idx,
             normal_idx,
@@ -22,6 +22,13 @@ impl Material {
             _pad1: 0
         }
     }
+}
+
+pub struct Material {
+    pipeline: vk::Pipeline,
+    base_color: [f32; 4],
+    color_idx: u32,
+    normal_idx: u32
 }
 
 pub struct DrawCall {
@@ -113,7 +120,7 @@ pub struct Renderer {
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
     pub global_textures: FreeList<DescriptorImageInfo>,
-    pub global_materials: FreeList<Material>,
+    pub global_materials: FreeList<MaterialData>,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
 }

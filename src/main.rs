@@ -29,9 +29,9 @@ use std::time::SystemTime;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
-use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualGeometry, VirtualImage, VulkanAPI};
+use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualImage, VulkanAPI};
 use structs::{Camera, NoiseParameters, TerrainSpec};
-use render::{DrawData, Renderer, Material};
+use render::{DrawData, Renderer, MaterialData};
 
 use crate::gltfutil::GLTFData;
 use crate::gui::{DevGui, DevGuiFrame};
@@ -194,9 +194,7 @@ fn main() {
             panic!("Not dealing with this case.");
         }
     };
-
-    let totoro_matidx = renderer.global_materials.insert(Material::new([1.0, 0.5, 0.5, 1.0], renderer.default_color_idx, renderer.default_normal_idx)) as u32;
-
+    
     //Create swapchain extension object
     let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk.instance, &vk.device);
 
@@ -398,8 +396,8 @@ fn main() {
     let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
 
-    let terrain_grass_matidx = renderer.global_materials.insert(Material::new([1.0; 4], grass_color_global_index, grass_normal_global_index)) as u32;
-    let terrain_rock_matidx = renderer.global_materials.insert(Material::new([1.0; 4], rock_color_global_index, rock_normal_global_index)) as u32;
+    let terrain_grass_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], grass_color_global_index, grass_normal_global_index)) as u32;
+    let terrain_rock_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], rock_color_global_index, rock_normal_global_index)) as u32;
 
     //Load gltf object
     let glb_name = "./data/models/nice_tree.glb";
@@ -434,7 +432,7 @@ fn main() {
                 None => { renderer.default_normal_idx }
             };
 
-            let material_idx = renderer.global_materials.insert(Material::new(prim.material.base_color, color_idx, normal_idx)) as u32;
+            let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, color_idx, normal_idx)) as u32;
 
             let offsets = uninterleave_and_upload_vertices(vk, renderer, &prim.vertices);
 
@@ -745,7 +743,6 @@ fn main() {
             }
             ms
         };
-
         for idx in &tree_model_indices {
             renderer.queue_drawcall(*idx, main_pipeline, &bb_mats);
         }
@@ -850,7 +847,7 @@ fn main() {
 
         //Destroy Dear ImGUI allocations from last frame
         {
-            let last_frame = (dev_gui.current_frame + 1) % DevGui::FRAMES_IN_FLIGHT;
+            let last_frame = dev_gui.current_frame.overflowing_sub(1).0 % DevGui::FRAMES_IN_FLIGHT;
             let geo_count = dev_gui.frames[last_frame].index_buffers.len();
             for geo in dev_gui.frames[last_frame].index_buffers.drain(0..geo_count) {
                 geo.free(&mut vk);
@@ -904,14 +901,12 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let projection_matrix = glm::perspective(window_size.x as f32 / window_size.y as f32, glm::half_pi(), 0.05, 50.0);
-    
-            //Relative to OpenGL clip space, Vulkan has negative Y and half Z.
+            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.05, 1000.0);
             let projection_matrix = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
-                0.0, 0.0, 0.5, 0.0,
-                0.0, 0.0, 0.5, 1.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
             ) * projection_matrix;
     
             let view_projection = projection_matrix * view_from_world;

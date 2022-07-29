@@ -60,8 +60,45 @@ static const float3 SKYBOX_NONINDEXED_POSITIONS[] = {
     -1.0, 1.0, -1.0,
     1.0, 1.0, 1.0,
     -1.0, 1.0, -1.0,
-    1.0, 1.0, -1.0    
+    1.0, 1.0, -1.0
 };
+
+// 3D Gradient noise from: https://www.shadertoy.com/view/Xsl3Dl
+float3 hash(float3 p) { // replace this by something better
+    p = float3(dot(p, float3(127.1, 311.7, 74.7)),
+			  dot(p, float3(269.5, 183.3, 246.1)),
+               dot(p, float3(113.5, 271.9, 124.6)));
+
+    return -1.0 + 2.0 * frac(sin(p) * 43758.5453123);
+}
+
+float noise(in float3 p) {
+    float3 i = floor(p);
+    float3 f = frac(p);
+
+    float3 u = f * f * (3.0 - 2.0 * f);
+
+    return lerp(lerp(lerp(dot(hash(i + float3(0.0, 0.0, 0.0)), f - float3(0.0, 0.0, 0.0)),
+                          dot(hash(i + float3(1.0, 0.0, 0.0)), f - float3(1.0, 0.0, 0.0)), u.x),
+                     lerp(dot(hash(i + float3(0.0, 1.0, 0.0)), f - float3(0.0, 1.0, 0.0)),
+                          dot(hash(i + float3(1.0, 1.0, 0.0)), f - float3(1.0, 1.0, 0.0)), u.x), u.y),
+                lerp(lerp(dot(hash(i + float3(0.0, 0.0, 1.0)), f - float3(0.0, 0.0, 1.0)),
+                          dot(hash(i + float3(1.0, 0.0, 1.0)), f - float3(1.0, 0.0, 1.0)), u.x),
+                     lerp(dot(hash(i + float3(0.0, 1.0, 1.0)), f - float3(0.0, 1.0, 1.0)),
+                          dot(hash(i + float3(1.0, 1.0, 1.0)), f - float3(1.0, 1.0, 1.0)), u.x), u.y), u.z);
+}
+
+// from Unity's black body Shader Graph node
+float3 Unity_Blackbody_float(float Temperature) {
+    float3 color = float3(255.0, 255.0, 255.0);
+    color.x = 56100000. * pow(Temperature, (-3.0 / 2.0)) + 148.0;
+    color.y = 100.04 * log(Temperature) - 623.6;
+    if (Temperature > 6500.0) color.y = 35200000.0 * pow(Temperature, (-3.0 / 2.0)) + 184.0;
+    color.z = 194.18 * log(Temperature) - 1448.6;
+    color = clamp(color, 0.0, 255.0) / 255.0;
+    if (Temperature < 1000.0) color *= Temperature / 1000.0;
+    return color;
+}
 
 [shader("vertex")]
 AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
@@ -72,43 +109,6 @@ AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     float4 screen_space_pos = mul(uniforms.clip_from_skybox, float4(position, 1.0));
     output.clip_out = screen_space_pos.xyww;
     return output;
-}
-
-// 3D Gradient noise from: https://www.shadertoy.com/view/Xsl3Dl
-float3 hash( float3 p ) {// replace this by something better
-	p = float3( dot(p,float3(127.1,311.7, 74.7)),
-			  dot(p,float3(269.5,183.3,246.1)),
-			  dot(p,float3(113.5,271.9,124.6)));
-
-	return -1.0 + 2.0*frac(sin(p)*43758.5453123);
-}
-
-float noise( in float3 p ) {
-    float3 i = floor(p);
-    float3 f = frac(p);
-
-    float3 u = f*f*(3.0-2.0*f);
-
-    return lerp( lerp( lerp( dot( hash( i + float3(0.0,0.0,0.0) ), f - float3(0.0,0.0,0.0) ), 
-                          dot( hash( i + float3(1.0,0.0,0.0) ), f - float3(1.0,0.0,0.0) ), u.x),
-                     lerp( dot( hash( i + float3(0.0,1.0,0.0) ), f - float3(0.0,1.0,0.0) ), 
-                          dot( hash( i + float3(1.0,1.0,0.0) ), f - float3(1.0,1.0,0.0) ), u.x), u.y),
-                lerp( lerp( dot( hash( i + float3(0.0,0.0,1.0) ), f - float3(0.0,0.0,1.0) ), 
-                          dot( hash( i + float3(1.0,0.0,1.0) ), f - float3(1.0,0.0,1.0) ), u.x),
-                     lerp( dot( hash( i + float3(0.0,1.0,1.0) ), f - float3(0.0,1.0,1.0) ), 
-                          dot( hash( i + float3(1.0,1.0,1.0) ), f - float3(1.0,1.0,1.0) ), u.x), u.y), u.z );
-}
-
-// from Unity's black body Shader Graph node
-float3 Unity_Blackbody_float(float Temperature) {
-    float3 color = float3(255.0, 255.0, 255.0);
-    color.x = 56100000. * pow(Temperature,(-3.0 / 2.0)) + 148.0;
-    color.y = 100.04 * log(Temperature) - 623.6;
-    if (Temperature > 6500.0) color.y = 35200000.0 * pow(Temperature,(-3.0 / 2.0)) + 184.0;
-    color.z = 194.18 * log(Temperature) - 1448.6;
-    color = clamp(color, 0.0, 255.0)/255.0;
-    if (Temperature < 1000.0) color *= Temperature/1000.0;
-    return color;
 }
 
 [shader("fragment")]
