@@ -27,11 +27,11 @@ struct AtmosphereVertexOutput
 
 //Variables that are constant for a given frame
 struct FrameUniforms {
-    float4x4 clip_from_screen;
     float4x4 clip_from_world;
     float4x4 clip_from_view;
     float4x4 view_from_world;
     float4x4 clip_from_skybox;
+    float4x4 clip_from_screen;
     float4 camera_position;
     float4 sun_direction;
     float4 sun_radiance;
@@ -39,6 +39,9 @@ struct FrameUniforms {
     float stars_threshold;
     float stars_exposure;
     float fog_density;
+    uint sunzenith_idx;
+    uint viewzenith_idx;
+    uint sunview_idx;
 }
 
 struct Material {

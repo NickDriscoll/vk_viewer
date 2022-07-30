@@ -96,6 +96,27 @@ impl InstanceData {
     }
 }
 
+//Values that will be uniform to a particular view. Probably shouldn't be called "FrameUniforms"
+#[derive(Default)]
+#[repr(C)]
+pub struct FrameUniforms {
+    pub clip_from_world: glm::TMat4<f32>,
+    pub clip_from_view: glm::TMat4<f32>,
+    pub view_from_world: glm::TMat4<f32>,
+    pub clip_from_skybox: glm::TMat4<f32>,
+    pub clip_from_screen: glm::TMat4<f32>,
+    pub camera_position: glm::TVec4<f32>,
+    pub sun_direction: glm::TVec4<f32>,
+    pub sun_luminance: [f32; 4],
+    pub time: f32,
+    pub stars_threshold: f32, // modifies the number of stars that are visible
+	pub stars_exposure: f32,  // modifies the overall strength of the stars
+    pub fog_density: f32,
+    pub sunzenith_idx: u32,
+    pub viewzenith_idx: u32,
+    pub sunview_idx: u32
+}
+
 pub struct Renderer {
     //pub uniforms: FrameUniforms,
     pub default_color_idx: u32,
@@ -105,6 +126,7 @@ pub struct Renderer {
     primitives: OptionVec<DrawData>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
+    pub uniform_data: FrameUniforms,
 
     pub position_buffer: GPUBuffer,
     position_offset: u64,
@@ -418,6 +440,9 @@ impl Renderer {
         //Create free list for materials
         let global_materials = FreeList::with_capacity(256);
 
+        let uniforms = FrameUniforms::default();
+        println!("{}", size_of::<FrameUniforms>());
+
         Renderer {
             //uniforms,
             default_color_idx,
@@ -427,6 +452,7 @@ impl Renderer {
             primitives: OptionVec::new(),
             drawlist: Vec::new(),
             instance_data: Vec::new(),
+            uniform_data: uniforms,
             global_textures,
             global_materials,
             descriptor_set_layout,
@@ -535,23 +561,4 @@ impl Renderer {
         self.drawlist.clear();
         self.instance_data.clear();
     }
-}
-
-//Values that will be uniform to a particular view. Probably shouldn't be called "FrameUniforms"
-pub struct FrameUniforms {
-    pub clip_from_screen: glm::TMat4<f32>,
-    pub clip_from_world: glm::TMat4<f32>,
-    pub clip_from_view: glm::TMat4<f32>,
-    pub view_from_world: glm::TMat4<f32>,
-    pub clip_from_skybox: glm::TMat4<f32>,
-    pub camera_position: glm::TVec4<f32>,
-    pub sun_direction: glm::TVec4<f32>,
-    pub sun_radiance: glm::TVec3<f32>,
-    pub time: f32,
-    pub stars_threshold: f32, // modifies the number of stars that are visible
-	pub stars_exposure: f32,  // modifies the overall strength of the stars
-    pub fog_density: f32,
-    pub sunzenith_idx: u32,
-    pub viewzenith_idx: u32,
-    pub sunview_idx: u32
 }

@@ -155,10 +155,10 @@ impl InputSystem {
             orientation_delta += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
         }
 
-        if keyboard_state.is_scancode_pressed(Scancode::LShift) {
+        if keyboard_state.is_scancode_pressed(Scancode::LShift) || keyboard_state.is_scancode_pressed(Scancode::RShift) {
             movement_multiplier *= MAX_MOVEMENT_MULTIPLIER;
         }
-        if keyboard_state.is_scancode_pressed(Scancode::LCtrl) {
+        if keyboard_state.is_scancode_pressed(Scancode::LCtrl) || keyboard_state.is_scancode_pressed(Scancode::RCtrl) {
             movement_multiplier *= 0.25;
         }
         if keyboard_state.is_scancode_pressed(Scancode::W) {

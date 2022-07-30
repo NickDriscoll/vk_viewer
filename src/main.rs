@@ -9,6 +9,7 @@ mod gltfutil;
 mod gui;
 mod input;
 mod render;
+mod routines;
 mod structs;
 
 #[macro_use]
@@ -17,6 +18,7 @@ mod vkutil;
 use ash::vk;
 use gpu_allocator::MemoryLocation;
 use imgui::{DrawCmd, FontAtlasRefMut};
+use routines::struct_to_bytes;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
@@ -138,6 +140,54 @@ fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Re
     renderer.replace_vertex_uvs(vk, &attributes.uvs, offset);
 }
 
+fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData) -> Vec<usize> {
+    let mut indices = vec![];
+    for prim in &data.primitives {
+        let color_idx;
+        if prim.material.color_bytes.len() != 0 {
+            let color_image = VirtualImage::from_png_bytes(vk, prim.material.color_bytes.as_slice());
+            let image_info = vk::DescriptorImageInfo {
+                sampler: renderer.material_sampler,
+                image_view: color_image.vk_view,
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+            };
+            color_idx = renderer.global_textures.insert(image_info) as u32;
+        } else {
+            color_idx = renderer.default_color_idx;
+        }
+
+        let normal_idx = match &prim.material.normal_bytes {
+            Some(bytes) => {
+                let normal_image = VirtualImage::from_png_bytes(vk, bytes.as_slice());
+                let image_info = vk::DescriptorImageInfo {
+                    sampler: renderer.material_sampler,
+                    image_view: normal_image.vk_view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                };
+                renderer.global_textures.insert(image_info) as u32
+            }
+            None => { renderer.default_normal_idx }
+        };
+
+        let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, color_idx, normal_idx)) as u32;
+
+        let offsets = uninterleave_and_upload_vertices(vk, renderer, &prim.vertices);
+
+        let index_buffer = vkutil::make_index_buffer(vk, &prim.indices);
+        let model_idx = renderer.register_model(DrawData {
+            index_buffer,
+            index_count: prim.indices.len().try_into().unwrap(),
+            position_offset: offsets.position_offset,
+            tangent_offset: offsets.tangent_offset,
+            normal_offset: offsets.normal_offset,
+            uv_offset: offsets.uv_offset,
+            material_idx
+        });
+        indices.push(model_idx);
+    }
+    indices
+}
+
 //Entry point
 fn main() {
     //Create the window using SDL
@@ -170,11 +220,15 @@ fn main() {
     let default_image_info;
 
     //Load environment textures
-    let atmosphere_tex_indices = {
+    {
         let sunzenith_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
         let viewzenith_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
         let sunview_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
-        [sunzenith_index.to_le_bytes(), viewzenith_index.to_le_bytes(), sunview_index.to_le_bytes()].concat()
+        
+        let unis = &mut renderer.uniform_data;
+        unis.sunzenith_idx = sunzenith_index;
+        unis.viewzenith_idx = viewzenith_index;
+        unis.sunview_idx = sunview_index;
     };
 
     //Create and upload Dear IMGUI font atlas
@@ -403,54 +457,6 @@ fn main() {
     let glb_name = "./data/models/nice_tree.glb";
     let tree_data = gltfutil::gltf_meshdata(glb_name);
 
-    fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData) -> Vec<usize> {
-        let mut indices = vec![];
-        for prim in &data.primitives {
-            let color_idx;
-            if prim.material.color_bytes.len() != 0 {
-                let color_image = VirtualImage::from_png_bytes(vk, prim.material.color_bytes.as_slice());
-                let image_info = vk::DescriptorImageInfo {
-                    sampler: renderer.material_sampler,
-                    image_view: color_image.vk_view,
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                };
-                color_idx = renderer.global_textures.insert(image_info) as u32;
-            } else {
-                color_idx = renderer.default_color_idx;
-            }
-
-            let normal_idx = match &prim.material.normal_bytes {
-                Some(bytes) => {
-                    let normal_image = VirtualImage::from_png_bytes(vk, bytes.as_slice());
-                    let image_info = vk::DescriptorImageInfo {
-                        sampler: renderer.material_sampler,
-                        image_view: normal_image.vk_view,
-                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                    };
-                    renderer.global_textures.insert(image_info) as u32
-                }
-                None => { renderer.default_normal_idx }
-            };
-
-            let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, color_idx, normal_idx)) as u32;
-
-            let offsets = uninterleave_and_upload_vertices(vk, renderer, &prim.vertices);
-
-            let index_buffer = vkutil::make_index_buffer(vk, &prim.indices);
-            let model_idx = renderer.register_model(DrawData {
-                index_buffer,
-                index_count: prim.indices.len().try_into().unwrap(),
-                position_offset: offsets.position_offset,
-                tangent_offset: offsets.tangent_offset,
-                normal_offset: offsets.normal_offset,
-                uv_offset: offsets.uv_offset,
-                material_idx
-            });
-            indices.push(model_idx);
-        }
-        indices
-    }
-
     //Register each primitive with the renderer
     let tree_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &tree_data);
 
@@ -495,10 +501,10 @@ fn main() {
     let mut sun_speed = 0.003;
     let mut sun_pitch = 0.118;
     let mut sun_yaw = 0.783;
-    let mut sun_luminance = [2.0, 2.0, 2.0, 0.0];
-    let mut stars_threshold = 8.0;
-    let mut stars_exposure = 200.0;
-    let mut fog_density = 0.001;
+    renderer.uniform_data.sun_luminance = [2.0, 2.0, 2.0, 0.0];
+    renderer.uniform_data.stars_threshold = 8.0;
+    renderer.uniform_data.stars_exposure = 200.0;
+    renderer.uniform_data.fog_density = 0.0;
     let mut trees_width = 1;
     let mut trees_height = 1;
     
@@ -653,11 +659,10 @@ fn main() {
             renderer.queue_drawcall(*idx, main_pipeline, &[totoro_model_matrix]);
         }
 
-        let campos;
         let view_from_world = if do_freecam {
             //Camera orientation based on user input
             camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
-            campos = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
+            renderer.uniform_data.camera_position = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
             camera.make_view_matrix()
         } else {
             let min = 3.0;
@@ -694,10 +699,11 @@ fn main() {
             let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 30.0);
             let pos = totoro_lookat_pos + lookat_target;
             let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
-            campos = glm::vec4(pos.x, pos.y, pos.z, 1.0);
+            renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
             m
         };
         last_view_from_world = view_from_world;
+        renderer.uniform_data.view_from_world = view_from_world;
 
         let imgui_window_token = if dev_gui.do_main_window {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
@@ -717,6 +723,7 @@ fn main() {
             }
 
             imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime, frame {})", input_output.framerate, 1000.0 / input_output.framerate, timer.frame_count));
+            
             let (message, color) =  if input_system.controllers[0].is_some() {
                 ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
             } else {
@@ -725,12 +732,13 @@ fn main() {
             let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
             imgui_ui.text(message);
             color_token.pop();
+
             imgui::Slider::new("Sun speed", 0.0, 1.0).build(&imgui_ui, &mut sun_speed);
             imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
-            imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut stars_threshold);
-            imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut stars_exposure);
-            imgui::Slider::new("Fog density", 0.0, 1.0).build(&imgui_ui, &mut fog_density);
+            imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
+            imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
+            imgui::Slider::new("Fog density", 0.0, 2.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
@@ -895,8 +903,9 @@ fn main() {
         
         //Update uniform/storage buffers
         {
+            let uniforms = &mut renderer.uniform_data;
             //Update static scene data
-            let clip_from_screen = glm::mat4(
+            uniforms.clip_from_screen = glm::mat4(
                 2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
                 0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
                 0.0, 0.0, 1.0, 0.0,
@@ -904,40 +913,30 @@ fn main() {
             );
 
             let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 1.0, 1000.0);
-            let projection_matrix = glm::mat4(
+            uniforms.clip_from_view = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
                 0.0, 0.0, 1.0, 0.0,
                 0.0, 0.0, 0.0, 1.0,
             ) * projection_matrix;
     
-            let view_projection = projection_matrix * view_from_world;
+            uniforms.clip_from_world = uniforms.clip_from_view * view_from_world;
             
             //Compute sun direction from pitch and yaw
-            let sun_direction = glm::vec4_to_vec3(&(
+            uniforms.sun_direction = 
                 glm::rotation(sun_yaw, &glm::vec3(0.0, 0.0, 1.0)) *
                 glm::rotation(sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
-                glm::vec4(-1.0, 0.0, 0.0, 0.0)
-            ));
+                glm::vec4(-1.0, 0.0, 0.0, 0.0);
             
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
             //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
             //that the sky is infinitely far away
-            let skybox_view_projection = projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_from_world));
+            uniforms.clip_from_skybox = uniforms.clip_from_view * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_from_world));
 
-            let sundir = glm::vec4(sun_direction.x, sun_direction.y, sun_direction.z, 0.0);
-            let uniform_buffer = [
-                clip_from_screen.as_slice(),
-                view_projection.as_slice(),
-                projection_matrix.as_slice(),
-                view_from_world.as_slice(),
-                skybox_view_projection.as_slice(),
-                campos.as_slice(),
-                sundir.as_slice(),
-                &sun_luminance,
-                &[timer.elapsed_time, stars_threshold, stars_exposure, fog_density]
-            ].concat();
-            renderer.uniform_buffer.upload_buffer(&mut vk, &uniform_buffer);
+            uniforms.time = timer.elapsed_time;
+
+            let uniform_bytes = struct_to_bytes(&renderer.uniform_data);
+            renderer.uniform_buffer.upload_buffer(&mut vk, uniform_bytes);
         };
 
         //Update model matrix storage buffer
@@ -1019,7 +1018,7 @@ fn main() {
 
             //Record atmosphere rendering commands
             vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
-            vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, atmosphere_tex_indices.as_slice());
+            //vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, atmosphere_tex_indices.as_slice());
             vk.device.cmd_draw(vk.graphics_command_buffer, 36, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands

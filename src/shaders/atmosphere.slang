@@ -1,17 +1,8 @@
 import structs;
+import bindings.global_textures;
 
 // Bindings
 ConstantBuffer<FrameUniforms> uniforms;
-
-[[vk_binding(8, 0)]]
-Sampler2D global_textures[];
-
-[[vk::push_constant]]
-cbuffer PushConstants {
-    uint sunzenith_idx;
-    uint viewzenith_idx;
-    uint sunview_idx;
-}
 
 static const float3 SKYBOX_NONINDEXED_POSITIONS[] = {
     // Front
@@ -118,12 +109,12 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     float sunview_dot = dot(uniforms.sun_direction.xyz, view_direction) * 0.5 + 0.5;
     float viewzenith_dot = view_direction.z * 0.5 + 0.5;
 
-    float3 base_color = global_textures[sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
+    float3 base_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
 
-    float3 viewzenith_color = global_textures[viewzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
-    viewzenith_color *= pow(1.0 - viewzenith_dot, 4.0);
+    float3 viewzenith_color = global_textures[uniforms.viewzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
+    viewzenith_color *= pow(viewzenith_dot, 4.0);
 
-    float3 sunview_color = global_textures[sunview_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
+    float3 sunview_color = global_textures[uniforms.sunview_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
     sunview_color *= pow(sunview_dot, 4.0);
 
     //Used to bring out the stars/dim the sun
