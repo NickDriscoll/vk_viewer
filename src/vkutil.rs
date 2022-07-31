@@ -706,7 +706,7 @@ impl VulkanAPI {
             };
             vk_instance.get_physical_device_features2(vk_physical_device, &mut physical_device_features);
             if physical_device_features.features.texture_compression_bc == vk::FALSE {
-                tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this.", tfd::MessageBoxIcon::Warning);
+                tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
             buffer_device_address = buffer_address_features.buffer_device_address != 0;
 
@@ -716,7 +716,9 @@ impl VulkanAPI {
             }
 
             let mut i = 0;
-            for qfp in vk_instance.get_physical_device_queue_family_properties(vk_physical_device) {
+            let qfps = vk_instance.get_physical_device_queue_family_properties(vk_physical_device);
+            println!("{:#?}", qfps);
+            for qfp in qfps {
                 if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
                     graphics_queue_family_index = i;
                     break;

@@ -17,7 +17,7 @@ mod vkutil;
 
 use ash::vk;
 use gpu_allocator::MemoryLocation;
-use imgui::{DrawCmd, FontAtlasRefMut};
+use imgui::{FontAtlasRefMut};
 use routines::struct_to_bytes;
 use sdl2::event::Event;
 use sdl2::mixer;
@@ -36,7 +36,7 @@ use structs::{Camera, NoiseParameters, TerrainSpec};
 use render::{DrawData, Renderer, MaterialData};
 
 use crate::gltfutil::GLTFData;
-use crate::gui::{DevGui, DevGuiFrame};
+use crate::gui::DevGui;
 
 fn crash_with_error_dialog(message: &str) -> ! {
     crash_with_error_dialog_titled("Oops...", message);
@@ -480,7 +480,7 @@ fn main() {
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
-    let mut dev_gui = gui::DevGui::new(&mut vk, vk_render_pass, &pipeline_creator);
+    let mut dev_gui = DevGui::new(&mut vk, vk_render_pass, &pipeline_creator);
     
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
@@ -706,7 +706,7 @@ fn main() {
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
             imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
-            imgui::Slider::new("Fog density", 0.0, 2.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
+            imgui::Slider::new("Fog factor", 0.0, 2.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
