@@ -53,12 +53,12 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.geometry_normal = normal;
     params.view = view;
     params.light_direction = uniforms.sun_direction.xyz;
-    params.light_radiance = uniforms.sun_radiance.rgb * sun_color;
+    params.light_radiance = uniforms.sun_radiance.rgb;
 
     float3 lit_color = pbr_mettalic_roughness(params);
 
     // Apply fog like GL_EXP2
-    float3 final_color = exp2_fog(uniforms, global_textures, input.position, lit_color, sun_color);
+    float3 final_color = exp2_fog(uniforms, input.position, lit_color, sun_color);
 
     return float4(final_color, 1.0);
 }

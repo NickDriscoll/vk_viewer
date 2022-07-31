@@ -50,7 +50,7 @@ macro_rules! size_to_alignment {
     };
 }
 
-pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
+pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
     let mut file = unwrap_result(File::open(path), &format!("Unable to read shader spv file {}", path));
     let spv = unwrap_result(ash::util::read_spv(&mut file), &format!("Unable to read shader spv file {}", path));
 
@@ -59,7 +59,7 @@ pub unsafe fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk:
         p_code: spv.as_ptr(),
         ..Default::default()
     };
-    let module = vk_device.create_shader_module(&module_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+    let module = unsafe { vk_device.create_shader_module(&module_create_info, vkutil::MEMORY_ALLOCATOR).unwrap() };
 
     vk::PipelineShaderStageCreateInfo {
         stage: shader_stage_flags,

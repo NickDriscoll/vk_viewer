@@ -219,18 +219,6 @@ fn main() {
 
     let default_image_info;
 
-    //Load environment textures
-    {
-        let sunzenith_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
-        let viewzenith_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
-        let sunview_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
-        
-        let unis = &mut renderer.uniform_data;
-        unis.sunzenith_idx = sunzenith_index;
-        unis.viewzenith_idx = viewzenith_index;
-        unis.sunview_idx = sunview_index;
-    };
-
     //Create and upload Dear IMGUI font atlas
     match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
@@ -332,7 +320,7 @@ fn main() {
     let mut vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
-    let vk_pipeline_layout = unsafe {
+    let pipeline_creator = unsafe {
         let push_constant_range = vk::PushConstantRange {
             stage_flags: push_constant_shader_stage_flags,
             offset: 0,
@@ -346,11 +334,12 @@ fn main() {
             ..Default::default()
         };
         
-        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap()
+        let layout = vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap();
+        vkutil::PipelineCreator::init(layout)
     };
 
     //Create pipelines
-    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, imgui_graphics_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
+    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
@@ -370,14 +359,6 @@ fn main() {
             [v, f]
         };
 
-        let im_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/imgui_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui_frag.spv");
-            [v, f]
-        };
-
-        let pipeline_creator = vkutil::PipelineCreator::init(vk_pipeline_layout);
-
         let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &main_shader_stages);
         let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
         main_create_info.shader_stages = &terrain_shader_stages;
@@ -392,22 +373,8 @@ fn main() {
 
         let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &atm_shader_stages);
         let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
-        let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &im_shader_stages);
 
-        let im_depthstencil = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable: vk::FALSE,
-            depth_write_enable: vk::FALSE,
-            ..pipeline_creator.default_depthstencil_state
-        };
-        let im_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
-            cull_mode: vk::CullModeFlags::NONE,
-            ..pipeline_creator.default_rasterization_state
-        };
-        im_create_info.depthstencil_state = Some(im_depthstencil);
-        im_create_info.rasterization_state = Some(im_rasterization_state);
-        let im_pipeline = pipeline_creator.create_pipeline(&vk, &im_create_info);
-
-        [main_pipeline, ter_pipeline, atm_pipeline, im_pipeline, wire_pipeline]
+        [main_pipeline, ter_pipeline, atm_pipeline, wire_pipeline]
     };
 
     let noise_parameters = {
@@ -501,18 +468,19 @@ fn main() {
     let mut sun_speed = 0.003;
     let mut sun_pitch = 0.118;
     let mut sun_yaw = 0.783;
+    let mut trees_width = 1;
+    let mut trees_height = 1;
+
     renderer.uniform_data.sun_luminance = [2.0, 2.0, 2.0, 0.0];
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
-    renderer.uniform_data.fog_density = 0.0;
-    let mut trees_width = 1;
-    let mut trees_height = 1;
+    renderer.uniform_data.fog_density = 0.75;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
-    let mut dev_gui = gui::DevGui::new();
+    let mut dev_gui = gui::DevGui::new(&mut vk, vk_render_pass, &pipeline_creator);
     
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
@@ -696,7 +664,7 @@ fn main() {
                 totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
             }
 
-            let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 30.0);
+            let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 3.0);
             let pos = totoro_lookat_pos + lookat_target;
             let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
             renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
@@ -781,71 +749,9 @@ fn main() {
 
             t.end();
         }
-        
-        //Dear ImGUI virtual geo allocations
-        {
-            let mut index_buffers = Vec::with_capacity(16);
-            let mut cmds = Vec::with_capacity(16);
-            let mut offsets = Vec::with_capacity(16);
-            let imgui_draw_data = imgui_ui.render();
 
-            let last_frame = &dev_gui.frames[dev_gui.current_frame.overflowing_sub(1).0 % DevGui::FRAMES_IN_FLIGHT];
-
-            let should_reset_offset = imgui_draw_data.total_vtx_count as u64 <= last_frame.start_offset;
-            let start_offset = if should_reset_offset {
-                0
-            } else {
-                last_frame.end_offset
-            };
-            let mut current_offset = start_offset;
-
-            if imgui_draw_data.total_vtx_count > 0 {
-                for list in imgui_draw_data.draw_lists() {
-                    let vtx_buffer = list.vtx_buffer();
-                    let mut verts = vec![0.0; vtx_buffer.len() * DevGui::FLOATS_PER_VERTEX];
-
-                    let mut current_vertex = 0;
-                    for vtx in vtx_buffer.iter() {
-                        let idx = current_vertex * DevGui::FLOATS_PER_VERTEX;
-                        verts[idx]     = vtx.pos[0];
-                        verts[idx + 1] = vtx.pos[1];
-                        verts[idx + 2] = vtx.uv[0];
-                        verts[idx + 3] = vtx.uv[1];
-                        verts[idx + 4] = vtx.col[0] as f32 / 255.0;
-                        verts[idx + 5] = vtx.col[1] as f32 / 255.0;
-                        verts[idx + 6] = vtx.col[2] as f32 / 255.0;
-                        verts[idx + 7] = vtx.col[3] as f32 / 255.0;
-
-                        current_vertex += 1;
-                    }
-
-                    let idx_buffer = list.idx_buffer();
-                    let mut inds = vec![0u32; idx_buffer.len()];
-                    for i in 0..idx_buffer.len() {
-                        inds[i] = idx_buffer[i] as u32;
-                    }
-
-                    offsets.push(current_offset);
-                    renderer.replace_imgui_vertices(&mut vk, &verts, current_offset);
-                    current_offset += vtx_buffer.len() as u64;
-
-                    let index_buffer = vkutil::make_index_buffer(&mut vk, &inds);
-                    index_buffers.push(index_buffer);
-
-                    let mut cmd_list = Vec::with_capacity(list.commands().count());
-                    for command in list.commands() { cmd_list.push(command); }
-                    cmds.push(cmd_list);
-                }
-            }
-
-            dev_gui.frames[dev_gui.current_frame] = DevGuiFrame {
-                offsets,
-                start_offset,
-                end_offset: current_offset,
-                index_buffers,
-                draw_cmd_lists: cmds
-            };
-        };
+        //Resolve the current Dear Imgui frame
+        dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, imgui_ui);
 
         //Pre-render phase
 
@@ -912,7 +818,7 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 1.0, 1000.0);
+            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 1.0, 10000.0);
             uniforms.clip_from_view = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
@@ -993,7 +899,7 @@ fn main() {
             vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             //Once-per-frame bindless descriptor setup
-            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, vk_pipeline_layout, 0, &renderer.descriptor_sets, &[]);
+            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_creator.pipeline_layout, 0, &renderer.descriptor_sets, &[]);
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
@@ -1010,7 +916,7 @@ fn main() {
                         model.normal_offset.to_le_bytes(),
                         model.uv_offset.to_le_bytes(),
                     ].concat();
-                    vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                    vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_creator.pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
                     vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
                     vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
@@ -1018,53 +924,10 @@ fn main() {
 
             //Record atmosphere rendering commands
             vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
-            //vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, atmosphere_tex_indices.as_slice());
             vk.device.cmd_draw(vk.graphics_command_buffer, 36, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands
-            vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, imgui_graphics_pipeline);
-            let gui_frame = &dev_gui.frames[dev_gui.current_frame];
-            for i in 0..gui_frame.draw_cmd_lists.len() {
-                let cmd_list = &gui_frame.draw_cmd_lists[i];
-                for cmd in cmd_list {
-                    match cmd {
-                        DrawCmd::Elements {count, cmd_params} => {
-                            let i_offset = cmd_params.idx_offset;
-                            let i_buffer = gui_frame.index_buffers[i].backing_buffer();
-
-                            let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
-                            let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
-                            let scissor_rect = {
-                                let offset = vk::Offset2D {
-                                    x: cmd_params.clip_rect[0] as i32,
-                                    y: cmd_params.clip_rect[1] as i32
-                                };
-                                let extent = vk::Extent2D {
-                                    width: ext_x as u32,
-                                    height: ext_y as u32
-                                };
-                                vk::Rect2D {
-                                    offset,
-                                    extent
-                                }
-                            };
-                            vk.device.cmd_set_scissor(vk.graphics_command_buffer, 0, &[scissor_rect]);
-
-                            let tex_id = cmd_params.texture_id.id() as u32;
-                            let pcs = [
-                                tex_id.to_le_bytes(),
-                                (gui_frame.offsets[i] as u32).to_le_bytes()
-                            ].concat();
-                            vk.device.cmd_push_constants(vk.graphics_command_buffer, vk_pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                            vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, i_buffer, 0, vk::IndexType::UINT32);
-                            vk.device.cmd_draw_indexed(vk.graphics_command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
-                        }
-                        DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
-                        DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
-                    }
-                }
-            }
-            dev_gui.current_frame = (dev_gui.current_frame + 1) % DevGui::FRAMES_IN_FLIGHT;
+            dev_gui.record_draw_commands(&mut vk, pipeline_creator.pipeline_layout);
 
             vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
 

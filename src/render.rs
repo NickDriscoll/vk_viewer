@@ -440,11 +440,20 @@ impl Renderer {
         //Create free list for materials
         let global_materials = FreeList::with_capacity(256);
 
-        let uniforms = FrameUniforms::default();
-        println!("{}", size_of::<FrameUniforms>());
+        let mut uniforms = FrameUniforms::default();
+
+        //Load environment textures
+        {
+            let sunzenith_index = vkutil::load_global_bc7(vk, &mut global_textures, material_sampler, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
+            let viewzenith_index = vkutil::load_global_bc7(vk, &mut global_textures, material_sampler, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
+            let sunview_index = vkutil::load_global_bc7(vk, &mut global_textures, material_sampler, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
+            
+            uniforms.sunzenith_idx = sunzenith_index;
+            uniforms.viewzenith_idx = viewzenith_index;
+            uniforms.sunview_idx = sunview_index;
+        };
 
         Renderer {
-            //uniforms,
             default_color_idx,
             default_normal_idx,
             material_sampler,
