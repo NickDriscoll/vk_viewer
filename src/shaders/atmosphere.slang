@@ -112,10 +112,10 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     float3 base_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
 
     float3 viewzenith_color = global_textures[uniforms.viewzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
-    viewzenith_color *= pow(viewzenith_dot, 4.0);
+    viewzenith_color *= pow(1.0 - viewzenith_dot, 3.0);
 
     float3 sunview_color = global_textures[uniforms.sunview_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
-    sunview_color *= pow(sunview_dot, 4.0);
+    sunview_color *= pow(sunview_dot, 6.0);
 
     //Used to bring out the stars/dim the sun
     float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
