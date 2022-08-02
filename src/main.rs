@@ -706,7 +706,7 @@ fn main() {
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
             imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
-            imgui::Slider::new("Fog factor", 0.0, 2.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
+            imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
@@ -818,7 +818,7 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 1.0, 10000.0);
+            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 10000.0);
             uniforms.clip_from_view = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,

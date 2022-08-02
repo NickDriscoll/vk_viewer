@@ -105,6 +105,7 @@ AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
 [shader("fragment")]
 float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     float3 view_direction = normalize(input.view_direction);
+    
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
     float sunview_dot = dot(uniforms.sun_direction.xyz, view_direction) * 0.5 + 0.5;
     float viewzenith_dot = view_direction.z * 0.5 + 0.5;
