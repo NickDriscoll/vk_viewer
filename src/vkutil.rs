@@ -611,7 +611,7 @@ pub struct VulkanAPI {
 }
 
 impl VulkanAPI {
-    pub fn initialize(window: &Window) -> Self {
+    pub fn init(window: &Window) -> Self {
         let vk_entry = ash::Entry::linked();
         let vk_instance = {
             let app_info = vk::ApplicationInfo {
@@ -620,21 +620,17 @@ impl VulkanAPI {
             };
 
             #[cfg(target_os = "windows")]
-            let extension_names = [
-                ash::extensions::khr::Surface::name().as_ptr(),
-                ash::extensions::khr::Win32Surface::name().as_ptr(),
-            ];
-
+            let platform_surface_extension = ash::extensions::khr::Win32Surface::name().as_ptr();
+            
             #[cfg(target_os = "macos")]
-            let extension_names = [
-                ash::extensions::khr::Surface::name().as_ptr(),
-                ash::extensions::mvk::MacOSSurface::name().as_ptr()
-            ];
+            let platform_surface_extension = ash::extensions::mvk::MacOSSurface::name().as_ptr();
 
             #[cfg(target_os = "linux")]
+            let platform_surface_extension = ash::extensions::khr::XlibSurface::name().as_ptr();
+
             let extension_names = [
                 ash::extensions::khr::Surface::name().as_ptr(),
-                ash::extensions::khr::XlibSurface::name().as_ptr()
+                platform_surface_extension
             ];
 
             let layer_names = unsafe  {[
@@ -888,12 +884,12 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn initialize_swapchain(vk: &mut VulkanAPI, vk_ext_swapchain: &ash::extensions::khr::Swapchain, render_pass: vk::RenderPass) -> Self {
+    pub fn init(vk: &mut VulkanAPI, vk_ext_swapchain: &ash::extensions::khr::Swapchain, render_pass: vk::RenderPass) -> Self {
         //Create the main swapchain for window present
         let vk_swapchain_image_format;
         let vk_swapchain_extent;
         let vk_swapchain = unsafe {
-            let present_mode = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap()[0];
+            let present_modes = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap();
             let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
             let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
 
@@ -925,7 +921,7 @@ impl Display {
                 p_queue_family_indices: [vk.graphics_queue_family_index].as_ptr(),
                 pre_transform: surf_capabilities.current_transform,
                 composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
-                present_mode,
+                present_mode: present_modes[0],
                 ..Default::default()
             };
 

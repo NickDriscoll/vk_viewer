@@ -212,7 +212,7 @@ fn main() {
     }
 
     //Initialize the Vulkan API
-    let mut vk = vkutil::VulkanAPI::initialize(&window);
+    let mut vk = vkutil::VulkanAPI::init(&window);
     
     //Initialize the renderer
     let mut renderer = Renderer::init(&mut vk);
@@ -317,7 +317,7 @@ fn main() {
     };
 
     //Create the main swapchain for window present
-    let mut vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
+    let mut vk_display = vkutil::Display::init(&mut vk, &vk_ext_swapchain, vk_render_pass);
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let pipeline_creator = unsafe {
@@ -527,7 +527,7 @@ fn main() {
                 vk_ext_swapchain.destroy_swapchain(vk_display.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                vk_display = vkutil::Display::initialize_swapchain(&mut vk, &vk_ext_swapchain, vk_render_pass);
+                vk_display = vkutil::Display::init(&mut vk, &vk_ext_swapchain, vk_render_pass);
 
                 window_size = glm::vec2(vk_display.extent.width, vk_display.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
@@ -609,13 +609,13 @@ fn main() {
             0.0, -1.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 1.0
         ) * glm::vec3_to_vec4(&input_output.movement_vector);
+        const FREECAM_SPEED: f32 = 3.0;
         if do_freecam {
-            const FREECAM_SPEED: f32 = 3.0;
             let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
             camera.position += glm::vec4_to_vec3(&delta_pos);
             camera.orientation += input_output.orientation_delta;
         } else {
-            let delta_pos = 2.0 * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
+            let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
             totoro_position += glm::vec4_to_vec3(&delta_pos);
         }
  
@@ -869,12 +869,8 @@ fn main() {
 
             //Set scissor rect to be same as render area
             let vk_render_area = {
-                let offset = vk::Offset2D {
-                    x: 0,
-                    y: 0
-                };
                 vk::Rect2D {
-                    offset,
+                    offset: vk::Offset2D { x: 0, y: 0 },
                     extent: vk_display.extent
                 }
             };
