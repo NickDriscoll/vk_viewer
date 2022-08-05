@@ -487,7 +487,7 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, o
     let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
     vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    vk.device.destroy_buffer(staging_buffer.backing_buffer(), vkutil::MEMORY_ALLOCATOR);
+    staging_buffer.free(vk);
 }
 
 pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: &[u8]) {
@@ -580,7 +580,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: 
     let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
     vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    vk.device.destroy_buffer(staging_buffer.backing_buffer(), vkutil::MEMORY_ALLOCATOR);
+    staging_buffer.free(vk);
 }
 
 pub fn make_index_buffer(vk: &mut VulkanAPI, indices: &[u32]) -> GPUBuffer {
@@ -843,6 +843,7 @@ impl GPUBuffer {
 
     pub fn free(self, vk: &mut VulkanAPI) {
         vk.allocator.free(self.allocation).unwrap();
+        unsafe { vk.device.destroy_buffer(self.buffer, MEMORY_ALLOCATOR); }
     }
 
     fn unchecked_ptr(&self) -> *mut c_void { self.allocation.mapped_ptr().unwrap().as_ptr() }
