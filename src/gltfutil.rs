@@ -20,7 +20,10 @@ pub struct GLTFMaterial {
 }
 
 pub struct GLTFPrimitive {
-    pub vertices: Vec<f32>,
+    pub vertex_positions: Vec<f32>,
+    pub vertex_normals: Vec<f32>,
+    pub vertex_tangents: Vec<f32>,
+    pub vertex_uvs: Vec<f32>,
     pub indices: Vec<u32>,
     pub material: GLTFMaterial
 }
@@ -95,10 +98,34 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
 
             //We always expect position data to be present
             use gltf::Semantic;
-            let position_vec = get_f32_semantic(&glb, &prim, Semantic::Positions).unwrap();
+            let position_vec = match get_f32_semantic(&glb, &prim, Semantic::Positions) {
+                Some(v) => {
+                    let mut out = vec![0.0; v.len() * 4 / 3];
+                    for i in (0..v.len()).step_by(3) {
+                        out[4 * i / 3] =     v[i];
+                        out[4 * i / 3 + 1] = v[i + 1];
+                        out[4 * i / 3 + 2] = v[i + 2];
+                        out[4 * i / 3 + 3] = 1.0;
+                    }
+                    out
+                }
+                None => {
+                    crash_with_error_dialog("GLTF primitive was missing position attribute.");
+                }
+            };
 
             let normal_vec = match get_f32_semantic(&glb, &prim, Semantic::Normals) {
-                Some(v) => { v }
+                Some(v) => {
+                    //Align to float4
+                    let mut out = vec![0.0; v.len() * 4 / 3];
+                    for i in (0..v.len()).step_by(3) {
+                        out[4 * i / 3] =     v[i];
+                        out[4 * i / 3 + 1] = v[i + 1];
+                        out[4 * i / 3 + 2] = v[i + 2];
+                        out[4 * i / 3 + 3] = 0.0;
+                    }
+                    out
+                }
                 None => { vec![0.0; position_vec.len()] }
             };
             let tangent_vec = match get_f32_semantic(&glb, &prim, Semantic::Tangents) {
@@ -109,31 +136,6 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 Some(v) => { v }
                 None => { vec![0.0; position_vec.len() / 3 * 2] }
             };
-
-            //Now, interleave the mesh data
-            let mut vertex_buffer = vec![0.0f32; position_vec.len() + normal_vec.len() + 7 * tangent_vec.len() / 4 + texcoord_vec.len()];
-            for i in 0..(vertex_buffer.len() / 15) {
-                let normal = glm::vec3(normal_vec[3 * i], normal_vec[3 * i + 1], normal_vec[3 * i + 2]);
-                let tangent = glm::vec3(tangent_vec[4 * i], tangent_vec[4 * i + 1], tangent_vec[4 * i + 2]);
-                let bitangent = tangent_vec[4 * i + 3] * glm::cross(&normal, &tangent);
-
-                let current_idx = i * 15;
-                vertex_buffer[current_idx] = position_vec[3 * i];
-                vertex_buffer[current_idx + 1] = position_vec[3 * i + 1];
-                vertex_buffer[current_idx + 2] = position_vec[3 * i + 2];
-                vertex_buffer[current_idx + 3] = tangent_vec[4 * i];
-                vertex_buffer[current_idx + 4] = tangent_vec[4 * i + 1];
-                vertex_buffer[current_idx + 5] = tangent_vec[4 * i + 2];
-                vertex_buffer[current_idx + 6] = tangent_vec[4 * i + 3];
-                vertex_buffer[current_idx + 7] = bitangent.x;
-                vertex_buffer[current_idx + 8] = bitangent.y;
-                vertex_buffer[current_idx + 9] = bitangent.z;
-                vertex_buffer[current_idx + 10] = normal_vec[3 * i];
-                vertex_buffer[current_idx + 11] = normal_vec[3 * i + 1];
-                vertex_buffer[current_idx + 12] = normal_vec[3 * i + 2];
-                vertex_buffer[current_idx + 13] = texcoord_vec[2 * i];
-                vertex_buffer[current_idx + 14] = texcoord_vec[2 * i + 1];
-            }
 
             //Handle material data
             use gltf::image::Source;
@@ -198,7 +200,10 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
             };
 
             let p = GLTFPrimitive {
-                vertices: vertex_buffer,
+                vertex_positions: position_vec,
+                vertex_normals: normal_vec,
+                vertex_tangents: tangent_vec,
+                vertex_uvs: texcoord_vec,
                 indices: index_buffer,
                 material: mat
             };

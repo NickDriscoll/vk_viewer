@@ -16,6 +16,7 @@ mod structs;
 mod vkutil;
 
 use ash::vk;
+use gltfutil::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
 use imgui::{FontAtlasRefMut};
 use routines::struct_to_bytes;
@@ -131,6 +132,20 @@ fn uninterleave_and_upload_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer,
     }
 }
 
+fn upload_primitive_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, prim: &GLTFPrimitive) -> VertexFetchOffsets {
+    let position_offset = renderer.append_vertex_positions(vk, &prim.vertex_positions);
+    let tangent_offset = renderer.append_vertex_tangents(vk, &prim.vertex_tangents);
+    let normal_offset = renderer.append_vertex_normals(vk, &prim.vertex_normals);
+    let uv_offset = renderer.append_vertex_uvs(vk, &prim.vertex_uvs);
+
+    VertexFetchOffsets {
+        position_offset,
+        tangent_offset,
+        normal_offset,
+        uv_offset
+    }
+}
+
 fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32], offset: u64) {
     let attributes = uninterleave_vertex_buffer(vertex_buffer);
     
@@ -171,7 +186,7 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
 
         let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, color_idx, normal_idx)) as u32;
 
-        let offsets = uninterleave_and_upload_vertices(vk, renderer, &prim.vertices);
+        let offsets = upload_primitive_vertices(vk, renderer, &prim);
 
         let index_buffer = vkutil::make_index_buffer(vk, &prim.indices);
         let model_idx = renderer.register_model(DrawData {
