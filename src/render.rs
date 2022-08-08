@@ -121,6 +121,7 @@ pub struct Renderer {
     //pub uniforms: FrameUniforms,
     pub default_color_idx: u32,
     pub default_normal_idx: u32,
+    pub default_metalrough_idx: u32,
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
     primitives: OptionVec<DrawData>,
@@ -435,6 +436,7 @@ impl Renderer {
         };
 
         let default_color_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
+        let default_metalrough_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
         let default_normal_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
         //Create free list for materials
@@ -456,6 +458,7 @@ impl Renderer {
         Renderer {
             default_color_idx,
             default_normal_idx,
+            default_metalrough_idx,
             material_sampler,
             point_sampler,
             primitives: OptionVec::new(),

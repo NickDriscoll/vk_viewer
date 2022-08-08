@@ -807,7 +807,6 @@ pub struct GPUBuffer {
 
 impl GPUBuffer {
     //Read-only access to fields
-    pub fn allocation(&self) -> &Allocation { &self.allocation }
     pub fn backing_buffer(&self) -> vk::Buffer { self.buffer }
     pub fn length(&self) -> vk::DeviceSize { self.length }
 
@@ -845,8 +844,6 @@ impl GPUBuffer {
         vk.allocator.free(self.allocation).unwrap();
         unsafe { vk.device.destroy_buffer(self.buffer, MEMORY_ALLOCATOR); }
     }
-
-    fn unchecked_ptr(&self) -> *mut c_void { self.allocation.mapped_ptr().unwrap().as_ptr() }
 
     pub fn upload_buffer<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T]) {
         self.upload_subbuffer(vk, in_buffer, 0);
