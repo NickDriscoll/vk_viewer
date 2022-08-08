@@ -49,11 +49,11 @@ struct PBRParams
     float3 view;
     float3 light_direction;
     float3 light_radiance;
+    float roughness;
 }
 
 float3 pbr_mettalic_roughness(PBRParams params)
 {
-    float roughness = 0.3;
     float metallic = 0.0;
     float ambient_occlusion = 1.0;
 
@@ -63,9 +63,9 @@ float3 pbr_mettalic_roughness(PBRParams params)
     kd *= 1.0 - metallic;
 
     // Cook-Torrence specular term evaluation
-    float D = NDFggxtr(params.shading_normal, halfway, roughness);
+    float D = NDFggxtr(params.shading_normal, halfway, params.roughness);
     float3 F = ks;
-    float G = geometry_smith(params.shading_normal, params.view, params.light_direction, roughness);
+    float G = geometry_smith(params.shading_normal, params.view, params.light_direction, params.roughness);
     float3 numerator = D * F * G;
     float denominator = 4.0 * max(dot(params.shading_normal, params.view), 0.0) * max(dot(params.shading_normal, params.light_direction), 0.0) + 0.0001;
     float3 cook_torrence = numerator / denominator;

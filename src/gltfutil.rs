@@ -11,6 +11,7 @@ pub enum GLTFImageType {
 
 pub struct GLTFMaterial {
     pub base_color: [f32; 4],
+    pub base_roughness: f32,
     pub color_bytes: Vec<u8>,
     pub color_imagetype: GLTFImageType,
     pub normal_bytes: Option<Vec<u8>>,
@@ -43,6 +44,11 @@ fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic
         Some(s) => { s }
         None => { 0 }
     };
+
+    #[cfg(debug_assertions)]
+    if byte_stride != 0 {
+        crash_with_error_dialog("You are trying to load a GLTF whose vertex attributes are not tightly packed, violating the assumptions of the loader");
+    }
 
     unsafe {
         match &glb.blob {
@@ -191,6 +197,7 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
 
             let mat = GLTFMaterial {
                 base_color: pbr_model.base_color_factor(),
+                base_roughness: pbr_model.roughness_factor(),
                 color_bytes,
                 color_imagetype: GLTFImageType::PNG,
                 normal_bytes,

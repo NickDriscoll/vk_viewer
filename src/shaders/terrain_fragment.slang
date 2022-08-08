@@ -40,6 +40,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     mix_factor = smoothstep(0.60, 0.70, mix_factor);
     
     float3 world_normal = mul(lerp(rock_normal, grass_normal, mix_factor), TBN);
+    float roughness = lerp(grass_material.base_roughness, rock_material.base_roughness, mix_factor);
 
     //Compute sun color
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
@@ -54,6 +55,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.view = view;
     params.light_direction = uniforms.sun_direction.xyz;
     params.light_radiance = uniforms.sun_radiance.rgb;
+    params.roughness = roughness;
 
     float3 lit_color = pbr_mettalic_roughness(params);
 

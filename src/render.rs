@@ -4,22 +4,23 @@ use ash::vk::DescriptorImageInfo;
 use crate::*;
 
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct MaterialData {
     pub base_color: [f32; 4],
+    pub base_roughness: f32,
     pub color_idx: u32,
     pub normal_idx: u32,
-    _pad0: u32,
-    _pad1: u32
+    _pad0: u32
 }
 
 impl MaterialData {
-    pub fn new(base_color: [f32; 4], color_idx: u32, normal_idx: u32) -> Self {
+    pub fn new(base_color: [f32; 4], base_roughness: f32, color_idx: u32, normal_idx: u32) -> Self {
         MaterialData {
             base_color,
+            base_roughness,
             color_idx,
             normal_idx,
             _pad0: 0,
-            _pad1: 0
         }
     }
 }
@@ -56,7 +57,7 @@ fn minor(m: &[f32], r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: u
            m[4*r0+c2] * (m[4*r1+c0] * m[4*r2+c1] - m[4*r2+c0] * m[4*r1+c1]);
 }
 
-//TL;DR use cofactor instead of transpose(inverse(world_from_model)) for normal matrix
+//TL;DR use cofactor instead of transpose(inverse(world_from_model)) to compute normal matrix
 //https://github.com/graphitemaster/normals_revisited
 fn cofactor(src: &[f32], dst: &mut [f32]) {
     dst[ 0] =  minor(src, 1, 2, 3, 1, 2, 3);
@@ -118,7 +119,6 @@ pub struct FrameUniforms {
 }
 
 pub struct Renderer {
-    //pub uniforms: FrameUniforms,
     pub default_color_idx: u32,
     pub default_normal_idx: u32,
     pub default_metalrough_idx: u32,

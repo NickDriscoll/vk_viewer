@@ -19,6 +19,7 @@ use ash::vk;
 use gltfutil::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
 use imgui::{FontAtlasRefMut};
+use ozy::routines::uniform_scale;
 use routines::struct_to_bytes;
 use sdl2::event::Event;
 use sdl2::mixer;
@@ -50,8 +51,8 @@ fn crash_with_error_dialog_titled(title: &str, message: &str) -> ! {
 fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
     match res {
         Ok(t) => { t }
-        Err(e) => {
-            crash_with_error_dialog(&format!("{}\n{}", msg, e));
+        Err(_) => {
+            crash_with_error_dialog(&format!("{}", msg));
         }
     }
 }
@@ -184,7 +185,7 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
             None => { renderer.default_normal_idx }
         };
 
-        let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, color_idx, normal_idx)) as u32;
+        let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, prim.material.base_roughness, color_idx, normal_idx)) as u32;
 
         let offsets = upload_primitive_vertices(vk, renderer, &prim);
 
@@ -432,8 +433,8 @@ fn main() {
     let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
 
-    let terrain_grass_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], grass_color_global_index, grass_normal_global_index)) as u32;
-    let terrain_rock_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], rock_color_global_index, rock_normal_global_index)) as u32;
+    let terrain_grass_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], 1.0, grass_color_global_index, grass_normal_global_index)) as u32;
+    let terrain_rock_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], 0.75, rock_color_global_index, rock_normal_global_index)) as u32;
 
     //Load gltf object
     let glb_name = "./data/models/nice_tree.glb";
@@ -485,6 +486,7 @@ fn main() {
     let mut sun_yaw = 0.783;
     let mut trees_width = 1;
     let mut trees_height = 1;
+    let mut terrain_scale = 30.0;
 
     renderer.uniform_data.sun_luminance = [2.0, 2.0, 2.0, 0.0];
     renderer.uniform_data.stars_threshold = 8.0;
@@ -615,7 +617,46 @@ fn main() {
             }
         }
 
-        let plane_model_matrix = glm::scaling(&glm::vec3(30.0, 30.0, 30.0));
+        let imgui_window_token = if dev_gui.do_main_window {
+            imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
+        } else {
+            None
+        };
+
+        if let Some(_) = imgui_window_token {
+            if let Some(mb) = imgui_ui.begin_menu_bar() {
+                if let Some(mt) = imgui_ui.begin_menu("Environment") {
+                    if imgui::MenuItem::new("Terrain builder").build(&imgui_ui) {
+                        dev_gui.do_terrain_window = true;
+                    }
+                    mt.end();
+                }
+                mb.end();
+            }
+
+            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime, frame {})", input_output.framerate, 1000.0 / input_output.framerate, timer.frame_count));
+            
+            let (message, color) =  if input_system.controllers[0].is_some() {
+                ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
+            } else {
+                ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])
+            };
+            let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
+            imgui_ui.text(message);
+            color_token.pop();
+
+            imgui::Slider::new("Sun speed", 0.0, 1.0).build(&imgui_ui, &mut sun_speed);
+            imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
+            imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
+            imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
+            imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
+            imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
+            imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
+            imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
+            imgui::Slider::new("Terrain scale", 1.0, 30.0).build(&imgui_ui, &mut terrain_scale);
+        }
+
+        let plane_model_matrix = uniform_scale(terrain_scale);
         renderer.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
 
         let view_movement_vector = glm::mat4(
@@ -687,44 +728,6 @@ fn main() {
         };
         last_view_from_world = view_from_world;
         renderer.uniform_data.view_from_world = view_from_world;
-
-        let imgui_window_token = if dev_gui.do_main_window {
-            imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
-        } else {
-            None
-        };
-
-        if let Some(_) = imgui_window_token {
-            if let Some(mb) = imgui_ui.begin_menu_bar() {
-                if let Some(mt) = imgui_ui.begin_menu("Environment") {
-                    if imgui::MenuItem::new("Terrain builder").build(&imgui_ui) {
-                        dev_gui.do_terrain_window = true;
-                    }
-                    mt.end();
-                }
-                mb.end();
-            }
-
-            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime, frame {})", input_output.framerate, 1000.0 / input_output.framerate, timer.frame_count));
-            
-            let (message, color) =  if input_system.controllers[0].is_some() {
-                ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
-            } else {
-                ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])
-            };
-            let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
-            imgui_ui.text(message);
-            color_token.pop();
-
-            imgui::Slider::new("Sun speed", 0.0, 1.0).build(&imgui_ui, &mut sun_speed);
-            imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
-            imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
-            imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
-            imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
-            imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
-            imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
-            imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
-        }
 
         let bb_mats = {
             let mut ms = Vec::with_capacity((trees_width * trees_height) as usize);

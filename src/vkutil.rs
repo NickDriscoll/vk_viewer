@@ -51,8 +51,9 @@ macro_rules! size_to_alignment {
 }
 
 pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
-    let mut file = unwrap_result(File::open(path), &format!("Unable to read shader spv file {}", path));
-    let spv = unwrap_result(ash::util::read_spv(&mut file), &format!("Unable to read shader spv file {}", path));
+    let msg = format!("Unable to read shader spv file {}\nDid a shader fail to compile?", path);
+    let mut file = unwrap_result(File::open(path), &msg);
+    let spv = unwrap_result(ash::util::read_spv(&mut file), &msg);
 
     let module_create_info = vk::ShaderModuleCreateInfo {
         code_size: spv.len() * size_of::<u32>(),
@@ -615,7 +616,7 @@ impl VulkanAPI {
         let vk_entry = ash::Entry::linked();
         let vk_instance = {
             let app_info = vk::ApplicationInfo {
-                api_version: vk::make_api_version(0, 1, 2, 0),
+                api_version: vk::make_api_version(0, 1, 3, 0),
                 ..Default::default()
             };
 
