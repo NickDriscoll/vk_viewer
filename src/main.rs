@@ -411,7 +411,7 @@ fn main() {
     let terrain_vertices = terrain.generate_vertices(terrain_generation_scale);
     let terrain_indices = ozy::prims::plane_index_buffer(terrain_vertex_width, terrain_vertex_width);
 
-    let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices, terrain_vertex_width, None);
+    let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices, terrain_vertex_width);
     
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
@@ -459,8 +459,9 @@ fn main() {
     let (totoro_body_handle, totoro_collider_handle) = {
         let rigid_body = RigidBodyBuilder::dynamic()
         .translation(totoro_position)
+        .ccd_enabled(true)
         .build();
-        let collider = ColliderBuilder::ball(2.25).restitution(0.7).build();
+        let collider = ColliderBuilder::ball(2.25).restitution(1.0).build();
         let ball_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
         let collider_handle = physics_engine.collider_set.insert_with_parent(collider, ball_body_handle, &mut physics_engine.rigid_body_set);
         (ball_body_handle, collider_handle)

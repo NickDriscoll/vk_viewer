@@ -52,6 +52,8 @@ pub fn regenerate_terrain(
         let verts = compute_terrain_vertices(terrain, terrain_fixed_seed, terrain_generation_scale);
         replace_uploaded_uninterleaved_vertices(vk, renderer, &verts, offset.into());
 
-        *terrain_collider_handle = physics_engine.make_terrain_collider(&verts, terrain_vertex_width, Some(*terrain_collider_handle));
+        physics_engine.collider_set.remove(*terrain_collider_handle, &mut physics_engine.island_manager, &mut physics_engine.rigid_body_set, false);
+
+        *terrain_collider_handle = physics_engine.make_terrain_collider(&verts, terrain_vertex_width);
     }
 }
