@@ -6,3 +6,32 @@ pub fn struct_to_bytes<'a, T>(structure: &'a T) -> &'a [u8] {
     let size = size_of::<T>();
     unsafe { std::slice::from_raw_parts(p, size) }
 }
+
+pub fn crash_with_error_dialog(message: &str) -> ! {
+    crash_with_error_dialog_titled("Oops...", message);
+}
+
+pub fn crash_with_error_dialog_titled(title: &str, message: &str) -> ! {
+    tfd::message_box_ok(title, &message.replace("'", ""), tfd::MessageBoxIcon::Error);
+    panic!("{}", message);
+}
+
+ pub fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
+    match res {
+        Ok(t) => { t }
+        Err(_) => {
+            crash_with_error_dialog(&format!("{}", msg));
+        }
+    }
+}
+
+pub fn unix_epoch_ms() -> u128 {
+    SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+}
+
+pub fn regenerate_terrain(spec: &mut TerrainSpec, fixed_seed: bool, scale: f32) -> Vec<f32> {
+    if !fixed_seed {
+        spec.seed = unix_epoch_ms();
+    }
+    spec.generate_vertices(scale)
+}

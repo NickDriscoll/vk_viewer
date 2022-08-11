@@ -2,7 +2,7 @@ use gltf::Gltf;
 use gltf::accessor::DataType;
 use std::ptr;
 
-use crate::crash_with_error_dialog;
+use crate::routines::*;
 
 pub enum GLTFImageType {
     PNG,

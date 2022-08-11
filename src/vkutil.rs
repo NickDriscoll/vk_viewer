@@ -6,6 +6,7 @@ use gpu_allocator::MemoryLocation;
 use ozy::io::DDSHeader;
 use sdl2::video::Window;
 use std::ptr;
+use routines::*;
 use crate::*;
 
 pub const MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
@@ -51,7 +52,7 @@ macro_rules! size_to_alignment {
 }
 
 pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
-    let msg = format!("Unable to read shader spv file {}\nDid a shader fail to compile?", path);
+    let msg = format!("Unable to read spv file {}\nDid a shader fail to compile?", path);
     let mut file = unwrap_result(File::open(path), &msg);
     let spv = unwrap_result(ash::util::read_spv(&mut file), &msg);
 

@@ -8,6 +8,7 @@ extern crate ozy_engine as ozy;
 mod gltfutil;
 mod gui;
 mod input;
+mod physics;
 mod render;
 mod routines;
 mod structs;
@@ -19,7 +20,7 @@ use ash::vk;
 use gltfutil::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
 use imgui::{FontAtlasRefMut};
-use ozy::routines::uniform_scale;
+use rapier3d::prelude::*;
 use routines::struct_to_bytes;
 use sdl2::event::Event;
 use sdl2::mixer;
@@ -34,39 +35,13 @@ use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
 use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualImage, VulkanAPI};
-use structs::{Camera, NoiseParameters, TerrainSpec};
+use physics::PhysicsEngine;
+use structs::{Camera, TerrainSpec};
 use render::{DrawData, Renderer, MaterialData};
 
+use crate::routines::*;
 use crate::gltfutil::GLTFData;
 use crate::gui::DevGui;
-
-fn crash_with_error_dialog(message: &str) -> ! {
-    crash_with_error_dialog_titled("Oops...", message);
-}
-fn crash_with_error_dialog_titled(title: &str, message: &str) -> ! {
-    tfd::message_box_ok(title, &message.replace("'", ""), tfd::MessageBoxIcon::Error);
-    panic!("{}", message);
-}
-
-fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
-    match res {
-        Ok(t) => { t }
-        Err(_) => {
-            crash_with_error_dialog(&format!("{}", msg));
-        }
-    }
-}
-
-fn time_from_epoch_ms() -> u128 {
-    SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
-}
-
-fn regenerate_terrain(vk: &mut VulkanAPI, spec: &mut TerrainSpec, fixed_seed: bool, scale: f32) -> Vec<f32> {
-    if !fixed_seed {
-        spec.seed = time_from_epoch_ms();
-    }
-    spec.generate_vertices(scale)
-}
 
 struct UninterleavedVertices {
     pub positions: Vec<f32>,
@@ -248,6 +223,9 @@ fn main() {
     //Initialize the renderer
     let mut renderer = Renderer::init(&mut vk);
 
+    //Initialize the physics engine
+    let mut physics_engine = PhysicsEngine::new();
+
     let default_image_info;
 
     //Create and upload Dear IMGUI font atlas
@@ -413,7 +391,7 @@ fn main() {
     let mut sun_yaw = 0.783;
     let mut trees_width = 1;
     let mut trees_height = 1;
-    let mut terrain_generation_scale = 20.0;
+    let terrain_generation_scale = 20.0;
 
     //Define terrain
     let terrain_width_height = 500;
@@ -424,11 +402,37 @@ fn main() {
         vertex_height: terrain_width_height,
         amplitude: 2.0,
         exponent: 2.2,
-        seed: time_from_epoch_ms(),
+        seed: unix_epoch_ms(),
         ..Default::default()
     };
 
     let terrain_vertices = terrain.generate_vertices(terrain_generation_scale);
+    let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
+
+    let terrain_collider_handle = unsafe {
+        let mut v_copy = terrain_vertices.clone();
+        let mut i_copy = terrain_indices.clone();
+        let verts = {
+            Vec::from_raw_parts(
+                v_copy.as_mut_ptr() as *mut Point<f32>,
+                v_copy.len() / 3,
+                v_copy.capacity() / 3
+            )
+        };
+        std::mem::forget(v_copy);
+
+        let inds = {
+            Vec::from_raw_parts(
+                i_copy.as_mut_ptr() as *mut [u32; 3],
+                i_copy.len() / 3,
+                i_copy.capacity() / 3
+            )
+        };
+        std::mem::forget(i_copy);
+
+        let terrain_collider = ColliderBuilder::trimesh(verts, inds);
+        physics_engine.collider_set.insert(terrain_collider)
+    };
     
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
@@ -441,7 +445,6 @@ fn main() {
 
     //Upload terrain geometry
     let terrain_model_idx = {
-        let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
         let terrain_offsets = uninterleave_and_upload_vertices(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = vkutil::make_index_buffer(&mut vk, &terrain_indices);
@@ -456,6 +459,10 @@ fn main() {
         })
     };
 
+    let mut totoro_position: glm::TVec3<f32> = glm::vec3(0.0, 0.0, 20.0);
+    let mut totoro_lookat_dist = 7.5;
+    let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
+
     //Load gltf object
     let glb_name = "./data/models/nice_tree.glb";
     let tree_data = gltfutil::gltf_meshdata(glb_name);
@@ -469,6 +476,17 @@ fn main() {
     //Register each primitive with the renderer
     let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data);
 
+    //Make totoro collider
+    let totoro_body_handle = {
+        let rigid_body = RigidBodyBuilder::dynamic()
+        .translation(totoro_position)
+        .build();
+        let collider = ColliderBuilder::ball(2.25).restitution(0.7).build();
+        let ball_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
+        physics_engine.collider_set.insert_with_parent(collider, ball_body_handle, &mut physics_engine.rigid_body_set);
+        ball_body_handle
+    };
+
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
     let vk_rendercomplete_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -477,10 +495,6 @@ fn main() {
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
     let mut last_view_from_world = glm::identity();
     let mut do_freecam = true;
-
-    let mut totoro_position: glm::TVec3<f32> = glm::zero();
-    let mut totoro_lookat_dist = 7.5;
-    let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
@@ -519,7 +533,7 @@ fn main() {
         if input_output.regen_terrain {
             if let Some(ter) = renderer.get_model(terrain_model_idx) {
                 let offset = ter.position_offset;
-                let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed, terrain_generation_scale);
+                let verts = regenerate_terrain(&mut terrain, terrain_fixed_seed, terrain_generation_scale);
                 replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, offset.into());
             }
         }
@@ -576,7 +590,7 @@ fn main() {
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
                         let vert_offset = terrain_model.position_offset;
-                        let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed, terrain_generation_scale);
+                        let verts = regenerate_terrain(&mut terrain, terrain_fixed_seed, terrain_generation_scale);
                         replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, vert_offset.into());
                     }
                 }
@@ -584,7 +598,7 @@ fn main() {
                 if terrain_interactive_generation && parameters_changed {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
                         let vert_offset = terrain_model.position_offset;
-                        let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed, terrain_generation_scale);
+                        let verts = regenerate_terrain(&mut terrain, terrain_fixed_seed, terrain_generation_scale);
                         replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, vert_offset.into());
                     }
                 }
@@ -633,6 +647,9 @@ fn main() {
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
 
+        //Step the physics engine before doing gameplay updates
+        physics_engine.step();
+
         let plane_model_matrix = glm::identity();
         renderer.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
 
@@ -653,9 +670,11 @@ fn main() {
         }
  
         //Totoro update
-        let a = ozy::routines::uniform_scale(2.0);
-        let b = glm::translation(&totoro_position) * glm::rotation(timer.elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
-        let totoro_model_matrix = b * a;
+        let totoro_body = &physics_engine.rigid_body_set[totoro_body_handle];
+        let totoro_model_matrix = totoro_body.position().to_matrix() * glm::translation(&glm::vec3(0.0, 0.0, -2.25));
+        totoro_position.x = totoro_model_matrix[12];
+        totoro_position.y = totoro_model_matrix[13];
+        totoro_position.z = totoro_model_matrix[14];
         for idx in &totoro_model_indices {
             renderer.queue_drawcall(*idx, main_pipeline, &[totoro_model_matrix]);
         }
