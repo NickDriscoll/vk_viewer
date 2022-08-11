@@ -61,11 +61,11 @@ fn time_from_epoch_ms() -> u128 {
     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
 }
 
-fn regenerate_terrain(vk: &mut VulkanAPI, spec: &mut TerrainSpec, fixed_seed: bool) -> Vec<f32> {
+fn regenerate_terrain(vk: &mut VulkanAPI, spec: &mut TerrainSpec, fixed_seed: bool, scale: f32) -> Vec<f32> {
     if !fixed_seed {
         spec.seed = time_from_epoch_ms();
     }
-    spec.generate_vertices()
+    spec.generate_vertices(scale)
 }
 
 struct UninterleavedVertices {
@@ -159,18 +159,17 @@ fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Re
 fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData) -> Vec<usize> {
     let mut indices = vec![];
     for prim in &data.primitives {
-        let color_idx;
-        if prim.material.color_bytes.len() != 0 {
+        let color_idx = if prim.material.color_bytes.len() != 0 {
             let color_image = VirtualImage::from_png_bytes(vk, prim.material.color_bytes.as_slice());
             let image_info = vk::DescriptorImageInfo {
                 sampler: renderer.material_sampler,
                 image_view: color_image.vk_view,
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
             };
-            color_idx = renderer.global_textures.insert(image_info) as u32;
+            renderer.global_textures.insert(image_info) as u32
         } else {
-            color_idx = renderer.default_color_idx;
-        }
+            renderer.default_color_idx
+        };
 
         let normal_idx = match &prim.material.normal_bytes {
             Some(bytes) => {
@@ -185,7 +184,23 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
             None => { renderer.default_normal_idx }
         };
 
-        let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, prim.material.base_roughness, color_idx, normal_idx)) as u32;
+        let metal_roughness_idx = match&prim.material.metallic_roughness_bytes {
+            Some(bytes) => {
+                let normal_image = VirtualImage::from_png_bytes(vk, bytes.as_slice());
+                let image_info = vk::DescriptorImageInfo {
+                    sampler: renderer.material_sampler,
+                    image_view: normal_image.vk_view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                };
+                renderer.global_textures.insert(image_info) as u32
+
+            }
+            None => {
+                renderer.default_metal_roughness_idx
+            }
+        };
+
+        let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, prim.material.base_roughness, color_idx, normal_idx, metal_roughness_idx)) as u32;
 
         let offsets = upload_primitive_vertices(vk, renderer, &prim);
 
@@ -393,39 +408,27 @@ fn main() {
         [main_pipeline, ter_pipeline, atm_pipeline, wire_pipeline]
     };
 
-    let noise_parameters = {
-        const OCTAVES: usize = 8;
-        const LACUNARITY: f64 = 1.75;
-        const GAIN: f64 = 0.5;
-        let mut ps = Vec::with_capacity(OCTAVES);
-        
-        let mut amplitude = 2.0;
-        let mut frequency = 0.15;
-        for _ in 0..OCTAVES {
-            ps.push(NoiseParameters {
-                amplitude,
-                frequency
-            });
-            amplitude *= GAIN;
-            frequency *= LACUNARITY;
-        }
-        ps
-    };
+    let mut sun_speed = 0.003;
+    let mut sun_pitch = 0.118;
+    let mut sun_yaw = 0.783;
+    let mut trees_width = 1;
+    let mut trees_height = 1;
+    let mut terrain_generation_scale = 20.0;
 
     //Define terrain
-    let terrain_width_height = 256;
+    let terrain_width_height = 500;
     let mut terrain_fixed_seed = false;
     let mut terrain_interactive_generation = false;
     let mut terrain = TerrainSpec {
         vertex_width: terrain_width_height,
         vertex_height: terrain_width_height,
-        noise_parameters,
         amplitude: 2.0,
         exponent: 2.2,
-        seed: time_from_epoch_ms()
+        seed: time_from_epoch_ms(),
+        ..Default::default()
     };
 
-    let terrain_vertices = terrain.generate_vertices();
+    let terrain_vertices = terrain.generate_vertices(terrain_generation_scale);
     
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
@@ -433,21 +436,8 @@ fn main() {
     let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
 
-    let terrain_grass_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], 1.0, grass_color_global_index, grass_normal_global_index)) as u32;
-    let terrain_rock_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], 0.75, rock_color_global_index, rock_normal_global_index)) as u32;
-
-    //Load gltf object
-    let glb_name = "./data/models/nice_tree.glb";
-    let tree_data = gltfutil::gltf_meshdata(glb_name);
-
-    //Register each primitive with the renderer
-    let tree_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &tree_data);
-
-    //Load totoro as glb
-    let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
-
-    //Register each primitive with the renderer
-    let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data);
+    let terrain_grass_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], 10.0, grass_color_global_index, grass_normal_global_index, renderer.default_metal_roughness_idx)) as u32;
+    let terrain_rock_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], 0.75, rock_color_global_index, rock_normal_global_index, renderer.default_metal_roughness_idx)) as u32;
 
     //Upload terrain geometry
     let terrain_model_idx = {
@@ -466,6 +456,19 @@ fn main() {
         })
     };
 
+    //Load gltf object
+    let glb_name = "./data/models/nice_tree.glb";
+    let tree_data = gltfutil::gltf_meshdata(glb_name);
+
+    //Register each primitive with the renderer
+    let tree_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &tree_data);
+
+    //Load totoro as glb
+    let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
+
+    //Register each primitive with the renderer
+    let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data);
+
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
     let vk_rendercomplete_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -481,20 +484,13 @@ fn main() {
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
-    let mut sun_speed = 0.003;
-    let mut sun_pitch = 0.118;
-    let mut sun_yaw = 0.783;
-    let mut trees_width = 1;
-    let mut trees_height = 1;
-    let mut terrain_scale = 30.0;
-
     renderer.uniform_data.sun_luminance = [2.0, 2.0, 2.0, 0.0];
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
     renderer.uniform_data.fog_density = 0.75;
     
     //Load and play bgm
-    let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
+    let bgm = unwrap_result(Music::from_file("./data/music/bald.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
     let mut dev_gui = DevGui::new(&mut vk, vk_render_pass, &pipeline_creator);
@@ -523,7 +519,7 @@ fn main() {
         if input_output.regen_terrain {
             if let Some(ter) = renderer.get_model(terrain_model_idx) {
                 let offset = ter.position_offset;
-                let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
+                let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed, terrain_generation_scale);
                 replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, offset.into());
             }
         }
@@ -566,30 +562,12 @@ fn main() {
             if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) { 
                 let mut parameters_changed = false;
 
-                let mut num_deleted = 0;
-                for i in 0..terrain.noise_parameters.len() {
-                    let idx = i - num_deleted;
-                    imgui_ui.text(format!("Noise sample {}", i));
-
-                    parameters_changed |= imgui::Slider::new(format!("Amplitude##{}", i), 0.0, 2.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].amplitude);
-                    parameters_changed |= imgui::Slider::new(format!("Frequency##{}", i), 0.0, 5.0).build(&imgui_ui, &mut terrain.noise_parameters[idx].frequency);
-
-                    if imgui_ui.button_with_size(format!("Remove this layer##{}", i), [0.0, 32.0]) {
-                        terrain.noise_parameters.remove(idx);
-                        num_deleted += 1;
-                        parameters_changed = true;
-                    }
-
-                    imgui_ui.separator();
-                }
-                
-                if imgui_ui.button_with_size("Add noise layer", [0.0, 32.0]) {
-                    terrain.noise_parameters.push(NoiseParameters::default());
-                }
-
-                imgui_ui.text("Global amplitude and exponent:");
+                imgui_ui.text("Global terrain variables:");
                 parameters_changed |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut terrain.amplitude);
                 parameters_changed |= imgui::Slider::new("Exponent", 1.0, 5.0).build(&imgui_ui, &mut terrain.exponent);
+                parameters_changed |= imgui::Slider::new("Octaves", 1, 16).build(&imgui_ui, &mut terrain.octaves);
+                parameters_changed |= imgui::Slider::new("Lacunarity", 0.0, 5.0).build(&imgui_ui, &mut terrain.lacunarity);
+                parameters_changed |= imgui::Slider::new("Gain", 0.0, 2.0).build(&imgui_ui, &mut terrain.gain);
                 imgui_ui.separator();
 
                 imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
@@ -598,7 +576,7 @@ fn main() {
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
                         let vert_offset = terrain_model.position_offset;
-                        let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
+                        let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed, terrain_generation_scale);
                         replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, vert_offset.into());
                     }
                 }
@@ -606,7 +584,7 @@ fn main() {
                 if terrain_interactive_generation && parameters_changed {
                     if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
                         let vert_offset = terrain_model.position_offset;
-                        let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed);
+                        let verts = regenerate_terrain(&mut vk, &mut terrain, terrain_fixed_seed, terrain_generation_scale);
                         replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, vert_offset.into());
                     }
                 }
@@ -653,10 +631,9 @@ fn main() {
             imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
-            imgui::Slider::new("Terrain scale", 1.0, 30.0).build(&imgui_ui, &mut terrain_scale);
         }
 
-        let plane_model_matrix = uniform_scale(terrain_scale);
+        let plane_model_matrix = glm::identity();
         renderer.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
 
         let view_movement_vector = glm::mat4(

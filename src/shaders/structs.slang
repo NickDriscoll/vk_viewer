@@ -49,5 +49,5 @@ struct Material {
     float base_roughness;
     uint color_map_index;
     uint normal_map_index;
-    uint pad0;
+    uint metal_roughness_index;
 };

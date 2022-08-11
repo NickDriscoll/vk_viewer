@@ -10,17 +10,17 @@ pub struct MaterialData {
     pub base_roughness: f32,
     pub color_idx: u32,
     pub normal_idx: u32,
-    _pad0: u32
+    pub metal_roughness_idx: u32,
 }
 
 impl MaterialData {
-    pub fn new(base_color: [f32; 4], base_roughness: f32, color_idx: u32, normal_idx: u32) -> Self {
+    pub fn new(base_color: [f32; 4], base_roughness: f32, color_idx: u32, normal_idx: u32, metal_roughness_idx: u32) -> Self {
         MaterialData {
             base_color,
             base_roughness,
             color_idx,
             normal_idx,
-            _pad0: 0,
+            metal_roughness_idx
         }
     }
 }
@@ -121,7 +121,7 @@ pub struct FrameUniforms {
 pub struct Renderer {
     pub default_color_idx: u32,
     pub default_normal_idx: u32,
-    pub default_metalrough_idx: u32,
+    pub default_metal_roughness_idx: u32,
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
     primitives: OptionVec<DrawData>,
@@ -414,7 +414,8 @@ impl Renderer {
                 address_mode_v: vk::SamplerAddressMode::REPEAT,
                 address_mode_w: vk::SamplerAddressMode::REPEAT,
                 mip_lod_bias: 0.0,
-                anisotropy_enable: vk::FALSE,
+                anisotropy_enable: vk::TRUE,
+                max_anisotropy: 16.0,
                 compare_enable: vk::FALSE,
                 min_lod: 0.0,
                 max_lod: vk::LOD_CLAMP_NONE,
@@ -428,6 +429,7 @@ impl Renderer {
                 min_filter: vk::Filter::NEAREST,
                 mag_filter: vk::Filter::NEAREST,
                 mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+                anisotropy_enable: vk::FALSE,
                 ..sampler_info
             };
             let font = vk.device.create_sampler(&sampler_info, vkutil::MEMORY_ALLOCATOR).unwrap();
@@ -436,7 +438,7 @@ impl Renderer {
         };
 
         let default_color_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
-        let default_metalrough_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
+        let default_metalrough_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0x00, 0xFF])) as u32};
         let default_normal_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
         //Create free list for materials
@@ -458,7 +460,7 @@ impl Renderer {
         Renderer {
             default_color_idx,
             default_normal_idx,
-            default_metalrough_idx,
+            default_metal_roughness_idx: default_metalrough_idx,
             material_sampler,
             point_sampler,
             primitives: OptionVec::new(),

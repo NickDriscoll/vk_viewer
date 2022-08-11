@@ -22,6 +22,10 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         discard;
     params.albedo = color_sample.rgb;
 
+    float4 metal_roughness_sample = global_textures[my_mat.metal_roughness_index].Sample(input.uv);
+    float sampled_roughness = metal_roughness_sample.g;
+    float sampled_metalness = metal_roughness_sample.b;
+
     //Compute sun color
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
     float3 sky_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
@@ -35,7 +39,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.view = view;
     params.light_direction = uniforms.sun_direction.xyz;
     params.light_radiance = uniforms.sun_radiance.rgb;
-    params.roughness = my_mat.base_roughness;
+    params.roughness = my_mat.base_roughness * sampled_roughness;
 
     float3 lit_color = pbr_mettalic_roughness(params);
 

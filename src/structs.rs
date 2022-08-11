@@ -30,29 +30,35 @@ pub struct NoiseParameters {
 pub struct TerrainSpec {
     pub vertex_width: usize,
     pub vertex_height: usize,
-    pub noise_parameters: Vec<NoiseParameters>,
+    pub octaves: u64,
+    pub lacunarity: f64,
+    pub gain: f64,
     pub amplitude: f64,
     pub exponent: f64,
     pub seed: u128
 }
 
 impl TerrainSpec {
-    pub fn generate_vertices(&self) -> Vec<f32> {
+    pub fn generate_vertices(&self, scale: f32) -> Vec<f32> {
         use noise::Seedable;
     
         let simplex_generator = noise::OpenSimplex::new().set_seed(self.seed as u32);
-        ozy::prims::perturbed_plane_vertex_buffer(self.vertex_width, self.vertex_height, 15.0, move |x, y| {
+        ozy::prims::perturbed_plane_vertex_buffer(self.vertex_width, self.vertex_height, scale, move |x, y| {
             use noise::NoiseFn;
     
             let mut z = 0.0;
-    
-            //Apply each level of noise with the appropriate offset, frequency, and amplitude
+            
+            let mut amplitude = 2.0;
+            let mut frequency = 0.15;
             let mut offset = 0.0;
-            for parameters in self.noise_parameters.iter() {
-                let xi = offset + x * parameters.frequency;
-                let yi = offset + y * parameters.frequency;
-                z += parameters.amplitude * simplex_generator.get([xi, yi]);
+            for _ in 0..self.octaves {
+                let xi = offset + x * frequency;
+                let yi = offset + y * frequency;
+                z += amplitude * simplex_generator.get([xi, yi]);
                 offset += 50.0;
+
+                amplitude *= self.gain;
+                frequency *= self.lacunarity;
             }
     
             //Apply exponent to flatten. Branch is for exponentiating a negative
@@ -68,5 +74,20 @@ impl TerrainSpec {
             z
         })
 
+    }
+}
+
+impl Default for TerrainSpec {
+    fn default() -> Self {
+        TerrainSpec {
+            vertex_width: 128,
+            vertex_height: 128,
+            octaves: 8,
+            lacunarity: 1.75,
+            gain: 0.5,
+            amplitude: 2.0,
+            exponent: 2.2,
+            seed: 0
+        }
     }
 }

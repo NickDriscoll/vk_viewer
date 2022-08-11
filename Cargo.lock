@@ -1482,7 +1482,7 @@ checksum = "fe88247b92c1df6b6de80ddc290f3976dbdf2f5f5d3fd049a9fb598c6dd5ca73"
 
 [[package]]
 name = "vk_viewer"
-version = "0.1.0"
+version = "0.1.20"
 dependencies = [
  "ash",
  "gltf",
