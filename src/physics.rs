@@ -63,4 +63,29 @@ impl PhysicsEngine {
             &self.event_handler
         );
     }
+
+    pub fn make_terrain_collider(&mut self, verts: &[f32], width: usize, old_handle: Option<ColliderHandle>) -> ColliderHandle {
+        let mut i_copy = ozy::prims::plane_index_buffer(width, width);
+
+        let mut vs = Vec::with_capacity(verts.len() / 15 * 3);
+        for i in (0..verts.len()).step_by(15) {
+            vs.push(Point::new(verts[i], verts[i + 1], verts[i + 2]));
+        }
+
+        let inds = unsafe {
+            Vec::from_raw_parts(
+                i_copy.as_mut_ptr() as *mut [u32; 3],
+                i_copy.len() / 3,
+                i_copy.capacity() / 3
+            )
+        };
+        std::mem::forget(i_copy);
+
+        if let Some(handle) = old_handle {
+            self.collider_set.remove(handle, &mut self.island_manager, &mut self.rigid_body_set, false);
+        }
+
+        let terrain_collider = ColliderBuilder::trimesh(vs, inds);
+        self.collider_set.insert(terrain_collider)
+    }
 }

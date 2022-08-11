@@ -194,6 +194,8 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
     indices
 }
 
+
+
 //Entry point
 fn main() {
     //Create the window using SDL
@@ -394,12 +396,12 @@ fn main() {
     let terrain_generation_scale = 20.0;
 
     //Define terrain
-    let terrain_width_height = 500;
+    let terrain_vertex_width = 500;
     let mut terrain_fixed_seed = false;
     let mut terrain_interactive_generation = false;
     let mut terrain = TerrainSpec {
-        vertex_width: terrain_width_height,
-        vertex_height: terrain_width_height,
+        vertex_width: terrain_vertex_width,
+        vertex_height: terrain_vertex_width,
         amplitude: 2.0,
         exponent: 2.2,
         seed: unix_epoch_ms(),
@@ -407,32 +409,9 @@ fn main() {
     };
 
     let terrain_vertices = terrain.generate_vertices(terrain_generation_scale);
-    let terrain_indices = ozy::prims::plane_index_buffer(terrain_width_height, terrain_width_height);
+    let terrain_indices = ozy::prims::plane_index_buffer(terrain_vertex_width, terrain_vertex_width);
 
-    let terrain_collider_handle = unsafe {
-        let mut v_copy = terrain_vertices.clone();
-        let mut i_copy = terrain_indices.clone();
-        let verts = {
-            Vec::from_raw_parts(
-                v_copy.as_mut_ptr() as *mut Point<f32>,
-                v_copy.len() / 3,
-                v_copy.capacity() / 3
-            )
-        };
-        std::mem::forget(v_copy);
-
-        let inds = {
-            Vec::from_raw_parts(
-                i_copy.as_mut_ptr() as *mut [u32; 3],
-                i_copy.len() / 3,
-                i_copy.capacity() / 3
-            )
-        };
-        std::mem::forget(i_copy);
-
-        let terrain_collider = ColliderBuilder::trimesh(verts, inds);
-        physics_engine.collider_set.insert(terrain_collider)
-    };
+    let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices, terrain_vertex_width, None);
     
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
@@ -477,14 +456,14 @@ fn main() {
     let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data);
 
     //Make totoro collider
-    let totoro_body_handle = {
+    let (totoro_body_handle, totoro_collider_handle) = {
         let rigid_body = RigidBodyBuilder::dynamic()
         .translation(totoro_position)
         .build();
         let collider = ColliderBuilder::ball(2.25).restitution(0.7).build();
         let ball_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
-        physics_engine.collider_set.insert_with_parent(collider, ball_body_handle, &mut physics_engine.rigid_body_set);
-        ball_body_handle
+        let collider_handle = physics_engine.collider_set.insert_with_parent(collider, ball_body_handle, &mut physics_engine.rigid_body_set);
+        (ball_body_handle, collider_handle)
     };
 
     //Create semaphore used to wait on swapchain image
@@ -494,7 +473,7 @@ fn main() {
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
     let mut last_view_from_world = glm::identity();
-    let mut do_freecam = true;
+    let mut do_freecam = false;
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
@@ -504,7 +483,7 @@ fn main() {
     renderer.uniform_data.fog_density = 0.75;
     
     //Load and play bgm
-    let bgm = unwrap_result(Music::from_file("./data/music/bald.mp3"), "Error loading bgm");
+    let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
     let mut dev_gui = DevGui::new(&mut vk, vk_render_pass, &pipeline_creator);
@@ -531,10 +510,22 @@ fn main() {
         //Handling of some input results before update
         if input_output.gui_toggle { dev_gui.do_main_window = !dev_gui.do_main_window }
         if input_output.regen_terrain {
-            if let Some(ter) = renderer.get_model(terrain_model_idx) {
-                let offset = ter.position_offset;
-                let verts = regenerate_terrain(&mut terrain, terrain_fixed_seed, terrain_generation_scale);
-                replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, offset.into());
+            regenerate_terrain(
+                &mut vk,
+                &mut renderer,
+                &mut physics_engine,
+                &mut terrain_collider_handle,
+                terrain_model_idx,
+                &mut terrain,
+                terrain_vertex_width,
+                terrain_fixed_seed,
+                terrain_generation_scale
+            );
+        }
+        if input_output.reset_totoro {
+            if let Some(body) = physics_engine.rigid_body_set.get_mut(totoro_body_handle) {
+                body.reset_forces(true);
+                body.set_position(Isometry::from_parts(Translation::new(0.0, 0.0, 20.0), Rotation::identity()), true);
             }
         }
 
@@ -588,19 +579,31 @@ fn main() {
                 imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
                 imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
                 if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
-                    if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
-                        let vert_offset = terrain_model.position_offset;
-                        let verts = regenerate_terrain(&mut terrain, terrain_fixed_seed, terrain_generation_scale);
-                        replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, vert_offset.into());
-                    }
+                    regenerate_terrain(
+                        &mut vk,
+                        &mut renderer,
+                        &mut physics_engine,
+                        &mut terrain_collider_handle,
+                        terrain_model_idx,
+                        &mut terrain,
+                        terrain_vertex_width,
+                        terrain_fixed_seed,
+                        terrain_generation_scale
+                    );
                 }
 
                 if terrain_interactive_generation && parameters_changed {
-                    if let Some(terrain_model) = renderer.get_model(terrain_model_idx) {
-                        let vert_offset = terrain_model.position_offset;
-                        let verts = regenerate_terrain(&mut terrain, terrain_fixed_seed, terrain_generation_scale);
-                        replace_uploaded_uninterleaved_vertices(&mut vk, &mut renderer, &verts, vert_offset.into());
-                    }
+                    regenerate_terrain(
+                        &mut vk,
+                        &mut renderer,
+                        &mut physics_engine,
+                        &mut terrain_collider_handle,
+                        terrain_model_idx,
+                        &mut terrain,
+                        terrain_vertex_width,
+                        terrain_fixed_seed,
+                        terrain_generation_scale
+                    );
                 }
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { dev_gui.do_terrain_window = false; }
@@ -716,7 +719,9 @@ fn main() {
                 totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
             }
 
-            let lookat_target = glm::vec3(totoro_position.x, totoro_position.y, totoro_position.z + 3.0);
+            let collider = physics_engine.collider_set.get(totoro_collider_handle).unwrap();
+            let t = collider.position().translation;
+            let lookat_target = glm::vec3(t.x, t.y, t.z + 3.0);
             let pos = totoro_lookat_pos + lookat_target;
             let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
             renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);

@@ -4,6 +4,25 @@ use sdl2::controller::GameController;
 use sdl2::{EventPump, GameControllerSubsystem};
 use crate::*;
 
+//The output of the input system
+pub struct InputOutput {
+    pub movement_multiplier: f32,
+    pub movement_vector: glm::TVec3<f32>,
+    pub orientation_delta: glm::TVec2<f32>,
+    pub scroll_amount: f32,
+    pub framerate: f32,
+    pub regen_terrain: bool,
+    pub reset_totoro: bool,
+    pub resize_window: bool,
+    pub gui_toggle: bool
+}
+
+pub enum UserInput {
+    Output(InputOutput),
+    ExitProgram
+}
+
+
 pub struct InputSystem {
     pub event_pump: EventPump,
     pub controller_subsystem: GameControllerSubsystem,
@@ -38,6 +57,7 @@ impl InputSystem {
         let mut scroll_amount = 0.0;
         let framerate;
         let mut regen_terrain = false;
+        let mut reset_totoro = false;
         let mut resize_window = false;
         let mut gui_toggle = false;
 
@@ -73,7 +93,10 @@ impl InputSystem {
                 Event::KeyDown { scancode: Some(sc), repeat: false, .. } => {
                     match sc {
                         Scancode::Escape => { gui_toggle = true; }
-                        Scancode::R => { regen_terrain = true; }
+                        Scancode::R => {
+                            //regen_terrain = true;
+                            reset_totoro = true;
+                        }
                         _ => {}
                     }
                 }
@@ -190,26 +213,9 @@ impl InputSystem {
             scroll_amount,
             framerate,
             regen_terrain,
+            reset_totoro,
             resize_window,
             gui_toggle
         })
     }
 }
-
-//The output of the input system
-pub struct InputOutput {
-    pub movement_multiplier: f32,
-    pub movement_vector: glm::TVec3<f32>,
-    pub orientation_delta: glm::TVec2<f32>,
-    pub scroll_amount: f32,
-    pub framerate: f32,
-    pub regen_terrain: bool,
-    pub resize_window: bool,
-    pub gui_toggle: bool
-}
-
-pub enum UserInput {
-    Output(InputOutput),
-    ExitProgram
-}
-
