@@ -91,3 +91,8 @@ impl Default for TerrainSpec {
         }
     }
 }
+
+pub struct PhysicsProp {
+    pub rigid_body_handle: RigidBodyHandle,
+    pub collider_handle: ColliderHandle
+}

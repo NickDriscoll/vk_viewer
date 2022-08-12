@@ -4,6 +4,7 @@ use sdl2::controller::GameController;
 use sdl2::{EventPump, GameControllerSubsystem};
 use crate::*;
 
+#[derive(Default)]
 //The output of the input system
 pub struct InputOutput {
     pub movement_multiplier: f32,
@@ -14,7 +15,8 @@ pub struct InputOutput {
     pub regen_terrain: bool,
     pub reset_totoro: bool,
     pub resize_window: bool,
-    pub gui_toggle: bool
+    pub gui_toggle: bool,
+    pub spawn_totoro_prop: bool
 }
 
 pub enum UserInput {
@@ -50,16 +52,17 @@ impl InputSystem {
         use sdl2::keyboard::{Scancode};
         use sdl2::mouse::MouseButton;
 
+        let mut out = InputOutput::default();
+
         //Abstracted input variables
-        let mut movement_multiplier = 5.0f32;
-        let mut movement_vector: glm::TVec3<f32> = glm::zero();
-        let mut orientation_delta: glm::TVec2<f32> = glm::zero();
-        let mut scroll_amount = 0.0;
-        let framerate;
-        let mut regen_terrain = false;
-        let mut reset_totoro = false;
-        let mut resize_window = false;
-        let mut gui_toggle = false;
+        out.movement_multiplier = 5.0f32;
+        out.movement_vector = glm::zero();
+        out.orientation_delta = glm::zero();
+        out.scroll_amount = 0.0;
+        out.regen_terrain = false;
+        out.reset_totoro = false;
+        out.resize_window = false;
+        out.gui_toggle = false;
 
         //Sync controller array with how many controllers are actually connected
         for i in 0..self.controllers.len() {
@@ -86,21 +89,22 @@ impl InputSystem {
                 Event::Quit{..} => { return UserInput::ExitProgram; }
                 Event::Window { win_event, .. } => {
                     match win_event {
-                        WindowEvent::Resized(_, _) => { resize_window = true; }
+                        WindowEvent::Resized(_, _) => { out.resize_window = true; }
                         _ => {}
                     }
                 }
                 Event::KeyDown { scancode: Some(sc), repeat: false, .. } => {
                     match sc {
-                        Scancode::Escape => { gui_toggle = true; }
+                        Scancode::Escape => { out.gui_toggle = true; }
+                        Scancode::Space => { out.spawn_totoro_prop = true; }
                         Scancode::R => {
-                            //regen_terrain = true;
-                            reset_totoro = true;
+                            //out.regen_terrain = true;
+                            out.reset_totoro = true;
                         }
                         _ => {}
                     }
                 }
-                Event::MouseButtonUp { mouse_btn, ..} => {
+                Event::MouseButtonUp { mouse_btn, .. } => {
                     match mouse_btn {
                         MouseButton::Right => { self.cursor_captured = !self.cursor_captured; }
                         _ => {}
@@ -109,13 +113,13 @@ impl InputSystem {
                 Event::MouseMotion { xrel, yrel, .. } => {
                     const DAMPENING: f32 = 0.25 / 360.0;
                     if self.cursor_captured {
-                        orientation_delta += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
+                        out.orientation_delta += glm::vec2(DAMPENING * xrel as f32, DAMPENING * yrel as f32);
                     }
                 }
                 Event::MouseWheel { x, y, .. } => {
                     imgui_io.mouse_wheel_h = x as f32;
                     imgui_io.mouse_wheel = y as f32;
-                    scroll_amount = imgui_io.mouse_wheel;
+                    out.scroll_amount = imgui_io.mouse_wheel;
                 }
                 _ => {  }
             }
@@ -137,22 +141,22 @@ impl InputSystem {
             }
 
             if controller.button(Button::LeftShoulder) {
-                movement_vector += glm::vec3(0.0, 0.0, -1.0);                    
+                out.movement_vector += glm::vec3(0.0, 0.0, -1.0);                    
             }
 
             if controller.button(Button::RightShoulder) {
-                movement_vector += glm::vec3(0.0, 0.0, 1.0);                    
+                out.movement_vector += glm::vec3(0.0, 0.0, 1.0);                    
             }
 
             if controller.button(Button::Y) {
-                regen_terrain = true;
+                out.regen_terrain = true;
                 if let Err(e) = controller.set_rumble(0xFFFF, 0xFFFF, 50) {
                     println!("{}", e);
                 }
             }
 
             let left_trigger = get_normalized_axis(&controller, Axis::TriggerLeft);
-            movement_multiplier *= (MAX_MOVEMENT_MULTIPLIER - 1.0) * left_trigger + 1.0;
+            out.movement_multiplier *= (MAX_MOVEMENT_MULTIPLIER - 1.0) * left_trigger + 1.0;
 
             const JOYSTICK_DEADZONE: f32 = 0.15;
             let left_joy_vector = {
@@ -174,48 +178,38 @@ impl InputSystem {
                 res
             };
 
-            movement_vector += &left_joy_vector;
-            orientation_delta += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
+            out.movement_vector += &left_joy_vector;
+            out.orientation_delta += 4.0 * timer.delta_time * glm::vec2(right_joy_vector.x, -right_joy_vector.y);
         }
 
         if keyboard_state.is_scancode_pressed(Scancode::LShift) || keyboard_state.is_scancode_pressed(Scancode::RShift) {
-            movement_multiplier *= MAX_MOVEMENT_MULTIPLIER;
+            out.movement_multiplier *= MAX_MOVEMENT_MULTIPLIER;
         }
         if keyboard_state.is_scancode_pressed(Scancode::LCtrl) || keyboard_state.is_scancode_pressed(Scancode::RCtrl) {
-            movement_multiplier *= 0.25;
+            out.movement_multiplier *= 0.25;
         }
         if keyboard_state.is_scancode_pressed(Scancode::W) {
-            movement_vector += glm::vec3(0.0, 1.0, 0.0);
+            out.movement_vector += glm::vec3(0.0, 1.0, 0.0);
         }
         if keyboard_state.is_scancode_pressed(Scancode::A) {
-            movement_vector += glm::vec3(-1.0, 0.0, 0.0);
+            out.movement_vector += glm::vec3(-1.0, 0.0, 0.0);
         }
         if keyboard_state.is_scancode_pressed(Scancode::S) {
-            movement_vector += glm::vec3(0.0, -1.0, 0.0);
+            out.movement_vector += glm::vec3(0.0, -1.0, 0.0);
         }
         if keyboard_state.is_scancode_pressed(Scancode::D) {
-            movement_vector += glm::vec3(1.0, 0.0, 0.0);
+            out.movement_vector += glm::vec3(1.0, 0.0, 0.0);
         }
         if keyboard_state.is_scancode_pressed(Scancode::Q) {
-            movement_vector += glm::vec3(0.0, 0.0, -1.0);
+            out.movement_vector += glm::vec3(0.0, 0.0, -1.0);
         }
         if keyboard_state.is_scancode_pressed(Scancode::E) {
-            movement_vector += glm::vec3(0.0, 0.0, 1.0);
+            out.movement_vector += glm::vec3(0.0, 0.0, 1.0);
         }
 
-        framerate = imgui_io.framerate;
-        movement_vector *= movement_multiplier;
+        out.framerate = imgui_io.framerate;
+        out.movement_vector *= out.movement_multiplier;
 
-        UserInput::Output(InputOutput {
-            movement_multiplier,
-            movement_vector,
-            orientation_delta,
-            scroll_amount,
-            framerate,
-            regen_terrain,
-            reset_totoro,
-            resize_window,
-            gui_toggle
-        })
+        UserInput::Output(out)
     }
 }

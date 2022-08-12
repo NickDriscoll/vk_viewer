@@ -10,6 +10,9 @@ build = "build.rs"
 strip = false
 incremental = true
 
+[profile.dev.package.rapier3d]
+opt-level = 3
+
 [dependencies]
 ozy_engine = { path = "../ozy_engine" }
 gltf = "1.0.0"

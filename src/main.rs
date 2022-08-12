@@ -36,7 +36,7 @@ use ozy::structs::{FrameTimer, OptionVec};
 use input::UserInput;
 use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualImage, VulkanAPI};
 use physics::PhysicsEngine;
-use structs::{Camera, TerrainSpec};
+use structs::{Camera, TerrainSpec, PhysicsProp};
 use render::{DrawData, Renderer, MaterialData};
 
 use crate::routines::*;
@@ -438,7 +438,6 @@ fn main() {
         })
     };
 
-    let mut totoro_position: glm::TVec3<f32> = glm::vec3(0.0, 0.0, 20.0);
     let mut totoro_lookat_dist = 7.5;
     let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
@@ -456,16 +455,22 @@ fn main() {
     let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data);
 
     //Make totoro collider
-    let (totoro_body_handle, totoro_collider_handle) = {
+    let totoro_prop = {
         let rigid_body = RigidBodyBuilder::dynamic()
-        .translation(totoro_position)
+        .translation(glm::vec3(0.0, 0.0, 20.0))
         .ccd_enabled(true)
         .build();
-        let collider = ColliderBuilder::ball(2.25).restitution(1.0).build();
-        let ball_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
-        let collider_handle = physics_engine.collider_set.insert_with_parent(collider, ball_body_handle, &mut physics_engine.rigid_body_set);
-        (ball_body_handle, collider_handle)
+        let collider = ColliderBuilder::ball(2.25).restitution(2.5).build();
+        let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
+        let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
+        PhysicsProp {
+            rigid_body_handle,
+            collider_handle
+        }
     };
+
+    let mut totoro_list = OptionVec::new();
+    let main_totoro_idx = totoro_list.insert(totoro_prop);
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -524,10 +529,33 @@ fn main() {
             );
         }
         if input_output.reset_totoro {
-            if let Some(body) = physics_engine.rigid_body_set.get_mut(totoro_body_handle) {
+            let handle = totoro_list[main_totoro_idx].as_ref().unwrap().rigid_body_handle;
+            if let Some(body) = physics_engine.rigid_body_set.get_mut(handle) {
                 body.reset_forces(true);
                 body.set_position(Isometry::from_parts(Translation::new(0.0, 0.0, 20.0), Rotation::identity()), true);
             }
+        }
+
+        if input_output.spawn_totoro_prop {
+            let view_mat = camera.make_view_matrix();
+            let dir = glm::vec3(0.0, 0.0, -1.0);
+            let shoot_dir = glm::vec4_to_vec3(&(glm::affine_inverse(view_mat) * glm::vec3_to_vec4(&dir)));
+            let init_pos = camera.position + 5.0 * shoot_dir;
+            let totoro_prop = {
+                let rigid_body = RigidBodyBuilder::dynamic()
+                .translation(init_pos)
+                .linvel(shoot_dir * 40.0)
+                .ccd_enabled(true)
+                .build();
+                let collider = ColliderBuilder::ball(2.25).restitution(2.0).build();
+                let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
+                let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
+                PhysicsProp {
+                    rigid_body_handle,
+                    collider_handle
+                }
+            };
+            totoro_list.insert(totoro_prop);
         }
 
         //Handle needing to resize the window
@@ -668,19 +696,19 @@ fn main() {
             let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
             camera.position += glm::vec4_to_vec3(&delta_pos);
             camera.orientation += input_output.orientation_delta;
-        } else {
-            let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
-            totoro_position += glm::vec4_to_vec3(&delta_pos);
         }
  
-        //Totoro update
-        let totoro_body = &physics_engine.rigid_body_set[totoro_body_handle];
-        let totoro_model_matrix = totoro_body.position().to_matrix() * glm::translation(&glm::vec3(0.0, 0.0, -2.25));
-        totoro_position.x = totoro_model_matrix[12];
-        totoro_position.y = totoro_model_matrix[13];
-        totoro_position.z = totoro_model_matrix[14];
+        //Totoros update
+        let mut matrices = vec![];
+        for prop in totoro_list.iter() {
+            if let Some(p) = prop {
+                let body = &physics_engine.rigid_body_set[p.rigid_body_handle];
+                let matrix = body.position().to_matrix() * glm::translation(&glm::vec3(0.0, 0.0, -2.25));
+                matrices.push(matrix);
+            }
+        }
         for idx in &totoro_model_indices {
-            renderer.queue_drawcall(*idx, main_pipeline, &[totoro_model_matrix]);
+            renderer.queue_drawcall(*idx, main_pipeline, &matrices);
         }
 
         let view_from_world = if do_freecam {
@@ -720,7 +748,7 @@ fn main() {
                 totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
             }
 
-            let collider = physics_engine.collider_set.get(totoro_collider_handle).unwrap();
+            let collider = physics_engine.collider_set.get(totoro_list[main_totoro_idx].as_ref().unwrap().collider_handle).unwrap();
             let t = collider.position().translation;
             let lookat_target = glm::vec3(t.x, t.y, t.z + 3.0);
             let pos = totoro_lookat_pos + lookat_target;
@@ -763,6 +791,12 @@ fn main() {
             imgui_ui.checkbox("Freecam", &mut do_freecam);
 
             imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
+            
+            if imgui_ui.button_with_size("Totoro's be gone", [0.0, 32.0]) {
+                for i in 1..totoro_list.len() {
+                    totoro_list.delete(i);
+                }
+            }
             if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
                 break 'running;
             }

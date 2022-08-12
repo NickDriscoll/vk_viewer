@@ -91,6 +91,10 @@ float3 Unity_Blackbody_float(float Temperature) {
     return color;
 }
 
+float3 sky_color() {
+    
+}
+
 [shader("vertex")]
 AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     AtmosphereVertexOutput output;
