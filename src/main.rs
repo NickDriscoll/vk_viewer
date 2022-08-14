@@ -194,7 +194,13 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
     indices
 }
 
-
+fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Option<PhysicsProp>) {
+    let handle = totoro.as_ref().unwrap().rigid_body_handle;
+    if let Some(body) = physics_engine.rigid_body_set.get_mut(handle) {
+        body.set_linvel(glm::zero(), true);
+        body.set_position(Isometry::from_parts(Translation::new(0.0, 0.0, 20.0), *body.rotation()), true);
+    }
+}
 
 //Entry point
 fn main() {
@@ -396,7 +402,7 @@ fn main() {
     let terrain_generation_scale = 20.0;
 
     //Define terrain
-    let terrain_vertex_width = 500;
+    let terrain_vertex_width = 256;
     let mut terrain_fixed_seed = false;
     let mut terrain_interactive_generation = false;
     let mut terrain = TerrainSpec {
@@ -529,11 +535,7 @@ fn main() {
             );
         }
         if input_output.reset_totoro {
-            let handle = totoro_list[main_totoro_idx].as_ref().unwrap().rigid_body_handle;
-            if let Some(body) = physics_engine.rigid_body_set.get_mut(handle) {
-                body.reset_forces(true);
-                body.set_position(Isometry::from_parts(Translation::new(0.0, 0.0, 20.0), Rotation::identity()), true);
-            }
+            reset_totoro(&mut physics_engine, &totoro_list[main_totoro_idx]);
         }
 
         if input_output.spawn_totoro_prop {
@@ -547,7 +549,7 @@ fn main() {
                 .linvel(shoot_dir * 40.0)
                 .ccd_enabled(true)
                 .build();
-                let collider = ColliderBuilder::ball(2.25).restitution(2.0).build();
+                let collider = ColliderBuilder::ball(2.25).restitution(0.9).build();
                 let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
                 let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
                 PhysicsProp {
@@ -702,7 +704,10 @@ fn main() {
         let mut matrices = vec![];
         for prop in totoro_list.iter() {
             if let Some(p) = prop {
-                let body = &physics_engine.rigid_body_set[p.rigid_body_handle];
+                if physics_engine.rigid_body_set[p.rigid_body_handle].translation().z < -250.0 {
+                    reset_totoro(&mut physics_engine, &totoro_list[main_totoro_idx]);
+                }
+                let body = &mut physics_engine.rigid_body_set[p.rigid_body_handle];
                 let matrix = body.position().to_matrix() * glm::translation(&glm::vec3(0.0, 0.0, -2.25));
                 matrices.push(matrix);
             }
