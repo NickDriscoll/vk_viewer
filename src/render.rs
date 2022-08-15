@@ -28,8 +28,10 @@ impl MaterialData {
 pub struct Material {
     pipeline: vk::Pipeline,
     base_color: [f32; 4],
+    base_roughness: f32,
     color_idx: u32,
-    normal_idx: u32
+    normal_idx: u32,
+    metal_roughness_idx: u32,
 }
 
 pub struct DrawCall {
@@ -51,15 +53,15 @@ pub struct DrawData {
     pub material_idx: u32
 }
 
-fn minor(m: &[f32], r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: usize) -> f32 {
-    return m[4*r0+c0] * (m[4*r1+c1] * m[4*r2+c2] - m[4*r2+c1] * m[4*r1+c2]) -
-           m[4*r0+c1] * (m[4*r1+c0] * m[4*r2+c2] - m[4*r2+c0] * m[4*r1+c2]) +
-           m[4*r0+c2] * (m[4*r1+c0] * m[4*r2+c1] - m[4*r2+c0] * m[4*r1+c1]);
-}
-
 //TL;DR use cofactor instead of transpose(inverse(world_from_model)) to compute normal matrix
 //https://github.com/graphitemaster/normals_revisited
 fn cofactor(src: &[f32], dst: &mut [f32]) {
+    fn minor(m: &[f32], r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: usize) -> f32 {
+        return m[4*r0+c0] * (m[4*r1+c1] * m[4*r2+c2] - m[4*r2+c1] * m[4*r1+c2]) -
+               m[4*r0+c1] * (m[4*r1+c0] * m[4*r2+c2] - m[4*r2+c0] * m[4*r1+c2]) +
+               m[4*r0+c2] * (m[4*r1+c0] * m[4*r2+c1] - m[4*r2+c0] * m[4*r1+c1]);
+    }
+
     dst[ 0] =  minor(src, 1, 2, 3, 1, 2, 3);
     dst[ 1] = -minor(src, 1, 2, 3, 0, 2, 3);
     dst[ 2] =  minor(src, 1, 2, 3, 0, 1, 3);

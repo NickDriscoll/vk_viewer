@@ -6,7 +6,7 @@ use crate::routines::*;
 
 pub enum GLTFImageType {
     PNG,
-    BC7
+    KTX
 }
 
 pub struct GLTFMaterial {

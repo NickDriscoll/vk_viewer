@@ -117,6 +117,15 @@ impl DevGui {
     }
 
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanAPI, layout: vk::PipelineLayout) {
+        //Destroy Dear ImGUI allocations from last frame
+        {
+            let last_frame = self.current_frame.overflowing_sub(1).0 % Self::FRAMES_IN_FLIGHT;
+            let geo_count = self.frames[last_frame].index_buffers.len();
+            for geo in self.frames[last_frame].index_buffers.drain(0..geo_count) {
+                geo.free(vk);
+            }
+        }
+
         //Record Dear ImGUI drawing commands
         vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
         let gui_frame = &self.frames[self.current_frame];

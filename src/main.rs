@@ -399,6 +399,7 @@ fn main() {
     let mut sun_yaw = 0.783;
     let mut trees_width = 1;
     let mut trees_height = 1;
+    let mut timescale_factor = 1.0;
     let terrain_generation_scale = 20.0;
 
     //Define terrain
@@ -677,11 +678,13 @@ fn main() {
             imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
             imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
+            imgui::Slider::new("Timescale factor", 0.01, 10.0).build(&imgui_ui, &mut timescale_factor);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
 
         //Step the physics engine before doing gameplay updates
+        physics_engine.integration_parameters.dt = timer.delta_time * timescale_factor;
         physics_engine.step();
 
         let plane_model_matrix = glm::identity();
@@ -704,11 +707,11 @@ fn main() {
         let mut matrices = vec![];
         for prop in totoro_list.iter() {
             if let Some(p) = prop {
-                if physics_engine.rigid_body_set[p.rigid_body_handle].translation().z < -250.0 {
+                if glm::distance(physics_engine.rigid_body_set[p.rigid_body_handle].translation(), &glm::zero()) > 750.0 {
                     reset_totoro(&mut physics_engine, &totoro_list[main_totoro_idx]);
                 }
-                let body = &mut physics_engine.rigid_body_set[p.rigid_body_handle];
-                let matrix = body.position().to_matrix() * glm::translation(&glm::vec3(0.0, 0.0, -2.25));
+                let body_transform = physics_engine.rigid_body_set[p.rigid_body_handle].position().to_matrix();
+                let matrix = body_transform * glm::translation(&glm::vec3(0.0, 0.0, -2.25));
                 matrices.push(matrix);
             }
         }
@@ -818,15 +821,6 @@ fn main() {
         unsafe {
             vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
             vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
-        }
-
-        //Destroy Dear ImGUI allocations from last frame
-        {
-            let last_frame = dev_gui.current_frame.overflowing_sub(1).0 % DevGui::FRAMES_IN_FLIGHT;
-            let geo_count = dev_gui.frames[last_frame].index_buffers.len();
-            for geo in dev_gui.frames[last_frame].index_buffers.drain(0..geo_count) {
-                geo.free(&mut vk);
-            }
         }
 
         //Update bindless texture sampler descriptors

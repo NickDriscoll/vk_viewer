@@ -903,6 +903,9 @@ impl Display {
                 surf_format = vk::SurfaceFormatKHR::default();
             }
 
+            let present_mode = present_modes[0];
+            //let present_mode = vk::PresentModeKHR::MAILBOX;
+
             vk_swapchain_image_format = surf_format.format;
             vk_swapchain_extent = vk::Extent2D {
                 width: surf_capabilities.current_extent.width,
@@ -921,7 +924,7 @@ impl Display {
                 p_queue_family_indices: [vk.graphics_queue_family_index].as_ptr(),
                 pre_transform: surf_capabilities.current_transform,
                 composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
-                present_mode: present_modes[0],
+                present_mode,
                 ..Default::default()
             };
 

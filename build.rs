@@ -16,7 +16,7 @@ fn compile_slang_shader(stage: &str, src_file: &str, out_file: &str) -> String {
 }
 
 fn main() {
-    let mut build_log = OpenOptions::new().write(true).create(true).open("./build_output.log").unwrap();
+    let mut build_log = OpenOptions::new().write(true).truncate(true).create(true).open("./build_output.log").unwrap();
     write!(build_log, "Starting compilation...\n").unwrap();
     
     if let Err(e) = std::fs::remove_dir_all(SHADER_OUTPUT_DIR) {
