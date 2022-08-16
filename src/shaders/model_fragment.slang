@@ -44,13 +44,13 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3 lit_color = pbr_mettalic_roughness(params);
 
     float3 reflected_dir = -reflect(view, normal);
-    lit_color *= sample_fake_sky(
+    lit_color = 0.1 * sample_fake_sky(
         uniforms,
         reflected_dir,
         global_textures[uniforms.sunzenith_idx],
         global_textures[uniforms.viewzenith_idx],
         global_textures[uniforms.sunview_idx]
-    );
+    ) + lit_color * 0.9;
 
     // Apply fog like GL_EXP2
     float3 final_color = exp2_fog(uniforms, input.position, lit_color, sun_color);

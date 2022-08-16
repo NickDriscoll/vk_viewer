@@ -37,7 +37,7 @@ use input::UserInput;
 use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualImage, VulkanAPI};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp};
-use render::{DrawData, Renderer, MaterialData};
+use render::{DrawData, Renderer, Material};
 
 use crate::routines::*;
 use crate::gltfutil::GLTFData;
@@ -131,7 +131,7 @@ fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Re
     renderer.replace_vertex_uvs(vk, &attributes.uvs, offset);
 }
 
-fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData) -> Vec<usize> {
+fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData, pipeline: vk::Pipeline) -> Vec<usize> {
     let mut indices = vec![];
     for prim in &data.primitives {
         let color_idx = if prim.material.color_bytes.len() != 0 {
@@ -175,7 +175,15 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
             }
         };
 
-        let material_idx = renderer.global_materials.insert(MaterialData::new(prim.material.base_color, prim.material.base_roughness, color_idx, normal_idx, metal_roughness_idx)) as u32;
+        let material = Material {
+            pipeline,
+            base_color: prim.material.base_color,
+            base_roughness: prim.material.base_roughness,
+            color_idx,
+            normal_idx,
+            metal_roughness_idx
+        };
+        let material_idx = renderer.global_materials.insert(material) as u32;
 
         let offsets = upload_primitive_vertices(vk, renderer, &prim);
 
@@ -352,11 +360,11 @@ fn main() {
         };
         
         let layout = vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap();
-        vkutil::PipelineCreator::init(layout)
+        vkutil::GraphicsPipelineBuilder::init(layout)
     };
 
     //Create pipelines
-    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, vk_wireframe_graphics_pipeline] = unsafe {
+    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
@@ -380,18 +388,13 @@ fn main() {
         let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
         main_create_info.shader_stages = &terrain_shader_stages;
         let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
-
-        main_create_info.rasterization_state = Some(vk::PipelineRasterizationStateCreateInfo {
-            polygon_mode: vk::PolygonMode::LINE,
-            ..pipeline_creator.default_rasterization_state
-        });
-        let wire_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
+        
         main_create_info.rasterization_state = None;
 
         let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &atm_shader_stages);
         let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
 
-        [main_pipeline, ter_pipeline, atm_pipeline, wire_pipeline]
+        [main_pipeline, ter_pipeline, atm_pipeline]
     };
 
     let mut sun_speed = 0.003;
@@ -426,9 +429,27 @@ fn main() {
     let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
 
-    let terrain_grass_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], 10.0, grass_color_global_index, grass_normal_global_index, renderer.default_metal_roughness_idx)) as u32;
-    let terrain_rock_matidx = renderer.global_materials.insert(MaterialData::new([1.0; 4], 0.75, rock_color_global_index, rock_normal_global_index, renderer.default_metal_roughness_idx)) as u32;
-
+    let terrain_grass_matidx = renderer.global_materials.insert(
+        Material {
+            pipeline: terrain_pipeline,
+            base_color:  [1.0; 4],
+            base_roughness: 1.0,
+            color_idx: grass_color_global_index,
+            normal_idx: grass_normal_global_index,
+            metal_roughness_idx: renderer.default_metal_roughness_idx
+        }
+    ) as u32;
+    let terrain_rock_matidx = renderer.global_materials.insert(
+        Material {
+            pipeline: terrain_pipeline,
+            base_color:  [1.0; 4],
+            base_roughness: 0.75,
+            color_idx: rock_color_global_index,
+            normal_idx: rock_normal_global_index,
+            metal_roughness_idx: renderer.default_metal_roughness_idx
+        }
+    ) as u32;
+    
     //Upload terrain geometry
     let terrain_model_idx = {
         let terrain_offsets = uninterleave_and_upload_vertices(&mut vk, &mut renderer, &terrain_vertices);
@@ -453,13 +474,13 @@ fn main() {
     let tree_data = gltfutil::gltf_meshdata(glb_name);
 
     //Register each primitive with the renderer
-    let tree_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &tree_data);
+    let tree_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &tree_data, vk_3D_graphics_pipeline);
 
     //Load totoro as glb
     let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
 
     //Register each primitive with the renderer
-    let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data);
+    let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
     let totoro_prop = {
@@ -678,7 +699,7 @@ fn main() {
             imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
             imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
-            imgui::Slider::new("Timescale factor", 0.01, 10.0).build(&imgui_ui, &mut timescale_factor);
+            imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
             imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
@@ -688,7 +709,7 @@ fn main() {
         physics_engine.step();
 
         let plane_model_matrix = glm::identity();
-        renderer.queue_drawcall(terrain_model_idx, terrain_pipeline, &[plane_model_matrix]);
+        renderer.queue_drawcall(terrain_model_idx, &[plane_model_matrix]);
 
         let view_movement_vector = glm::mat4(
             1.0, 0.0, 0.0, 0.0,
@@ -716,7 +737,7 @@ fn main() {
             }
         }
         for idx in &totoro_model_indices {
-            renderer.queue_drawcall(*idx, main_pipeline, &matrices);
+            renderer.queue_drawcall(*idx, &matrices);
         }
 
         let view_from_world = if do_freecam {
@@ -758,7 +779,7 @@ fn main() {
 
             let collider = physics_engine.collider_set.get(totoro_list[main_totoro_idx].as_ref().unwrap().collider_handle).unwrap();
             let t = collider.position().translation;
-            let lookat_target = glm::vec3(t.x, t.y, t.z + 3.0);
+            let lookat_target = t.vector;
             let pos = totoro_lookat_pos + lookat_target;
             let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
             renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
@@ -778,7 +799,7 @@ fn main() {
             ms
         };
         for idx in &tree_model_indices {
-            renderer.queue_drawcall(*idx, main_pipeline, &bb_mats);
+            renderer.queue_drawcall(*idx, &bb_mats);
         }
         
         //Update sun's position
@@ -789,13 +810,6 @@ fn main() {
 
         if let Some(t) = imgui_window_token {
             if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
-            if imgui_ui.checkbox("Wireframe view", &mut wireframe) {
-                if !wireframe {
-                    main_pipeline = vk_3D_graphics_pipeline;
-                } else {
-                    main_pipeline = vk_wireframe_graphics_pipeline;
-                }
-            }
             imgui_ui.checkbox("Freecam", &mut do_freecam);
 
             imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
@@ -853,7 +867,7 @@ fn main() {
             let mut upload_mats = Vec::with_capacity(renderer.global_materials.len());
             for i in 0..renderer.global_materials.len() {
                 if let Some(mat) = &renderer.global_materials[i] {
-                    upload_mats.push(mat.clone());
+                    upload_mats.push(mat.data());
                 }
             }
 

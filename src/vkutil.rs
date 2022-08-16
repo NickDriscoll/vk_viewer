@@ -1088,19 +1088,36 @@ impl<'a> VirtualPipelineCreateInfo<'a> {
     }
 }
 
-pub struct PipelineCreator {
-    pub default_dynamic_state_enables: [vk::DynamicState; 2],
-    pub default_input_assembly_state: vk::PipelineInputAssemblyStateCreateInfo,
-    pub default_rasterization_state: vk::PipelineRasterizationStateCreateInfo,
-    pub default_color_blend_attachment_state: vk::PipelineColorBlendAttachmentState,
-    pub default_viewport_state: vk::PipelineViewportStateCreateInfo,
-    pub default_depthstencil_state: vk::PipelineDepthStencilStateCreateInfo,
-    pub default_multisample_state: vk::PipelineMultisampleStateCreateInfo,
-    pub pipeline_layout: vk::PipelineLayout
+pub struct PipelineCreateInfo<'a> {
+    pipeline_layout: vk::PipelineLayout,
+    vertex_input: VertexInputConfiguration<'a>,
+    input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
+    rasterization_state: vk::PipelineRasterizationStateCreateInfo,
+    color_blend: vk::PipelineColorBlendStateCreateInfo,
+    multisample_state: vk::PipelineMultisampleStateCreateInfo,
+    dynamic_state: Vec<vk::DynamicState>,
+    viewport_state: vk::PipelineViewportStateCreateInfo,
+    depthstencil_state: vk::PipelineDepthStencilStateCreateInfo,
+    shader_stages: &'a [vk::PipelineShaderStageCreateInfo],
+    render_pass: vk::RenderPass
 }
 
-impl PipelineCreator {
-    pub fn init(pipeline_layout: vk::PipelineLayout) -> Self {
+#[derive(Default)]
+pub struct GraphicsPipelineBuilder {
+    pub dynamic_state_enables: [vk::DynamicState; 2],
+    pub input_assembly_state: vk::PipelineInputAssemblyStateCreateInfo,
+    pub rasterization_state: vk::PipelineRasterizationStateCreateInfo,
+    pub color_blend_attachment_state: vk::PipelineColorBlendAttachmentState,
+    pub viewport_state: vk::PipelineViewportStateCreateInfo,
+    pub depthstencil_state: vk::PipelineDepthStencilStateCreateInfo,
+    pub multisample_state: vk::PipelineMultisampleStateCreateInfo,
+    pub pipeline_layout: vk::PipelineLayout,
+    shader_stages: Vec<vk::PipelineShaderStageCreateInfo>,
+    render_pass: vk::RenderPass
+}
+
+impl GraphicsPipelineBuilder {
+    pub fn new() -> Self {
         let dynamic_state_enables = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
 
         let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo {
@@ -1152,20 +1169,52 @@ impl PipelineCreator {
             ..Default::default()
         };
 
-        PipelineCreator {
-            default_dynamic_state_enables: dynamic_state_enables,
-            default_input_assembly_state: input_assembly_state,
-            default_rasterization_state: rasterization_state,
-            default_color_blend_attachment_state: color_blend_attachment_state,
-            default_depthstencil_state: depth_stencil_state,
-            default_multisample_state: multisample_state,
-            default_viewport_state: viewport_state,
-            pipeline_layout
+        GraphicsPipelineBuilder {
+            dynamic_state_enables,
+            input_assembly_state,
+            rasterization_state,
+            color_blend_attachment_state,
+            depthstencil_state: depth_stencil_state,
+            multisample_state,
+            viewport_state,
+            ..Default::default()
+        }
+    }
+
+    pub fn init(pipeline_layout: vk::PipelineLayout) -> Self {
+        let mut tmp = Self::new();
+        tmp.pipeline_layout = pipeline_layout;
+        tmp
+    }
+
+    pub fn create_info(&self) -> PipelineCreateInfo {
+        let vertex_input = VertexInputConfiguration::empty();
+
+        let color_blend = vk::PipelineColorBlendStateCreateInfo {
+            attachment_count: 1,
+            p_attachments: &self.color_blend_attachment_state,
+            logic_op_enable: vk::FALSE,
+            logic_op: vk::LogicOp::NO_OP,
+            blend_constants: [0.0; 4],
+            ..Default::default()
+        };
+
+        PipelineCreateInfo {
+            pipeline_layout: self.pipeline_layout,
+            vertex_input,
+            input_assembly: self.input_assembly_state,
+            rasterization_state: self.rasterization_state,
+            color_blend,
+            multisample_state: self.multisample_state,
+            dynamic_state: Vec::from(self.dynamic_state_enables),
+            viewport_state: self.viewport_state,
+            depthstencil_state: self.depthstencil_state,
+            shader_stages: &self.shader_stages,
+            render_pass: self.render_pass
         }
     }
 
     pub unsafe fn create_pipeline(&self, vk: &VulkanAPI, create_info: &VirtualPipelineCreateInfo) -> vk::Pipeline {
-
         let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
             vertex_binding_description_count: create_info.vertex_config.binding_descriptions.len() as u32,
             p_vertex_binding_descriptions: create_info.vertex_config.binding_descriptions.as_ptr(),
@@ -1177,22 +1226,22 @@ impl PipelineCreator {
         //Handle any overrides in create_info
         let rasterization_state = match create_info.rasterization_state {
             Some(s) => { s }
-            None => { self.default_rasterization_state }
+            None => { self.rasterization_state }
         };
         let depthstencil_state = match create_info.depthstencil_state {
             Some(s) => { s }
-            None => { self.default_depthstencil_state }
+            None => { self.depthstencil_state }
         };
 
         let dynamic_state = vk::PipelineDynamicStateCreateInfo {
-            p_dynamic_states: self.default_dynamic_state_enables.as_ptr(),
-            dynamic_state_count: self.default_dynamic_state_enables.len() as u32,
+            p_dynamic_states: self.dynamic_state_enables.as_ptr(),
+            dynamic_state_count: self.dynamic_state_enables.len() as u32,
             ..Default::default()
         };
 
         let color_blend_pipeline_state = vk::PipelineColorBlendStateCreateInfo {
             attachment_count: 1,
-            p_attachments: &self.default_color_blend_attachment_state,
+            p_attachments: &self.color_blend_attachment_state,
             logic_op_enable: vk::FALSE,
             logic_op: vk::LogicOp::NO_OP,
             blend_constants: [0.0; 4],
@@ -1202,12 +1251,12 @@ impl PipelineCreator {
         let pipeline_info = vk::GraphicsPipelineCreateInfo {
             layout: self.pipeline_layout,
             p_vertex_input_state: &vertex_input_state,
-            p_input_assembly_state: &self.default_input_assembly_state,
+            p_input_assembly_state: &self.input_assembly_state,
             p_rasterization_state: &rasterization_state,
             p_color_blend_state: &color_blend_pipeline_state,
-            p_multisample_state: &self.default_multisample_state,
+            p_multisample_state: &self.multisample_state,
             p_dynamic_state: &dynamic_state,
-            p_viewport_state: &self.default_viewport_state,
+            p_viewport_state: &self.viewport_state,
             p_depth_stencil_state: &depthstencil_state,
             p_stages: create_info.shader_stages.as_ptr(),
             stage_count: create_info.shader_stages.len() as u32,

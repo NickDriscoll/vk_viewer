@@ -16,7 +16,7 @@ impl DevGui {
     pub const FRAMES_IN_FLIGHT: usize = 2;
     pub const FLOATS_PER_VERTEX: usize = 8;
 
-    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_creator: &vkutil::PipelineCreator) -> Self {
+    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_creator: &vkutil::GraphicsPipelineBuilder) -> Self {
         let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
         for _ in 0..Self::FRAMES_IN_FLIGHT {
             frames.push(DevGuiFrame::default());
@@ -32,11 +32,11 @@ impl DevGui {
         let im_depthstencil = vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: vk::FALSE,
             depth_write_enable: vk::FALSE,
-            ..pipeline_creator.default_depthstencil_state
+            ..pipeline_creator.depthstencil_state
         };
         let im_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
             cull_mode: vk::CullModeFlags::NONE,
-            ..pipeline_creator.default_rasterization_state
+            ..pipeline_creator.rasterization_state
         };
         im_create_info.depthstencil_state = Some(im_depthstencil);
         im_create_info.rasterization_state = Some(im_rasterization_state);

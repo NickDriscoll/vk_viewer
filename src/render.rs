@@ -13,25 +13,25 @@ pub struct MaterialData {
     pub metal_roughness_idx: u32,
 }
 
-impl MaterialData {
-    pub fn new(base_color: [f32; 4], base_roughness: f32, color_idx: u32, normal_idx: u32, metal_roughness_idx: u32) -> Self {
-        MaterialData {
-            base_color,
-            base_roughness,
-            color_idx,
-            normal_idx,
-            metal_roughness_idx
-        }
-    }
+pub struct Material {
+    pub pipeline: vk::Pipeline,
+    pub base_color: [f32; 4],
+    pub base_roughness: f32,
+    pub color_idx: u32,
+    pub normal_idx: u32,
+    pub metal_roughness_idx: u32,
 }
 
-pub struct Material {
-    pipeline: vk::Pipeline,
-    base_color: [f32; 4],
-    base_roughness: f32,
-    color_idx: u32,
-    normal_idx: u32,
-    metal_roughness_idx: u32,
+impl Material {
+    pub fn data(&self) -> MaterialData {
+        MaterialData {
+            base_color: self.base_color,
+            base_roughness: self.base_roughness,
+            color_idx: self.color_idx,
+            normal_idx: self.normal_idx,
+            metal_roughness_idx: self.metal_roughness_idx,
+        }
+    }
 }
 
 pub struct DrawCall {
@@ -145,7 +145,7 @@ pub struct Renderer {
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
     pub global_textures: FreeList<DescriptorImageInfo>,
-    pub global_materials: FreeList<MaterialData>,
+    pub global_materials: FreeList<Material>,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
 }
@@ -546,27 +546,30 @@ impl Renderer {
         &self.primitives[idx]
     }
 
-    pub fn queue_drawcall(&mut self, model_idx: usize, pipeline: vk::Pipeline, transforms: &[glm::TMat4<f32>]) {
-        if let None = &self.primitives[model_idx] {
-            tfd::message_box_ok("No model at supplied index", &format!("No model loaded at index {}", model_idx), tfd::MessageBoxIcon::Error);
-            return;
+    pub fn queue_drawcall(&mut self, model_idx: usize, transforms: &[glm::TMat4<f32>]) {
+        match &self.primitives[model_idx] {
+            None => {
+                tfd::message_box_ok("No model at supplied index", &format!("No model loaded at index {}", model_idx), tfd::MessageBoxIcon::Error);
+                return;
+            }
+            Some(prim) => {let instance_count = transforms.len() as u32;
+                let first_instance = self.instance_data.len() as u32;
+        
+                let pipeline = self.global_materials[prim.material_idx.try_into().unwrap()].as_ref().unwrap().pipeline;
+                for t in transforms {
+                    let instance_data = InstanceData::new(*t);
+                    self.instance_data.push(instance_data);
+                }
+                let drawcall = DrawCall {
+                    geometry_idx: model_idx,
+                    pipeline,
+                    instance_count,
+                    first_instance
+                };
+        
+                self.drawlist.push(drawcall);
+            }
         }
-
-        let instance_count = transforms.len() as u32;
-        let first_instance = self.instance_data.len() as u32;
-
-        for t in transforms {
-            let instance_data = InstanceData::new(*t);
-            self.instance_data.push(instance_data);
-        }
-        let drawcall = DrawCall {
-            geometry_idx: model_idx,
-            pipeline,
-            instance_count,
-            first_instance
-        };
-
-        self.drawlist.push(drawcall);
     }
 
     pub fn drawlist_iter(&self) -> Iter<DrawCall> {
