@@ -74,7 +74,7 @@ pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::Shader
 pub unsafe fn allocate_image(vk: &mut VulkanAPI, image: vk::Image) -> Allocation {
     let requirements = vk.device.get_image_memory_requirements(image);
     let alloc = vk.allocator.allocate(&AllocationCreateDesc {
-        name: &format!("VirtualImage {:?}", image),
+        name: "",
         requirements,
         location: MemoryLocation::GpuOnly,
         linear: false       //We want tiled memory for images
@@ -1072,36 +1072,16 @@ impl VertexInputConfiguration {
     }
 }
 
-pub struct VirtualPipelineCreateInfo {
-    render_pass: vk::RenderPass,
-    vertex_config: VertexInputConfiguration,
-    pub shader_stages: Vec<vk::PipelineShaderStageCreateInfo>,
-    pub rasterization_state: Option<vk::PipelineRasterizationStateCreateInfo>,
-    pub depthstencil_state: Option<vk::PipelineDepthStencilStateCreateInfo>
-}
-
-impl VirtualPipelineCreateInfo {
-    pub fn new(render_pass: vk::RenderPass, vertex_config: VertexInputConfiguration, shader_stages: Vec<vk::PipelineShaderStageCreateInfo>) -> Self {
-        VirtualPipelineCreateInfo {
-            render_pass,
-            vertex_config,
-            shader_stages,
-            rasterization_state: None,
-            depthstencil_state: None
-        }
-    }
-}
-
 pub struct PipelineCreateInfo {
     pipeline_layout: vk::PipelineLayout,
     vertex_input: VertexInputConfiguration,
     input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
     rasterization_state: vk::PipelineRasterizationStateCreateInfo,
-    color_blend: vk::PipelineColorBlendStateCreateInfo,
     multisample_state: vk::PipelineMultisampleStateCreateInfo,
     dynamic_state: Vec<vk::DynamicState>,
     viewport_state: vk::PipelineViewportStateCreateInfo,
     depthstencil_state: vk::PipelineDepthStencilStateCreateInfo,
+    color_blend_attachment_state: vk::PipelineColorBlendAttachmentState,
     shader_stages: Vec<vk::PipelineShaderStageCreateInfo>,
     render_pass: vk::RenderPass
 }
@@ -1194,28 +1174,31 @@ impl GraphicsPipelineBuilder {
     pub fn build_info(self) -> PipelineCreateInfo {
         let vertex_input = VertexInputConfiguration::empty();
 
-        let color_blend = vk::PipelineColorBlendStateCreateInfo {
-            attachment_count: 1,
-            p_attachments: &self.color_blend_attachment_state,
-            logic_op_enable: vk::FALSE,
-            logic_op: vk::LogicOp::NO_OP,
-            blend_constants: [0.0; 4],
-            ..Default::default()
-        };
-
         PipelineCreateInfo {
             pipeline_layout: self.pipeline_layout,
             vertex_input,
             input_assembly: self.input_assembly_state,
             rasterization_state: self.rasterization_state,
-            color_blend,
             multisample_state: self.multisample_state,
             dynamic_state: Vec::from(self.dynamic_state_enables),
             viewport_state: self.viewport_state,
             depthstencil_state: self.depthstencil_state,
+            color_blend_attachment_state: self.color_blend_attachment_state,
             shader_stages: self.shader_stages.clone(),
             render_pass: self.render_pass
         }
+    }
+
+    pub fn set_cull_mode(self, flags: vk::CullModeFlags) -> Self {
+        let mut t = self;
+        t.rasterization_state.cull_mode = flags;
+        t
+    }
+
+    pub fn set_depth_test(self, set_it: vk::Bool32) -> Self {
+        let mut t = self;
+        t.depthstencil_state.depth_test_enable = set_it;
+        t
     }
 
     pub fn set_shader_stages(self, stages: Vec<vk::PipelineShaderStageCreateInfo>) -> Self {
@@ -1232,64 +1215,11 @@ impl GraphicsPipelineBuilder {
         }
     }
 
-    pub unsafe fn create_pipeline(&self, vk: &VulkanAPI, create_info: &VirtualPipelineCreateInfo) -> vk::Pipeline {
-        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
-            vertex_binding_description_count: create_info.vertex_config.binding_descriptions.len() as u32,
-            p_vertex_binding_descriptions: create_info.vertex_config.binding_descriptions.as_ptr(),
-            vertex_attribute_description_count: create_info.vertex_config.attribute_descriptions.len() as u32,
-            p_vertex_attribute_descriptions: create_info.vertex_config.attribute_descriptions.as_ptr(),
-            ..Default::default()
-        };
-
-        //Handle any overrides in create_info
-        let rasterization_state = match create_info.rasterization_state {
-            Some(s) => { s }
-            None => { self.rasterization_state }
-        };
-        let depthstencil_state = match create_info.depthstencil_state {
-            Some(s) => { s }
-            None => { self.depthstencil_state }
-        };
-
-        let dynamic_state = vk::PipelineDynamicStateCreateInfo {
-            p_dynamic_states: self.dynamic_state_enables.as_ptr(),
-            dynamic_state_count: self.dynamic_state_enables.len() as u32,
-            ..Default::default()
-        };
-
-        let color_blend_pipeline_state = vk::PipelineColorBlendStateCreateInfo {
-            attachment_count: 1,
-            p_attachments: &self.color_blend_attachment_state,
-            logic_op_enable: vk::FALSE,
-            logic_op: vk::LogicOp::NO_OP,
-            blend_constants: [0.0; 4],
-            ..Default::default()
-        };
-
-        let pipeline_info = vk::GraphicsPipelineCreateInfo {
-            layout: self.pipeline_layout,
-            p_vertex_input_state: &vertex_input_state,
-            p_input_assembly_state: &self.input_assembly_state,
-            p_rasterization_state: &rasterization_state,
-            p_color_blend_state: &color_blend_pipeline_state,
-            p_multisample_state: &self.multisample_state,
-            p_dynamic_state: &dynamic_state,
-            p_viewport_state: &self.viewport_state,
-            p_depth_stencil_state: &depthstencil_state,
-            p_stages: create_info.shader_stages.as_ptr(),
-            stage_count: create_info.shader_stages.len() as u32,
-            render_pass: create_info.render_pass,
-            ..Default::default()
-        };
-        
-        let pipeline = vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], MEMORY_ALLOCATOR).unwrap()[0];
-        pipeline
-    }
-
     pub unsafe fn create_pipelines(vk: &mut VulkanAPI, infos: &[PipelineCreateInfo]) -> Vec<vk::Pipeline> {
         let mut vertex_input_configs = Vec::with_capacity(infos.len());
         let mut vertex_input_states = Vec::with_capacity(infos.len());
         let mut dynamic_states = Vec::with_capacity(infos.len());
+        let mut color_blend_attachment_states = Vec::with_capacity(infos.len());
         let mut real_create_infos = Vec::with_capacity(infos.len());
         for i in 0..infos.len() {
             let info = &infos[i];
@@ -1311,12 +1241,22 @@ impl GraphicsPipelineBuilder {
             };
             dynamic_states.push(dynamic_state);
 
+            let color_blend = vk::PipelineColorBlendStateCreateInfo {
+                attachment_count: 1,
+                p_attachments: &info.color_blend_attachment_state,
+                logic_op_enable: vk::FALSE,
+                logic_op: vk::LogicOp::NO_OP,
+                blend_constants: [0.0; 4],
+                ..Default::default()
+            };
+            color_blend_attachment_states.push(color_blend);
+
             let create_info = vk::GraphicsPipelineCreateInfo {
                 layout: info.pipeline_layout,
                 p_vertex_input_state: &vertex_input_states[i],
                 p_input_assembly_state: &info.input_assembly,
                 p_rasterization_state: &info.rasterization_state,
-                p_color_blend_state: &info.color_blend,
+                p_color_blend_state: &color_blend_attachment_states[i],
                 p_multisample_state: &info.multisample_state,
                 p_dynamic_state: &dynamic_states[i],
                 p_viewport_state: &info.viewport_state,

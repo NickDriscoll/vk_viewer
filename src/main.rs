@@ -386,7 +386,7 @@ fn main() {
                             .set_shader_stages(terrain_shader_stages).set_render_pass(vk_render_pass).build_info();
         let atm_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
                             .set_shader_stages(atm_shader_stages).set_render_pass(vk_render_pass).build_info();
-        
+    
         let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &[main_info, terrain_info, atm_info]);
 
         [
@@ -394,18 +394,6 @@ fn main() {
             pipelines[1],
             pipelines[2]
         ]
-
-        // let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), main_shader_stages);
-        // let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
-        // main_create_info.shader_stages = terrain_shader_stages;
-        // let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
-        
-        // main_create_info.rasterization_state = None;
-
-        // let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), atm_shader_stages);
-        // let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
-
-        // [main_pipeline, ter_pipeline, atm_pipeline]
     };
 
     let mut sun_speed = 0.003;
