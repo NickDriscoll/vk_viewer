@@ -261,9 +261,6 @@ fn main() {
             panic!("Not dealing with this case.");
         }
     };
-    
-    //Create swapchain extension object
-    let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk.instance, &vk.device);
 
     //Search for an SRGB swapchain format    
     let surf_formats = unsafe { vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap() };
@@ -342,7 +339,7 @@ fn main() {
     };
 
     //Create the main swapchain for window present
-    let mut vk_display = vkutil::Display::init(&mut vk, &vk_ext_swapchain, vk_render_pass);
+    let mut vk_display = vkutil::Display::init(&mut vk, vk_render_pass);
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let pipeline_creator = unsafe {
@@ -369,29 +366,29 @@ fn main() {
         let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/pbr_metallic_roughness.spv");
-            [v, f]
+            vec![v, f]
         };
         
         let terrain_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/terrain.spv");
-            [v, f]
+            vec![v, f]
         };
         
         let atm_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/atmosphere_vert.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/atmosphere_frag.spv");
-            [v, f]
+            vec![v, f]
         };
 
-        let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &main_shader_stages);
+        let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), main_shader_stages);
         let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
-        main_create_info.shader_stages = &terrain_shader_stages;
+        main_create_info.shader_stages = terrain_shader_stages;
         let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
         
         main_create_info.rasterization_state = None;
 
-        let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), &atm_shader_stages);
+        let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), atm_shader_stages);
         let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
 
         [main_pipeline, ter_pipeline, atm_pipeline]
@@ -595,10 +592,10 @@ fn main() {
                     vk.device.destroy_image_view(view, vkutil::MEMORY_ALLOCATOR);
                 }
                 vk.device.destroy_image_view(vk_display.depth_image_view, vkutil::MEMORY_ALLOCATOR);
-                vk_ext_swapchain.destroy_swapchain(vk_display.swapchain, vkutil::MEMORY_ALLOCATOR);
+                vk.ext_swapchain.destroy_swapchain(vk_display.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                vk_display = vkutil::Display::init(&mut vk, &vk_ext_swapchain, vk_render_pass);
+                vk_display = vkutil::Display::init(&mut vk, vk_render_pass);
 
                 window_size = glm::vec2(vk_display.extent.width, vk_display.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
@@ -918,7 +915,7 @@ fn main() {
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_framebuffer_index = vk_ext_swapchain.acquire_next_image(vk_display.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(vk_display.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
 
             //Put command buffer in recording state
             vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
@@ -1019,7 +1016,7 @@ fn main() {
                 p_wait_semaphores: &vk_rendercomplete_semaphore,
                 ..Default::default()
             };
-            if let Err(e) = vk_ext_swapchain.queue_present(queue, &present_info) {
+            if let Err(e) = vk.ext_swapchain.queue_present(queue, &present_info) {
                 println!("{}", e);
             }
         }

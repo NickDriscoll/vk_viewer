@@ -26,9 +26,9 @@ impl DevGui {
         let im_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/imgui_vert.spv");
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui_frag.spv");
-            [v, f]
+            vec![v, f]
         };
-        let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(render_pass, vkutil::VertexInputConfiguration::empty(), &im_shader_stages);
+        let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(render_pass, vkutil::VertexInputConfiguration::empty(), im_shader_stages);
         let im_depthstencil = vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: vk::FALSE,
             depth_write_enable: vk::FALSE,

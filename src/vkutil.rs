@@ -606,6 +606,7 @@ pub struct VulkanAPI {
     pub allocator: Allocator,
     pub surface: vk::SurfaceKHR,
     pub ext_surface: ash::extensions::khr::Surface,
+    pub ext_swapchain: ash::extensions::khr::Swapchain,
     pub graphics_queue_family_index: u32,
     pub push_constant_size: u32,
     pub graphics_command_buffer: vk::CommandBuffer,
@@ -656,7 +657,7 @@ impl VulkanAPI {
             let raw_surf = window.vulkan_create_surface(vk_instance.handle().as_raw() as usize).unwrap();
             vk::SurfaceKHR::from_raw(raw_surf)
         };
-        
+
         let vk_ext_surface = ash::extensions::khr::Surface::new(&vk_entry, &vk_instance);
 
         //Create the Vulkan device
@@ -748,6 +749,8 @@ impl VulkanAPI {
 
             vk_instance.create_device(vk_physical_device, &create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
         };
+        
+        let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);
 
         //Initialize gpu_allocator
         let allocator = Allocator::new(&AllocatorCreateDesc {
@@ -793,6 +796,7 @@ impl VulkanAPI {
             allocator,
             surface: vk_surface,
             ext_surface: vk_ext_surface,
+            ext_swapchain: vk_ext_swapchain,
             graphics_queue_family_index,
             push_constant_size: min_pc_size,
             graphics_command_buffer,
@@ -884,7 +888,7 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn init(vk: &mut VulkanAPI, vk_ext_swapchain: &ash::extensions::khr::Swapchain, render_pass: vk::RenderPass) -> Self {
+    pub fn init(vk: &mut VulkanAPI, render_pass: vk::RenderPass) -> Self {
         //Create the main swapchain for window present
         let vk_swapchain_image_format;
         let vk_swapchain_extent;
@@ -928,12 +932,12 @@ impl Display {
                 ..Default::default()
             };
 
-            let sc = vk_ext_swapchain.create_swapchain(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let sc = vk.ext_swapchain.create_swapchain(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
             sc
         };
         
         let vk_swapchain_image_views = unsafe {
-            let vk_swapchain_images = vk_ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
+            let vk_swapchain_images = vk.ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
 
             let mut image_views = Vec::with_capacity(vk_swapchain_images.len());
             for i in 0..vk_swapchain_images.len() {
@@ -1054,30 +1058,30 @@ impl Display {
     }
 }
 
-pub struct VertexInputConfiguration<'a> {
-    pub binding_descriptions: &'a [vk::VertexInputBindingDescription],
-    pub attribute_descriptions: &'a [vk::VertexInputAttributeDescription]    
+pub struct VertexInputConfiguration {
+    pub binding_descriptions: Vec<vk::VertexInputBindingDescription>,
+    pub attribute_descriptions: Vec<vk::VertexInputAttributeDescription>    
 }
 
-impl<'a> VertexInputConfiguration<'a> {
+impl VertexInputConfiguration {
     pub fn empty() -> Self {
         VertexInputConfiguration {
-            binding_descriptions: &[],
-            attribute_descriptions: &[]
+            binding_descriptions: Vec::new(),
+            attribute_descriptions: Vec::new()
         }
     }
 }
 
-pub struct VirtualPipelineCreateInfo<'a> {
+pub struct VirtualPipelineCreateInfo {
     render_pass: vk::RenderPass,
-    vertex_config: VertexInputConfiguration<'a>,
-    pub shader_stages: &'a [vk::PipelineShaderStageCreateInfo],
+    vertex_config: VertexInputConfiguration,
+    pub shader_stages: Vec<vk::PipelineShaderStageCreateInfo>,
     pub rasterization_state: Option<vk::PipelineRasterizationStateCreateInfo>,
     pub depthstencil_state: Option<vk::PipelineDepthStencilStateCreateInfo>
 }
 
-impl<'a> VirtualPipelineCreateInfo<'a> {
-    pub fn new(render_pass: vk::RenderPass, vertex_config: VertexInputConfiguration<'a>, shader_stages: &'a [vk::PipelineShaderStageCreateInfo]) -> Self {
+impl VirtualPipelineCreateInfo {
+    pub fn new(render_pass: vk::RenderPass, vertex_config: VertexInputConfiguration, shader_stages: Vec<vk::PipelineShaderStageCreateInfo>) -> Self {
         VirtualPipelineCreateInfo {
             render_pass,
             vertex_config,
@@ -1088,9 +1092,9 @@ impl<'a> VirtualPipelineCreateInfo<'a> {
     }
 }
 
-pub struct PipelineCreateInfo<'a> {
+pub struct PipelineCreateInfo {
     pipeline_layout: vk::PipelineLayout,
-    vertex_input: VertexInputConfiguration<'a>,
+    vertex_input: VertexInputConfiguration,
     input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
     rasterization_state: vk::PipelineRasterizationStateCreateInfo,
     color_blend: vk::PipelineColorBlendStateCreateInfo,
@@ -1098,7 +1102,7 @@ pub struct PipelineCreateInfo<'a> {
     dynamic_state: Vec<vk::DynamicState>,
     viewport_state: vk::PipelineViewportStateCreateInfo,
     depthstencil_state: vk::PipelineDepthStencilStateCreateInfo,
-    shader_stages: &'a [vk::PipelineShaderStageCreateInfo],
+    shader_stages: Vec<vk::PipelineShaderStageCreateInfo>,
     render_pass: vk::RenderPass
 }
 
@@ -1209,7 +1213,7 @@ impl GraphicsPipelineBuilder {
             dynamic_state: Vec::from(self.dynamic_state_enables),
             viewport_state: self.viewport_state,
             depthstencil_state: self.depthstencil_state,
-            shader_stages: &self.shader_stages,
+            shader_stages: self.shader_stages.clone(),
             render_pass: self.render_pass
         }
     }
@@ -1264,9 +1268,36 @@ impl GraphicsPipelineBuilder {
             ..Default::default()
         };
         
-        let pipeline = vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], vkutil::MEMORY_ALLOCATOR).unwrap()[0];
+        let pipeline = vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], MEMORY_ALLOCATOR).unwrap()[0];
         pipeline
     }
+
+    // pub unsafe fn create_pipelines(&self, vk: &mut VulkanAPI, infos: &[PipelineCreateInfo]) -> Vec<vk::Pipeline> {
+    //     let mut vertex_input_configs = Vec::with_capacity(infos.len());
+    //     let mut vertex_input_states = Vec::with_capacity(infos.len());
+    //     let mut real_create_infos = Vec::with_capacity(infos.len());
+    //     for i in 0..infos.len() {
+    //         let info = &infos[i];
+
+    //         vertex_input_configs.push(info.vertex_input);
+    //         let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
+    //             vertex_binding_description_count: vertex_input_configs[i].binding_descriptions.len() as u32,
+    //             p_vertex_binding_descriptions: vertex_input_configs[i].binding_descriptions.as_ptr(),
+    //             vertex_attribute_description_count: vertex_input_configs[i].attribute_descriptions.len() as u32,
+    //             p_vertex_attribute_descriptions: vertex_input_configs[i].attribute_descriptions.as_ptr(),
+    //             ..Default::default()
+    //         };
+    //         vertex_input_states.push(vertex_input_state);
+    //         let pipeline_info = vk::GraphicsPipelineCreateInfo {
+    //             layout: info.pipeline_layout,
+    //             p_vertex_input_state: &vertex_input_states[i],
+
+    //         };
+    //         real_create_infos.push(pipeline_info);
+    //     }
+
+    //     vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &real_create_infos, MEMORY_ALLOCATOR).unwrap()
+    // }
 
 }
 
