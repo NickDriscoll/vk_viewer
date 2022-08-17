@@ -16,7 +16,7 @@ impl DevGui {
     pub const FRAMES_IN_FLIGHT: usize = 2;
     pub const FLOATS_PER_VERTEX: usize = 8;
 
-    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_creator: &vkutil::GraphicsPipelineBuilder) -> Self {
+    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
         let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
         for _ in 0..Self::FRAMES_IN_FLIGHT {
             frames.push(DevGuiFrame::default());
@@ -28,19 +28,23 @@ impl DevGui {
             let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui_frag.spv");
             vec![v, f]
         };
-        let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(render_pass, vkutil::VertexInputConfiguration::empty(), im_shader_stages);
-        let im_depthstencil = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable: vk::FALSE,
-            depth_write_enable: vk::FALSE,
-            ..pipeline_creator.depthstencil_state
-        };
-        let im_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
-            cull_mode: vk::CullModeFlags::NONE,
-            ..pipeline_creator.rasterization_state
-        };
-        im_create_info.depthstencil_state = Some(im_depthstencil);
-        im_create_info.rasterization_state = Some(im_rasterization_state);
-        let pipeline = unsafe { pipeline_creator.create_pipeline(&vk, &im_create_info) };
+        let im_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout).set_shader_stages(im_shader_stages).set_render_pass(render_pass).build_info();
+
+        let pipeline = unsafe { vkutil::GraphicsPipelineBuilder::create_pipelines(vk, &[im_info])[0] };
+        
+        // let mut im_create_info = vkutil::VirtualPipelineCreateInfo::new(render_pass, vkutil::VertexInputConfiguration::empty(), im_shader_stages);
+        // let im_depthstencil = vk::PipelineDepthStencilStateCreateInfo {
+        //     depth_test_enable: vk::FALSE,
+        //     depth_write_enable: vk::FALSE,
+        //     ..Default::default()
+        // };
+        // let im_rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+        //     cull_mode: vk::CullModeFlags::NONE,
+        //     ..Default::default()
+        // };
+        // im_create_info.depthstencil_state = Some(im_depthstencil);
+        // im_create_info.rasterization_state = Some(im_rasterization_state);
+        // let pipeline = unsafe { pipeline_creator.create_pipeline(&vk, &im_create_info) };
 
         DevGui {
             pipeline,

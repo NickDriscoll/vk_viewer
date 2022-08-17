@@ -342,7 +342,7 @@ fn main() {
     let mut vk_display = vkutil::Display::init(&mut vk, vk_render_pass);
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
-    let pipeline_creator = unsafe {
+    let pipeline_layout = unsafe {
         let push_constant_range = vk::PushConstantRange {
             stage_flags: push_constant_shader_stage_flags,
             offset: 0,
@@ -356,8 +356,7 @@ fn main() {
             ..Default::default()
         };
         
-        let layout = vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap();
-        vkutil::GraphicsPipelineBuilder::init(layout)
+        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
 
     //Create pipelines
@@ -381,17 +380,32 @@ fn main() {
             vec![v, f]
         };
 
-        let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), main_shader_stages);
-        let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
-        main_create_info.shader_stages = terrain_shader_stages;
-        let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
+        let main_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
+                        .set_shader_stages(main_shader_stages).set_render_pass(vk_render_pass).build_info();
+        let terrain_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
+                            .set_shader_stages(terrain_shader_stages).set_render_pass(vk_render_pass).build_info();
+        let atm_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
+                            .set_shader_stages(atm_shader_stages).set_render_pass(vk_render_pass).build_info();
         
-        main_create_info.rasterization_state = None;
+        let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &[main_info, terrain_info, atm_info]);
 
-        let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), atm_shader_stages);
-        let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
+        [
+            pipelines[0],
+            pipelines[1],
+            pipelines[2]
+        ]
 
-        [main_pipeline, ter_pipeline, atm_pipeline]
+        // let mut main_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), main_shader_stages);
+        // let main_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
+        // main_create_info.shader_stages = terrain_shader_stages;
+        // let ter_pipeline = pipeline_creator.create_pipeline(&vk, &main_create_info);
+        
+        // main_create_info.rasterization_state = None;
+
+        // let atm_create_info = vkutil::VirtualPipelineCreateInfo::new(vk_render_pass, vkutil::VertexInputConfiguration::empty(), atm_shader_stages);
+        // let atm_pipeline = pipeline_creator.create_pipeline(&vk, &atm_create_info);
+
+        // [main_pipeline, ter_pipeline, atm_pipeline]
     };
 
     let mut sun_speed = 0.003;
@@ -517,7 +531,7 @@ fn main() {
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
-    let mut dev_gui = DevGui::new(&mut vk, vk_render_pass, &pipeline_creator);
+    let mut dev_gui = DevGui::new(&mut vk, vk_render_pass, pipeline_layout);
     
     let mut wireframe = false;
     let mut main_pipeline = vk_3D_graphics_pipeline;
@@ -959,7 +973,7 @@ fn main() {
             vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             //Once-per-frame bindless descriptor setup
-            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_creator.pipeline_layout, 0, &renderer.descriptor_sets, &[]);
+            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &renderer.descriptor_sets, &[]);
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
@@ -976,7 +990,7 @@ fn main() {
                         model.normal_offset.to_le_bytes(),
                         model.uv_offset.to_le_bytes(),
                     ].concat();
-                    vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_creator.pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                    vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
                     vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
                     vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
@@ -987,7 +1001,7 @@ fn main() {
             vk.device.cmd_draw(vk.graphics_command_buffer, 36, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands
-            dev_gui.record_draw_commands(&mut vk, pipeline_creator.pipeline_layout);
+            dev_gui.record_draw_commands(&mut vk, pipeline_layout);
 
             vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
 

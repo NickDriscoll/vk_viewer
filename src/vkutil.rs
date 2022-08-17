@@ -1191,7 +1191,7 @@ impl GraphicsPipelineBuilder {
         tmp
     }
 
-    pub fn create_info(&self) -> PipelineCreateInfo {
+    pub fn build_info(self) -> PipelineCreateInfo {
         let vertex_input = VertexInputConfiguration::empty();
 
         let color_blend = vk::PipelineColorBlendStateCreateInfo {
@@ -1215,6 +1215,20 @@ impl GraphicsPipelineBuilder {
             depthstencil_state: self.depthstencil_state,
             shader_stages: self.shader_stages.clone(),
             render_pass: self.render_pass
+        }
+    }
+
+    pub fn set_shader_stages(self, stages: Vec<vk::PipelineShaderStageCreateInfo>) -> Self {
+        GraphicsPipelineBuilder {
+            shader_stages: stages,
+            ..self
+        }
+    }
+
+    pub fn set_render_pass(self, render_pass: vk::RenderPass) -> Self {
+        GraphicsPipelineBuilder {
+            render_pass,
+            ..self
         }
     }
 
@@ -1272,32 +1286,51 @@ impl GraphicsPipelineBuilder {
         pipeline
     }
 
-    // pub unsafe fn create_pipelines(&self, vk: &mut VulkanAPI, infos: &[PipelineCreateInfo]) -> Vec<vk::Pipeline> {
-    //     let mut vertex_input_configs = Vec::with_capacity(infos.len());
-    //     let mut vertex_input_states = Vec::with_capacity(infos.len());
-    //     let mut real_create_infos = Vec::with_capacity(infos.len());
-    //     for i in 0..infos.len() {
-    //         let info = &infos[i];
+    pub unsafe fn create_pipelines(vk: &mut VulkanAPI, infos: &[PipelineCreateInfo]) -> Vec<vk::Pipeline> {
+        let mut vertex_input_configs = Vec::with_capacity(infos.len());
+        let mut vertex_input_states = Vec::with_capacity(infos.len());
+        let mut dynamic_states = Vec::with_capacity(infos.len());
+        let mut real_create_infos = Vec::with_capacity(infos.len());
+        for i in 0..infos.len() {
+            let info = &infos[i];
 
-    //         vertex_input_configs.push(info.vertex_input);
-    //         let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
-    //             vertex_binding_description_count: vertex_input_configs[i].binding_descriptions.len() as u32,
-    //             p_vertex_binding_descriptions: vertex_input_configs[i].binding_descriptions.as_ptr(),
-    //             vertex_attribute_description_count: vertex_input_configs[i].attribute_descriptions.len() as u32,
-    //             p_vertex_attribute_descriptions: vertex_input_configs[i].attribute_descriptions.as_ptr(),
-    //             ..Default::default()
-    //         };
-    //         vertex_input_states.push(vertex_input_state);
-    //         let pipeline_info = vk::GraphicsPipelineCreateInfo {
-    //             layout: info.pipeline_layout,
-    //             p_vertex_input_state: &vertex_input_states[i],
+            vertex_input_configs.push(&info.vertex_input);
+            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
+                vertex_binding_description_count: vertex_input_configs[i].binding_descriptions.len() as u32,
+                p_vertex_binding_descriptions: vertex_input_configs[i].binding_descriptions.as_ptr(),
+                vertex_attribute_description_count: vertex_input_configs[i].attribute_descriptions.len() as u32,
+                p_vertex_attribute_descriptions: vertex_input_configs[i].attribute_descriptions.as_ptr(),
+                ..Default::default()
+            };
+            vertex_input_states.push(vertex_input_state);
 
-    //         };
-    //         real_create_infos.push(pipeline_info);
-    //     }
+            let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+                p_dynamic_states: info.dynamic_state.as_ptr(),
+                dynamic_state_count: info.dynamic_state.len() as u32,
+                ..Default::default()
+            };
+            dynamic_states.push(dynamic_state);
 
-    //     vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &real_create_infos, MEMORY_ALLOCATOR).unwrap()
-    // }
+            let create_info = vk::GraphicsPipelineCreateInfo {
+                layout: info.pipeline_layout,
+                p_vertex_input_state: &vertex_input_states[i],
+                p_input_assembly_state: &info.input_assembly,
+                p_rasterization_state: &info.rasterization_state,
+                p_color_blend_state: &info.color_blend,
+                p_multisample_state: &info.multisample_state,
+                p_dynamic_state: &dynamic_states[i],
+                p_viewport_state: &info.viewport_state,
+                p_depth_stencil_state: &info.depthstencil_state,
+                p_stages: info.shader_stages.as_ptr(),
+                stage_count: info.shader_stages.len() as u32,
+                render_pass: info.render_pass,
+                ..Default::default()
+            };
+            real_create_infos.push(create_info);
+        }
+
+        vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &real_create_infos, MEMORY_ALLOCATOR).unwrap()
+    }
 
 }
 
