@@ -1,8 +1,7 @@
 use ash::vk;
 use imgui::DrawCmd;
 use crate::render::Renderer;
-use crate::vkutil::{self, VulkanAPI};
-use crate::vkutil::{GPUBuffer};
+use crate::vkutil::*;
 
 pub struct DevGui {
     pub pipeline: vk::Pipeline,
@@ -24,18 +23,18 @@ impl DevGui {
         
 
         let im_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/imgui_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui_frag.spv");
+            let v = load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/imgui_vert.spv");
+            let f = load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui_frag.spv");
             vec![v, f]
         };
-        let im_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
+        let im_info = GraphicsPipelineBuilder::init(pipeline_layout)
             .set_shader_stages(im_shader_stages)
             .set_render_pass(render_pass)
             .set_depth_test(vk::FALSE)           
             .set_cull_mode(vk::CullModeFlags::NONE) 
             .build_info();
 
-        let pipeline = unsafe { vkutil::GraphicsPipelineBuilder::create_pipelines(vk, &[im_info])[0] };
+        let pipeline = unsafe { GraphicsPipelineBuilder::create_pipelines(vk, &[im_info])[0] };
 
         DevGui {
             pipeline,
@@ -93,7 +92,7 @@ impl DevGui {
                 renderer.replace_imgui_vertices(vk, &verts, current_offset);
                 current_offset += vtx_buffer.len() as u64;
 
-                let index_buffer = vkutil::make_index_buffer(vk, &inds);
+                let index_buffer = make_index_buffer(vk, &inds);
                 index_buffers.push(index_buffer);
 
                 let mut cmd_list = Vec::with_capacity(list.commands().count());
@@ -168,6 +167,7 @@ impl DevGui {
     }
 }
 
+//All data needed to render one Dear ImGUI frame
 pub struct DevGuiFrame {
     pub offsets: Vec<u64>,
     pub start_offset: u64,

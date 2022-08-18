@@ -995,11 +995,10 @@ fn main() {
 
             vk.device.end_command_buffer(vk.graphics_command_buffer).unwrap();
 
-            let pipeline_stage_flags = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
             let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: 1,
                 p_wait_semaphores: &vk_swapchain_semaphore,
-                p_wait_dst_stage_mask: &pipeline_stage_flags,
+                p_wait_dst_stage_mask: &vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                 signal_semaphore_count: 1,
                 p_signal_semaphores: &vk_rendercomplete_semaphore,
                 command_buffer_count: 1,
