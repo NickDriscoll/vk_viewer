@@ -315,24 +315,12 @@ fn main() {
             ..Default::default()
         };
 
-        let subpass_dependency = vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            dst_subpass: 0,
-            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            src_access_mask: vk::AccessFlags::NONE_KHR,
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            ..Default::default()
-        };
-
         let attachments = [color_attachment_description, depth_attachment_description];
         let renderpass_info = vk::RenderPassCreateInfo {
             attachment_count: attachments.len() as u32,
             p_attachments: attachments.as_ptr(),
             subpass_count: 1,
             p_subpasses: &subpass,
-            dependency_count: 1,
-            p_dependencies: &subpass_dependency,
             ..Default::default()
         };
         vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
@@ -520,11 +508,10 @@ fn main() {
     bgm.play(-1).unwrap();
 
     let mut dev_gui = DevGui::new(&mut vk, vk_render_pass, pipeline_layout);
-    
-    let mut wireframe = false;
-    let mut main_pipeline = vk_3D_graphics_pipeline;
 
     let mut input_system = input::InputSystem::init(&sdl_context);
+
+    println!("Draw data is {} bytes", size_of::<DrawData>());
 
     //Main application loop
     'running: loop {

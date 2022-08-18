@@ -140,7 +140,6 @@ pub struct Renderer {
     pub uv_buffer: GPUBuffer,
     uv_offset: u64,
     pub imgui_buffer: GPUBuffer,
-    imgui_offset: u64,
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
@@ -482,7 +481,6 @@ impl Renderer {
             uv_buffer,
             uv_offset: 0,
             imgui_buffer,
-            imgui_offset: 0,
             uniform_buffer,
             instance_buffer,
             material_buffer
