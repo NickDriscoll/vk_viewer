@@ -516,6 +516,7 @@ fn main() {
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
+        let scaled_delta_time = timer.delta_time * timescale_factor;
 
         //Reset renderer
         renderer.reset();
@@ -603,7 +604,7 @@ fn main() {
         //Update
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
         if dev_gui.do_main_window && dev_gui.do_terrain_window {
-            if let Some(token) = imgui::Window::new("Terrain builder").begin(&imgui_ui) { 
+            if let Some(token) = imgui::Window::new("Terrain generator").begin(&imgui_ui) { 
                 let mut parameters_changed = false;
 
                 imgui_ui.text("Global terrain variables:");
@@ -660,7 +661,7 @@ fn main() {
         if let Some(_) = imgui_window_token {
             if let Some(mb) = imgui_ui.begin_menu_bar() {
                 if let Some(mt) = imgui_ui.begin_menu("Environment") {
-                    if imgui::MenuItem::new("Terrain builder").build(&imgui_ui) {
+                    if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) {
                         dev_gui.do_terrain_window = true;
                     }
                     mt.end();
@@ -690,8 +691,8 @@ fn main() {
             imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
 
-        //Step the physics engine before doing gameplay updates
-        physics_engine.integration_parameters.dt = timer.delta_time * timescale_factor;
+        //Step the physics engine
+        physics_engine.integration_parameters.dt = scaled_delta_time;
         physics_engine.step();
 
         let plane_model_matrix = glm::identity();
@@ -789,7 +790,7 @@ fn main() {
         }
         
         //Update sun's position
-        sun_pitch += sun_speed * timer.delta_time;
+        sun_pitch += sun_speed * scaled_delta_time;
         if sun_pitch > glm::two_pi() {
             sun_pitch -= glm::two_pi::<f32>();
         }
