@@ -511,8 +511,6 @@ fn main() {
 
     let mut input_system = input::InputSystem::init(&sdl_context);
 
-    println!("Draw data is {} bytes", size_of::<DrawData>());
-
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
