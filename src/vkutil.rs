@@ -348,12 +348,12 @@ impl VirtualImage {
                 command_buffer_count: 1,
                 p_command_buffers: &vk.graphics_command_buffer,
                 ..Default::default()
-            };        
-            let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+            };
             let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
-            vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
-            vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-            vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
+            vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+            vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
+            vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
+            vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
             
             let sampler_subresource_range = vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,

@@ -121,7 +121,7 @@ pub struct FrameUniforms {
 }
 
 pub struct Renderer {
-    pub default_color_idx: u32,
+    pub default_diffuse_idx: u32,
     pub default_normal_idx: u32,
     pub default_metal_roughness_idx: u32,
     pub material_sampler: vk::Sampler,
@@ -191,7 +191,7 @@ impl Renderer {
             material_size * global_material_slots,
             storage_buffer_alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            MemoryLocation::CpuToGpu
+            MemoryLocation::GpuOnly
         );
 
         let max_vertices = 1024 * 1024 * 16;
@@ -244,7 +244,7 @@ impl Renderer {
             MemoryLocation::CpuToGpu
         );
 
-        //Set up descriptors
+        //Set up global bindless descriptor set
         let descriptor_set_layout;
         let descriptor_sets = unsafe {
             struct BufferDescriptorDesc {
@@ -459,7 +459,7 @@ impl Renderer {
         };
 
         Renderer {
-            default_color_idx,
+            default_diffuse_idx: default_color_idx,
             default_normal_idx,
             default_metal_roughness_idx: default_metalrough_idx,
             material_sampler,
