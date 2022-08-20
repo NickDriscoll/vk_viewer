@@ -430,7 +430,7 @@ fn main() {
         Material {
             pipeline: terrain_pipeline,
             base_color:  [1.0; 4],
-            base_roughness: 0.75,
+            base_roughness: 0.05,
             color_idx: rock_color_global_index,
             normal_idx: rock_normal_global_index,
             metal_roughness_idx: renderer.default_metal_roughness_idx

@@ -54,13 +54,13 @@ struct PBRParams
 
 float3 pbr_mettalic_roughness(PBRParams params)
 {
-    float metallic = 0.0;
+    float metalness = 0.0;
     float ambient_occlusion = 1.0;
 
     float3 halfway = normalize(params.view + params.light_direction);
     float3 ks = fresnel_schlick(float3(0.04), halfway, params.view);
     float3 kd = float3(1.0) - ks;
-    kd *= 1.0 - metallic;
+    kd *= 1.0 - metalness;
 
     // Cook-Torrence specular term evaluation
     float D = NDFggxtr(params.shading_normal, halfway, params.roughness);

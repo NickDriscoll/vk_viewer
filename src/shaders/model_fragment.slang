@@ -34,6 +34,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     // Get normal vector at this point
     float3 sampled_normal = 2.0 * global_textures[my_mat.normal_map_index].Sample(input.uv).xyz - 1.0;
+    float roughness = toksvigs_method(sampled_normal, my_mat.base_roughness * sampled_roughness);
     params.shading_normal = normalize(mul(sampled_normal, TBN));
     params.geometry_normal = normal;
     params.view = view;

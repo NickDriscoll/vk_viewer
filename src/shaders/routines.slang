@@ -55,6 +55,14 @@ float snoise(vec2 P) {
 */
 
 
+//Modifies roughness based on normal variance
+float toksvigs_method(float3 sampled_normal, float roughness) {
+    float averaged_normal_length = length(sampled_normal);
+    float ggx_roughness = 2.0 / (roughness * roughness) - 2.0; //Equivalence for GGX
+
+    return averaged_normal_length * ggx_roughness / (averaged_normal_length + ggx_roughness * (1.0 - averaged_normal_length));
+}
+
 // Apply fog like GL_EXP2
 float3 exp2_fog(FrameUniforms uniforms, float3 frag_position, float3 in_color, float3 fog_color) {
     //Compute fog factor
