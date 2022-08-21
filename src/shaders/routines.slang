@@ -1,7 +1,8 @@
 import structs;
 
 /*
-//2D simplex noise
+//2D simplex noise from paper "Efficient computational noise in GLSL" 12/10/2011
+
 #version 120
 vec3 permute(vec3 x) {
   return mod(((x ∗ 34.0) + 1.0) ∗ x, 289.0);
@@ -53,6 +54,28 @@ float snoise(vec2 P) {
     return130.0∗dot(m,g);
 }
 */
+
+float3 permute(float3 x) {
+    return ((x * 34.0) + 1.0) * x % 289.0;
+}
+
+float3 taylorInvSqrt(float3 r) {
+    return 1.79284291400159 - 0.85373472095314 * r;
+}
+
+float simplex_noise(float2 P) {
+    static const float2 C = float2(0.211324865405187134,  //(3.0−sqrt(3.0))/6.0;
+                                 0.366025403784438597); // 0.5∗(sqrt(3.0)−1.0);
+
+    // First corner
+    float2 i = floor(P + dot(P, C.yy));
+    float2 x0 = P - i + dot(i, C.xx); 
+
+    // Other corners
+    float2 i1;
+    i1.x = step(x0.y, x0.x); // 1.0 if x0.x > x0.y, else 0.0
+    i1.y = 1.0 - i1.x;
+}
 
 
 //Modifies roughness based on normal variance

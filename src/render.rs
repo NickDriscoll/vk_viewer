@@ -43,7 +43,7 @@ pub struct DrawCall {
 
 //This is a struct that contains mesh and material data
 //In other words, the data required to draw a specific kind of thing
-pub struct DrawData {
+pub struct DrawPrimitive {
     pub index_buffer: GPUBuffer,
     pub index_count: u32,
     pub position_offset: u32,
@@ -126,11 +126,12 @@ pub struct Renderer {
     pub default_metal_roughness_idx: u32,
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
-    primitives: OptionVec<DrawData>,
+    primitives: OptionVec<DrawPrimitive>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
     pub uniform_data: FrameUniforms,
 
+    //Various GPU allocated buffers
     pub position_buffer: GPUBuffer,
     position_offset: u64,
     pub tangent_buffer: GPUBuffer,
@@ -143,6 +144,7 @@ pub struct Renderer {
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
+
     pub global_textures: FreeList<DescriptorImageInfo>,
     pub global_materials: FreeList<Material>,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
@@ -487,7 +489,7 @@ impl Renderer {
         }
     }
 
-    pub fn register_model(&mut self, data: DrawData) -> usize {
+    pub fn register_model(&mut self, data: DrawPrimitive) -> usize {
         self.primitives.insert(data)
     }
 
@@ -540,7 +542,7 @@ impl Renderer {
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 
-    pub fn get_model(&self, idx: usize) -> &Option<DrawData> {
+    pub fn get_model(&self, idx: usize) -> &Option<DrawPrimitive> {
         &self.primitives[idx]
     }
 

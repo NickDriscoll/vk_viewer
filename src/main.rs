@@ -37,7 +37,7 @@ use input::UserInput;
 use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualImage, VulkanAPI};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp};
-use render::{DrawData, Renderer, Material};
+use render::{DrawPrimitive, Renderer, Material};
 
 use crate::routines::*;
 use crate::gltfutil::GLTFData;
@@ -188,7 +188,7 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
         let offsets = upload_primitive_vertices(vk, renderer, &prim);
 
         let index_buffer = vkutil::make_index_buffer(vk, &prim.indices);
-        let model_idx = renderer.register_model(DrawData {
+        let model_idx = renderer.register_model(DrawPrimitive {
             index_buffer,
             index_count: prim.indices.len().try_into().unwrap(),
             position_offset: offsets.position_offset,
@@ -430,7 +430,7 @@ fn main() {
         Material {
             pipeline: terrain_pipeline,
             base_color:  [1.0; 4],
-            base_roughness: 0.05,
+            base_roughness: 0.25,
             color_idx: rock_color_global_index,
             normal_idx: rock_normal_global_index,
             metal_roughness_idx: renderer.default_metal_roughness_idx
@@ -442,7 +442,7 @@ fn main() {
         let terrain_offsets = uninterleave_and_upload_vertices(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = vkutil::make_index_buffer(&mut vk, &terrain_indices);
-        renderer.register_model(DrawData {
+        renderer.register_model(DrawPrimitive {
             index_buffer,
             index_count: terrain_indices.len().try_into().unwrap(),
             position_offset: terrain_offsets.position_offset,
