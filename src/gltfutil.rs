@@ -4,11 +4,12 @@ use std::ptr;
 
 use crate::routines::*;
 
+#[derive(Debug)]
 pub enum GLTFImageType {
     PNG,
     KTX
 }
-
+#[derive(Debug)]
 pub struct GLTFMaterial {
     pub base_color: [f32; 4],
     pub base_roughness: f32,

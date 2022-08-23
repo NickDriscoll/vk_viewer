@@ -27,7 +27,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
         float4 metal_roughness_sample = global_textures[grass_material.metal_roughness_index].Sample(input.uv);
 
-        grass_roughness = grass_material.base_roughness * toksvigs_method(n_sample, metal_roughness_sample.g);
+        grass_roughness = toksvigs_method(n_sample, grass_material.base_roughness * metal_roughness_sample.g);
     }
 
     float3 rock_albedo;
@@ -41,14 +41,14 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
         float4 metal_roughness_sample = global_textures[rock_material.metal_roughness_index].Sample(input.uv);
 
-        rock_roughness = rock_material.base_roughness * toksvigs_method(n_sample, metal_roughness_sample.g);
+        rock_roughness = toksvigs_method(n_sample, rock_material.base_roughness * metal_roughness_sample.g);
     }
 
     float mix_factor = max(0.0, dot(normal, float3(0.0, 0.0, 1.0)));
     mix_factor = smoothstep(0.60, 0.70, mix_factor);
 
     float3 world_normal = mul(lerp(rock_normal, grass_normal, mix_factor), TBN);
-    float roughness = lerp(grass_roughness, rock_roughness, mix_factor);
+    float roughness = lerp(rock_roughness, grass_roughness, mix_factor);
 
     //Compute sun color
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;

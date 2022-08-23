@@ -413,8 +413,11 @@ fn main() {
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
     let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
+    let grass_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/metallic_roughness.dds", ColorSpace::LINEAR);
+    
     let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
+    let rock_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/metallic_roughness.dds", ColorSpace::LINEAR);
 
     let terrain_grass_matidx = renderer.global_materials.insert(
         Material {
@@ -423,17 +426,17 @@ fn main() {
             base_roughness: 1.0,
             color_idx: grass_color_global_index,
             normal_idx: grass_normal_global_index,
-            metal_roughness_idx: renderer.default_metal_roughness_idx
+            metal_roughness_idx: grass_metalrough_global_index
         }
     ) as u32;
     let terrain_rock_matidx = renderer.global_materials.insert(
         Material {
             pipeline: terrain_pipeline,
             base_color:  [1.0; 4],
-            base_roughness: 0.25,
+            base_roughness: 1.0,
             color_idx: rock_color_global_index,
             normal_idx: rock_normal_global_index,
-            metal_roughness_idx: renderer.default_metal_roughness_idx
+            metal_roughness_idx: rock_metalrough_global_index
         }
     ) as u32;
     
@@ -475,7 +478,7 @@ fn main() {
         .translation(glm::vec3(0.0, 0.0, 20.0))
         .ccd_enabled(true)
         .build();
-        let collider = ColliderBuilder::ball(2.1).restitution(2.0).build();
+        let collider = ColliderBuilder::ball(2.1).restitution(2.25).build();
         let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
         let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
         PhysicsProp {
