@@ -478,7 +478,7 @@ fn main() {
         .translation(glm::vec3(0.0, 0.0, 20.0))
         .ccd_enabled(true)
         .build();
-        let collider = ColliderBuilder::ball(2.1).restitution(2.25).build();
+        let collider = ColliderBuilder::ball(2.1).restitution(2.5).build();
         let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
         let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
         PhysicsProp {
