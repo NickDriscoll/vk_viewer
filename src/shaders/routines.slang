@@ -117,7 +117,8 @@ float simplex_noise(float2 P) {
 //Modifies roughness based on normal variance
 float toksvigs_method(float3 sampled_normal, float roughness) {
     float averaged_normal_length = length(sampled_normal);
-    float ggx_roughness = 2.0 / (roughness * roughness) - 2.0; //Equivalence for GGX
+    //float ggx_roughness = 2.0 / (roughness * roughness) - 2.0; //Equivalence for GGX
+    float ggx_roughness = roughness;
 
     return averaged_normal_length * ggx_roughness / (averaged_normal_length + ggx_roughness * (1.0 - averaged_normal_length));
 }

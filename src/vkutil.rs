@@ -84,6 +84,21 @@ pub unsafe fn allocate_image(vk: &mut VulkanAPI, image: vk::Image) -> Allocation
     alloc
 }
 
+pub fn load_global_png(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: vkutil::ColorSpace) -> u32 {
+    unsafe {
+        let vim = VirtualImage::from_png_file(vk, path);
+
+        let descriptor_info = vk::DescriptorImageInfo {
+            sampler,
+            image_view: vim.vk_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        };
+        let index = global_textures.insert(descriptor_info);
+
+        index as u32
+    }
+}
+
 pub fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: vkutil::ColorSpace) -> u32 {
     unsafe {
         let vim = VirtualImage::from_bc7(vk, path, color_space);
@@ -172,6 +187,13 @@ pub struct VirtualImage {
 }
 
 impl VirtualImage {
+    pub fn from_png_file(vk: &mut VulkanAPI, path: &str) -> Self {
+        let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
+        let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
+        file.read_exact(&mut png_bytes).unwrap();
+        Self::from_png_bytes(vk, &png_bytes)
+    }
+
     pub fn from_png_bytes(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Self {
         use png::BitDepth;
         use png::ColorType;

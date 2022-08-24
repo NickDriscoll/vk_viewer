@@ -77,4 +77,5 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3 final_color = exp2_fog(uniforms, input.position, lit_color, sun_color);
 
     return float4(final_color, 1.0);
+    //return float4(float3(0.0, roughness, 0.0), 1.0);
 }
