@@ -7,8 +7,9 @@ pub struct DevGui {
     pub pipeline: vk::Pipeline,
     pub frames: Vec<DevGuiFrame>,
     pub current_frame: usize,
-    pub do_main_window: bool,
-    pub do_terrain_window: bool
+    pub do_gui: bool,
+    pub do_terrain_window: bool,
+    pub do_prop_window: bool
 }
 
 impl DevGui {
@@ -40,8 +41,9 @@ impl DevGui {
             pipeline,
             frames,
             current_frame: 0,
-            do_main_window: true,
-            do_terrain_window: false
+            do_gui: true,
+            do_terrain_window: false,
+            do_prop_window: false
         }
     }
 

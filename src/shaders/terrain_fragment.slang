@@ -23,8 +23,8 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     {
         float4 sample = global_textures[grass_material.color_map_index].Sample(uvs);
         grass_albedo = sample.rgb;
-        float3 n_sample = global_textures[grass_material.normal_map_index].Sample(uvs).xyz;
-        grass_normal = 2.0 * normalize(n_sample) - 1.0;
+        float3 n_sample = 2.0 * global_textures[grass_material.normal_map_index].Sample(uvs).xyz - 1.0;
+        grass_normal = normalize(n_sample);
 
         float4 metal_roughness_sample = global_textures[grass_material.metal_roughness_index].Sample(input.uv);
 
@@ -39,8 +39,8 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     {
         float4 sample = global_textures[rock_material.color_map_index].Sample(uvs);
         rock_albedo = sample.rgb;
-        float3 n_sample = global_textures[rock_material.normal_map_index].Sample(uvs).xyz;
-        rock_normal = 2.0 * normalize(n_sample) - 1.0;
+        float3 n_sample = 2.0 * global_textures[rock_material.normal_map_index].Sample(uvs).xyz - 1.0;
+        rock_normal = normalize(n_sample);
 
         float4 metal_roughness_sample = global_textures[rock_material.metal_roughness_index].Sample(input.uv);
 

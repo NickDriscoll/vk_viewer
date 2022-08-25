@@ -538,7 +538,7 @@ fn main() {
         };
 
         //Handling of some input results before update
-        if input_output.gui_toggle { dev_gui.do_main_window = !dev_gui.do_main_window }
+        if input_output.gui_toggle { dev_gui.do_gui = !dev_gui.do_gui }
         if input_output.regen_terrain {
             regenerate_terrain(
                 &mut vk,
@@ -612,7 +612,7 @@ fn main() {
 
         //Update
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
-        if dev_gui.do_main_window && dev_gui.do_terrain_window {
+        if dev_gui.do_gui && dev_gui.do_terrain_window {
             if let Some(token) = imgui::Window::new("Terrain generator").begin(&imgui_ui) { 
                 let mut parameters_changed = false;
 
@@ -661,7 +661,19 @@ fn main() {
             }
         }
 
-        let imgui_window_token = if dev_gui.do_main_window {
+        if dev_gui.do_gui && dev_gui.do_prop_window {
+            if let Some(token) = imgui::Window::new("Props").begin(&imgui_ui) {
+                if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
+                    tfd::open_file_dialog("Choose glb", "./data/models/", Some((&["*.glb"], ".glb (Binary gLTF)")));
+                }
+
+                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { dev_gui.do_prop_window = false; }
+
+                token.end()
+            }
+        }
+
+        let imgui_window_token = if dev_gui.do_gui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
         } else {
             None
@@ -672,6 +684,9 @@ fn main() {
                 if let Some(mt) = imgui_ui.begin_menu("Environment") {
                     if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) {
                         dev_gui.do_terrain_window = true;
+                    }
+                    if imgui::MenuItem::new("Props").build(&imgui_ui) {
+                        dev_gui.do_prop_window = true;
                     }
                     mt.end();
                 }

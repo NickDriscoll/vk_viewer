@@ -96,3 +96,7 @@ pub struct PhysicsProp {
     pub rigid_body_handle: RigidBodyHandle,
     pub collider_handle: ColliderHandle
 }
+
+pub struct StaticProp {
+    pub model_indices: Vec<usize>
+}
