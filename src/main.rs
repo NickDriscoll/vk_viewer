@@ -25,6 +25,7 @@ use routines::struct_to_bytes;
 use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
+use slotmap::DenseSlotMap;
 use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
@@ -42,6 +43,7 @@ use render::{DrawPrimitive, Renderer, Material};
 use crate::routines::*;
 use crate::gltfutil::GLTFData;
 use crate::gui::DevGui;
+use crate::structs::StaticProp;
 
 struct UninterleavedVertices {
     pub positions: Vec<f32>,
@@ -384,7 +386,8 @@ fn main() {
         ]
     };
 
-    let mut sun_speed = 0.003;
+    let mut sun_pitch_speed = 0.003;
+    let mut sun_yaw_speed = 0.0;
     let mut sun_pitch = 0.118;
     let mut sun_yaw = 0.783;
     let mut trees_width = 1;
@@ -413,7 +416,7 @@ fn main() {
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.png", ColorSpace::SRGB);
     let grass_normal_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.png", ColorSpace::LINEAR);
-    let grass_metalrough_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/metallic_roughness.png", ColorSpace::LINEAR);
+    let grass_aoroughmetal_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/ao_roughness_metallic.png", ColorSpace::LINEAR);
 
     //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
     //let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
@@ -421,7 +424,7 @@ fn main() {
 
     let rock_color_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.png", ColorSpace::SRGB);
     let rock_normal_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.png", ColorSpace::LINEAR);
-    let rock_metalrough_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/metallic_roughness.png", ColorSpace::LINEAR);
+    let rock_aoroughmetal_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/ao_roughness_metallic.png", ColorSpace::LINEAR);
     
     //let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     //let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
@@ -434,7 +437,7 @@ fn main() {
             base_roughness: 1.0,
             color_idx: grass_color_global_index,
             normal_idx: grass_normal_global_index,
-            metal_roughness_idx: grass_metalrough_global_index
+            metal_roughness_idx: grass_aoroughmetal_global_index
         }
     ) as u32;
     let terrain_rock_matidx = renderer.global_materials.insert(
@@ -444,7 +447,7 @@ fn main() {
             base_roughness: 1.0,
             color_idx: rock_color_global_index,
             normal_idx: rock_normal_global_index,
-            metal_roughness_idx: rock_metalrough_global_index
+            metal_roughness_idx: rock_aoroughmetal_global_index
         }
     ) as u32;
     
@@ -497,6 +500,8 @@ fn main() {
 
     let mut totoro_list = OptionVec::new();
     let main_totoro_idx = totoro_list.insert(totoro_prop);
+
+    let mut static_props = DenseSlotMap::new();
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -664,7 +669,16 @@ fn main() {
         if dev_gui.do_gui && dev_gui.do_prop_window {
             if let Some(token) = imgui::Window::new("Props").begin(&imgui_ui) {
                 if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
-                    tfd::open_file_dialog("Choose glb", "./data/models/", Some((&["*.glb"], ".glb (Binary gLTF)")));
+                    if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
+                        let data = gltfutil::gltf_meshdata(&path);                    
+                        let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
+                        let model_matrix = glm::translation(&camera.position);
+                        let s = StaticProp {
+                            model_indices,
+                            model_matrix
+                        };
+                        static_props.insert(s);
+                    }
                 }
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { dev_gui.do_prop_window = false; }
@@ -704,8 +718,9 @@ fn main() {
             imgui_ui.text(message);
             color_token.pop();
 
-            imgui::Slider::new("Sun speed", 0.0, 1.0).build(&imgui_ui, &mut sun_speed);
+            imgui::Slider::new("Sun pitch speed", 0.0, 1.0).build(&imgui_ui, &mut sun_pitch_speed);
             imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
+            imgui::Slider::new("Sun yaw speed", 0.0, 1.0).build(&imgui_ui, &mut sun_yaw_speed);
             imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
             imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
@@ -812,11 +827,21 @@ fn main() {
         for idx in &tree_model_indices {
             renderer.queue_drawcall(*idx, &bb_mats);
         }
+
+        for (_, prop) in static_props.iter() {
+            for idx in prop.model_indices.iter() {
+                renderer.queue_drawcall(*idx, &[prop.model_matrix]);
+            }
+        }
         
-        //Update sun's position
-        sun_pitch += sun_speed * scaled_delta_time;
+        //Update sun
+        sun_pitch += sun_pitch_speed * scaled_delta_time;
+        sun_yaw += sun_yaw_speed * scaled_delta_time;
         if sun_pitch > glm::two_pi() {
             sun_pitch -= glm::two_pi::<f32>();
+        }
+        if sun_yaw > glm::two_pi() {
+            sun_yaw -= glm::two_pi::<f32>();
         }
 
         if let Some(t) = imgui_window_token {

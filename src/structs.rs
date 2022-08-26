@@ -98,5 +98,6 @@ pub struct PhysicsProp {
 }
 
 pub struct StaticProp {
-    pub model_indices: Vec<usize>
+    pub model_indices: Vec<usize>,
+    pub model_matrix: glm::TMat4<f32>
 }

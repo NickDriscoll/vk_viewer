@@ -23,6 +23,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.albedo = color_sample.rgb;
 
     float4 metal_roughness_sample = global_textures[my_mat.metal_roughness_index].Sample(input.uv);
+    float sampled_ao = metal_roughness_sample.r;
     float sampled_roughness = metal_roughness_sample.g;
     float sampled_metalness = metal_roughness_sample.b;
 
@@ -33,15 +34,16 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3 sun_color = lerp(sky_color, halo_color, 0.2);
 
     // Get normal vector at this point
-    float3 sampled_normal = global_textures[my_mat.normal_map_index].Sample(input.uv).xyz;
+    float3 sampled_normal = 2.0 * global_textures[my_mat.normal_map_index].Sample(input.uv).xyz - 1.0;
     float roughness = toksvigs_method(sampled_normal, my_mat.base_roughness * sampled_roughness);
-    params.shading_normal = normalize(mul(2.0 * sampled_normal - 1.0, TBN));
+    params.shading_normal = normalize(mul(sampled_normal, TBN));
     params.geometry_normal = normal;
     params.view = view;
     params.light_direction = uniforms.sun_direction.xyz;
     params.light_radiance = lerp(uniforms.sun_radiance.rgb * halo_color, uniforms.sun_radiance.rgb, sunzenith_dot);
     params.roughness = roughness;
     params.metalness = sampled_metalness;
+    params.ambient_occlusion = sampled_ao;
 
     float3 lit_color = pbr_mettalic_roughness(params);
 

@@ -51,11 +51,12 @@ struct PBRParams
     float3 light_radiance;
     float roughness;
     float metalness;
+    float ambient_occlusion;
 }
 
 float3 pbr_mettalic_roughness(PBRParams params)
 {
-    float ambient_occlusion = 1.0;
+    float ambient_occlusion = 1.0 - params.ambient_occlusion;
 
     float3 halfway = normalize(params.view + params.light_direction);
     float3 ks = fresnel_schlick(float3(0.04), halfway, params.view);

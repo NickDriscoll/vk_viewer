@@ -20,6 +20,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3 grass_normal;
     float grass_roughness;
     float grass_metalness;
+    float grass_ao;
     {
         float4 sample = global_textures[grass_material.color_map_index].Sample(uvs);
         grass_albedo = sample.rgb;
@@ -30,12 +31,14 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
         grass_roughness = toksvigs_method(n_sample, grass_material.base_roughness * metal_roughness_sample.g);
         grass_metalness = metal_roughness_sample.b;
+        grass_ao = metal_roughness_sample.r;
     }
 
     float3 rock_albedo;
     float3 rock_normal;
     float rock_roughness;
     float rock_metalness;
+    float rock_ao;
     {
         float4 sample = global_textures[rock_material.color_map_index].Sample(uvs);
         rock_albedo = sample.rgb;
@@ -46,6 +49,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
         rock_roughness = toksvigs_method(n_sample, rock_material.base_roughness * metal_roughness_sample.g);
         rock_metalness = metal_roughness_sample.b;
+        rock_ao = metal_roughness_sample.r;
     }
 
     float mix_factor = max(0.0, dot(normal, float3(0.0, 0.0, 1.0)));
@@ -54,6 +58,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3 world_normal = mul(lerp(rock_normal, grass_normal, mix_factor), TBN);
     float roughness = lerp(rock_roughness, grass_roughness, mix_factor);
     float metalness = lerp(rock_metalness, grass_metalness, mix_factor);
+    float ao = lerp(rock_ao, grass_ao, mix_factor);
 
     //Compute sun color
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
@@ -70,6 +75,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.light_radiance = lerp(uniforms.sun_radiance.rgb * halo_color, uniforms.sun_radiance.rgb, sunzenith_dot);
     params.roughness = roughness;
     params.metalness = metalness;
+    params.ambient_occlusion = ao;
 
     float3 lit_color = pbr_mettalic_roughness(params);
 

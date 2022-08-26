@@ -23,6 +23,7 @@ noise = "0.7.0"
 png = "0.17.5"
 tinyfiledialogs = "3.9.0"
 rapier3d = "0.14.0"
+slotmap = "1.0"
 
 [dependencies.ash]
 version = "0.36.0"

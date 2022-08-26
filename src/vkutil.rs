@@ -85,18 +85,16 @@ pub unsafe fn allocate_image(vk: &mut VulkanAPI, image: vk::Image) -> Allocation
 }
 
 pub fn load_global_png(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: vkutil::ColorSpace) -> u32 {
-    unsafe {
-        let vim = VirtualImage::from_png_file(vk, path);
+    let vim = VirtualImage::from_png_file(vk, path);
 
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler,
-            image_view: vim.vk_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let index = global_textures.insert(descriptor_info);
+    let descriptor_info = vk::DescriptorImageInfo {
+        sampler,
+        image_view: vim.vk_view,
+        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+    };
+    let index = global_textures.insert(descriptor_info);
 
-        index as u32
-    }
+    index as u32
 }
 
 pub fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: vkutil::ColorSpace) -> u32 {
