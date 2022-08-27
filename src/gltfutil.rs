@@ -9,15 +9,16 @@ pub enum GLTFImageType {
     PNG,
     KTX
 }
+
 #[derive(Debug)]
 pub struct GLTFMaterial {
     pub base_color: [f32; 4],
     pub base_roughness: f32,
-    pub color_bytes: Vec<u8>,
+    pub color_index: Option<usize>,
     pub color_imagetype: GLTFImageType,
-    pub normal_bytes: Option<Vec<u8>>,
+    pub normal_index: Option<usize>,
     pub normal_imagetype: GLTFImageType,
-    pub metallic_roughness_bytes: Option<Vec<u8>>,
+    pub metallic_roughness_index: Option<usize>,
     pub metallic_roughness_imagetype: GLTFImageType,
 }
 
@@ -31,7 +32,8 @@ pub struct GLTFPrimitive {
 }
 
 pub struct GLTFData {
-    pub primitives: Vec<GLTFPrimitive>
+    pub primitives: Vec<GLTFPrimitive>,
+    pub texture_bytes: Vec<Vec<u8>> //Indices correspond to the image index in the JSON
 }
 
 fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic) -> Option<Vec<f32>> {
@@ -70,6 +72,8 @@ fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic
 pub fn gltf_meshdata(path: &str) -> GLTFData {
     let glb = Gltf::open(path).unwrap();
     let mut primitives = vec![];
+    let mut texture_bytes = vec![Vec::new(); glb.textures().count()];
+
     for mesh in glb.meshes() {
         for prim in mesh.primitives() {
             //We always expect an index buffer to be present
@@ -170,37 +174,56 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
             let mat = prim.material();
             let pbr_model = mat.pbr_metallic_roughness();
 
-            let color_bytes = match pbr_model.base_color_texture() {
+            let color_index = match pbr_model.base_color_texture() {
                 Some(t) => {
-                    if let Some(name) = t.texture().source().name() {
-                        println!("{}", name);
+                    let image = t.texture().source();
+                    let idx = image.index();
+                    if let Some(name) = image.name() {
+                        println!("{}: {}", idx, name);
                     }
-                    let source = t.texture().source().source();
-                    png_bytes_from_source(&glb, source)
-                }
-                None => {
-                    vec![]
-                }
-            };
+                    let source = image.source();
 
-            let normal_bytes = match mat.normal_texture() {
-                Some(texture) => {
-                    if let Some(name) = texture.texture().source().name() {
-                        println!("{}", name);
+                    if texture_bytes[idx].len() == 0 {
+                        texture_bytes[idx] = png_bytes_from_source(&glb, source);
                     }
-                    let normal_source = texture.texture().source().source();
-                    Some(png_bytes_from_source(&glb, normal_source))
+
+                    Some(idx)
                 }
                 None => { None }
             };
 
-            let metallic_roughness_bytes = match pbr_model.metallic_roughness_texture() {
-                Some(texture) => {
-                    if let Some(name) = texture.texture().source().name() {
-                        println!("{}", name);
+            let normal_index = match mat.normal_texture() {
+                Some(t) => {
+                    let image = t.texture().source();
+                    let idx = image.index();
+                    if let Some(name) = image.name() {
+                        println!("{}: {}", idx, name);
                     }
-                    let source = texture.texture().source().source();
-                    Some(png_bytes_from_source(&glb, source))
+                    let source = image.source();
+
+                    if texture_bytes[idx].len() == 0 {
+                        texture_bytes[idx] = png_bytes_from_source(&glb, source);
+                    }
+
+                    Some(idx)
+                }
+                None => { None }
+            };
+
+            let metallic_roughness_index = match pbr_model.metallic_roughness_texture() {
+                Some(t) => {
+                    let image = t.texture().source();
+                    let idx = image.index();
+                    if let Some(name) = image.name() {
+                        println!("{}: {}", idx, name);
+                    }
+                    let source = image.source();
+
+                    if texture_bytes[idx].len() == 0 {
+                        texture_bytes[idx] = png_bytes_from_source(&glb, source);
+                    }
+
+                    Some(idx)
                 }
                 None => { None }
             };
@@ -208,11 +231,11 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
             let mat = GLTFMaterial {
                 base_color: pbr_model.base_color_factor(),
                 base_roughness: pbr_model.roughness_factor(),
-                color_bytes,
+                color_index,
                 color_imagetype: GLTFImageType::PNG,
-                normal_bytes,
+                normal_index,
                 normal_imagetype: GLTFImageType::PNG,
-                metallic_roughness_bytes,
+                metallic_roughness_index,
                 metallic_roughness_imagetype: GLTFImageType::PNG
             };
 
@@ -229,6 +252,7 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
     }
 
     GLTFData {
-        primitives
+        primitives,
+        texture_bytes
     }
 }

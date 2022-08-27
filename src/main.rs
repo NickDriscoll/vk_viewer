@@ -26,6 +26,7 @@ use sdl2::event::Event;
 use sdl2::mixer;
 use sdl2::mixer::Music;
 use slotmap::DenseSlotMap;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
@@ -135,41 +136,63 @@ fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Re
 
 fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData, pipeline: vk::Pipeline) -> Vec<usize> {
     let mut indices = vec![];
+    let mut tex_id_map = HashMap::new();
     for prim in &data.primitives {
-        let color_idx = if prim.material.color_bytes.len() != 0 {
-            let color_image = VirtualImage::from_png_bytes(vk, prim.material.color_bytes.as_slice());
-            let image_info = vk::DescriptorImageInfo {
-                sampler: renderer.material_sampler,
-                image_view: color_image.vk_view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-            };
-            renderer.global_textures.insert(image_info) as u32
+        let color_idx = if let Some(idx) = prim.material.color_index {
+            match tex_id_map.get(&idx) {
+                Some(id) => { *id }
+                None => {
+                    let image = VirtualImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
+                    let image_info = vk::DescriptorImageInfo {
+                        sampler: renderer.material_sampler,
+                        image_view: image.vk_view,
+                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                    };
+                    let global_tex_id = renderer.global_textures.insert(image_info) as u32;
+                    tex_id_map.insert(idx, global_tex_id);
+                    global_tex_id
+                }
+            }
         } else {
             renderer.default_diffuse_idx
         };
 
-        let normal_idx = match &prim.material.normal_bytes {
-            Some(bytes) => {
-                let normal_image = VirtualImage::from_png_bytes(vk, bytes.as_slice());
-                let image_info = vk::DescriptorImageInfo {
-                    sampler: renderer.material_sampler,
-                    image_view: normal_image.vk_view,
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                };
-                renderer.global_textures.insert(image_info) as u32
+        let normal_idx = match prim.material.normal_index {
+            Some(idx) => {
+                match tex_id_map.get(&idx) {
+                    Some(id) => { *id }
+                    None => {
+                        let image = VirtualImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
+                        let image_info = vk::DescriptorImageInfo {
+                            sampler: renderer.material_sampler,
+                            image_view: image.vk_view,
+                            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                        };
+                        let global_tex_id = renderer.global_textures.insert(image_info) as u32;
+                        tex_id_map.insert(idx, global_tex_id);
+                        global_tex_id
+                    }
+                }
             }
             None => { renderer.default_normal_idx }
         };
 
-        let metal_roughness_idx = match&prim.material.metallic_roughness_bytes {
-            Some(bytes) => {
-                let normal_image = VirtualImage::from_png_bytes(vk, bytes.as_slice());
-                let image_info = vk::DescriptorImageInfo {
-                    sampler: renderer.material_sampler,
-                    image_view: normal_image.vk_view,
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                };
-                renderer.global_textures.insert(image_info) as u32
+        let metal_roughness_idx = match prim.material.metallic_roughness_index {
+            Some(idx) => {
+                match tex_id_map.get(&idx) {
+                    Some(id) => { *id }
+                    None => {
+                        let image = VirtualImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
+                        let image_info = vk::DescriptorImageInfo {
+                            sampler: renderer.material_sampler,
+                            image_view: image.vk_view,
+                            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                        };
+                        let global_tex_id = renderer.global_textures.insert(image_info) as u32;
+                        tex_id_map.insert(idx, global_tex_id);
+                        global_tex_id
+                    }
+                }
 
             }
             None => {

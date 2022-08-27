@@ -272,7 +272,7 @@ impl Renderer {
         );
 
         //Allocate material buffer
-        let global_material_slots = 1024;
+        let global_material_slots = 1024 * 1024;
         let material_size = 2 * size_of::<u32>() as u64;
         let material_buffer = GPUBuffer::allocate(
             vk,
