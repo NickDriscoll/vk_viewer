@@ -329,7 +329,7 @@ fn main() {
     };
 
     //Create the main swapchain for window present
-    let mut vk_display = vkutil::Display::init(&mut vk, vk_render_pass);
+    let mut vk_swapchain = vkutil::Swapchain::init(&mut vk, vk_render_pass);
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let pipeline_layout = unsafe {
@@ -589,19 +589,19 @@ fn main() {
                 vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
-                for framebuffer in vk_display.swapchain_framebuffers {
+                for framebuffer in vk_swapchain.swapchain_framebuffers {
                     vk.device.destroy_framebuffer(framebuffer, vkutil::MEMORY_ALLOCATOR);
                 }
-                for view in vk_display.swapchain_image_views {
+                for view in vk_swapchain.swapchain_image_views {
                     vk.device.destroy_image_view(view, vkutil::MEMORY_ALLOCATOR);
                 }
-                vk.device.destroy_image_view(vk_display.depth_image_view, vkutil::MEMORY_ALLOCATOR);
-                vk.ext_swapchain.destroy_swapchain(vk_display.swapchain, vkutil::MEMORY_ALLOCATOR);
+                vk.device.destroy_image_view(vk_swapchain.depth_image_view, vkutil::MEMORY_ALLOCATOR);
+                vk.ext_swapchain.destroy_swapchain(vk_swapchain.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                vk_display = vkutil::Display::init(&mut vk, vk_render_pass);
+                vk_swapchain = vkutil::Swapchain::init(&mut vk, vk_render_pass);
 
-                window_size = glm::vec2(vk_display.extent.width, vk_display.extent.height);
+                window_size = glm::vec2(vk_swapchain.extent.width, vk_swapchain.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
                 imgui_io.display_size[1] = window_size.y as f32;
             }
@@ -884,7 +884,7 @@ fn main() {
             }
 
             let sampler_write = vk::WriteDescriptorSet {
-                dst_set: renderer.descriptor_sets[0],
+                dst_set: renderer.bindless_descriptor_set,
                 descriptor_count: renderer.global_textures.size() as u32,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 p_image_info: image_infos.as_ptr(),
@@ -953,7 +953,7 @@ fn main() {
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(vk_display.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(vk_swapchain.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
 
             //Put command buffer in recording state
             vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
@@ -962,8 +962,8 @@ fn main() {
             let viewport = vk::Viewport {
                 x: 0.0,
                 y: 0.0,
-                width: (vk_display.extent.width) as f32,
-                height: (vk_display.extent.height) as f32,
+                width: (vk_swapchain.extent.width) as f32,
+                height: (vk_swapchain.extent.height) as f32,
                 min_depth: 0.0,
                 max_depth: 1.0
             };
@@ -973,7 +973,7 @@ fn main() {
             let vk_render_area = {
                 vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: vk_display.extent
+                    extent: vk_swapchain.extent
                 }
             };
             let scissor_area = vk::Rect2D {
@@ -988,7 +988,7 @@ fn main() {
             let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: vk_render_pass,
-                framebuffer: vk_display.swapchain_framebuffers[current_framebuffer_index],
+                framebuffer: vk_swapchain.swapchain_framebuffers[current_framebuffer_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
@@ -997,7 +997,7 @@ fn main() {
             vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             //Once-per-frame bindless descriptor setup
-            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &renderer.descriptor_sets, &[]);
+            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[renderer.bindless_descriptor_set], &[]);
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
@@ -1048,7 +1048,7 @@ fn main() {
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
-                p_swapchains: &vk_display.swapchain,
+                p_swapchains: &vk_swapchain.swapchain,
                 p_image_indices: &(current_framebuffer_index as u32),
                 wait_semaphore_count: 1,
                 p_wait_semaphores: &vk_rendercomplete_semaphore,

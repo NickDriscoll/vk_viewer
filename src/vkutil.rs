@@ -896,7 +896,7 @@ impl GPUBuffer {
     }
 }
 
-pub struct Display {
+pub struct Swapchain {
     pub swapchain: vk::SwapchainKHR,
     pub extent: vk::Extent2D,
     pub color_format: vk::Format,
@@ -907,7 +907,7 @@ pub struct Display {
     pub swapchain_framebuffers: Vec<vk::Framebuffer>
 }
 
-impl Display {
+impl Swapchain {
     pub fn init(vk: &mut VulkanAPI, render_pass: vk::RenderPass) -> Self {
         //Create the main swapchain for window present
         let vk_swapchain_image_format;
@@ -924,7 +924,6 @@ impl Display {
                     surf_format = *sformat;
                     break;
                 }
-                surf_format = vk::SurfaceFormatKHR::default();
             }
 
             let present_mode = present_modes[0];
@@ -1008,18 +1007,7 @@ impl Display {
             };
 
             let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-
-            let reqs = vk.device.get_image_memory_requirements(depth_image);
-            let allocation = vk.allocator.allocate(&AllocationCreateDesc {
-                name: "",
-                requirements: reqs,
-                location: MemoryLocation::GpuOnly,
-                linear: false       //We want tiled memory for images
-            }).unwrap();
-
-            //Bind the depth image to its memory
-            vk.device.bind_image_memory(depth_image, allocation.memory(), allocation.offset()).unwrap();
-
+            allocate_image(vk, depth_image);
             depth_image
         };
 
@@ -1065,7 +1053,7 @@ impl Display {
             fbs
         };
 
-        Display {
+        Swapchain {
             swapchain: vk_swapchain,
             extent: vk_swapchain_extent,
             color_format: vk_swapchain_image_format,

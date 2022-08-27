@@ -120,12 +120,98 @@ pub struct FrameUniforms {
     pub sunview_idx: u32
 }
 
+pub struct CascadedShadowMap {
+    framebuffer: vk::Framebuffer,
+    image: vk::Image,
+    image_view: vk::ImageView,
+    format: vk::Format,
+    cascades: u32
+}
+
+impl CascadedShadowMap {
+    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, resolution: u32, cascades: u32) -> Self {
+        let format = vk::Format::D32_SFLOAT;
+        let image = unsafe {
+            let extent = vk::Extent3D {
+                width: resolution * cascades,
+                height: resolution,
+                depth: 1
+            };
+
+            let create_info = vk::ImageCreateInfo {
+                queue_family_index_count: 1,
+                p_queue_family_indices: [vk.graphics_queue_family_index].as_ptr(),
+                flags: vk::ImageCreateFlags::empty(),
+                image_type: vk::ImageType::TYPE_2D,
+                format: format,
+                extent,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+
+            let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            vkutil::allocate_image(vk, depth_image);
+            depth_image
+        };
+
+        let image_view = unsafe {
+            let image_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let view_info = vk::ImageViewCreateInfo {
+                image,
+                format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                subresource_range: image_subresource_range,
+                ..Default::default()
+            };
+
+            vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        };
+
+        //Create framebuffers
+        let framebuffer = unsafe {
+            let mut attachments = [vk::ImageView::default(), image_view];
+            let fb_info = vk::FramebufferCreateInfo {
+                render_pass,
+                attachment_count: attachments.len() as u32,
+                p_attachments: attachments.as_ptr(),
+                width: resolution * cascades,
+                height: resolution,
+                layers: 1,
+                ..Default::default()
+            };
+            
+            vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        };
+
+        CascadedShadowMap {
+            framebuffer,
+            image,
+            image_view,
+            format,
+            cascades
+        }
+    }
+}
+
 pub struct Renderer {
     pub default_diffuse_idx: u32,
     pub default_normal_idx: u32,
     pub default_metal_roughness_idx: u32,
+
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
+
     primitives: OptionVec<DrawPrimitive>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
@@ -148,7 +234,7 @@ pub struct Renderer {
     pub global_textures: FreeList<DescriptorImageInfo>,
     pub global_materials: FreeList<Material>,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
-    pub descriptor_sets: Vec<vk::DescriptorSet>,
+    pub bindless_descriptor_set: vk::DescriptorSet
 }
 
 impl Renderer {
@@ -248,7 +334,7 @@ impl Renderer {
 
         //Set up global bindless descriptor set
         let descriptor_set_layout;
-        let descriptor_sets = unsafe {
+        let bindless_descriptor_set = unsafe {
             struct BufferDescriptorDesc {
                 ty: vk::DescriptorType,
                 stage_flags: vk::ShaderStageFlags,
@@ -404,7 +490,7 @@ impl Renderer {
                 vk.device.update_descriptor_sets(&[write], &[]);
             }
 
-            descriptor_sets
+            descriptor_sets[0]
         };
 
         //Create texture samplers
@@ -441,7 +527,7 @@ impl Renderer {
         };
 
         let default_color_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
-        let default_metalrough_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0x00, 0xFF])) as u32};
+        let default_metalrough_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x00, 0xFF, 0x00, 0xFF])) as u32};
         let default_normal_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
         //Create free list for materials
@@ -473,7 +559,7 @@ impl Renderer {
             global_textures,
             global_materials,
             descriptor_set_layout,
-            descriptor_sets,
+            bindless_descriptor_set,
             position_buffer,
             position_offset: 0,
             tangent_buffer,

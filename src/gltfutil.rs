@@ -172,6 +172,9 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
 
             let color_bytes = match pbr_model.base_color_texture() {
                 Some(t) => {
+                    if let Some(name) = t.texture().source().name() {
+                        println!("{}", name);
+                    }
                     let source = t.texture().source().source();
                     png_bytes_from_source(&glb, source)
                 }
@@ -182,6 +185,9 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
 
             let normal_bytes = match mat.normal_texture() {
                 Some(texture) => {
+                    if let Some(name) = texture.texture().source().name() {
+                        println!("{}", name);
+                    }
                     let normal_source = texture.texture().source().source();
                     Some(png_bytes_from_source(&glb, normal_source))
                 }
@@ -190,6 +196,9 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
 
             let metallic_roughness_bytes = match pbr_model.metallic_roughness_texture() {
                 Some(texture) => {
+                    if let Some(name) = texture.texture().source().name() {
+                        println!("{}", name);
+                    }
                     let source = texture.texture().source().source();
                     Some(png_bytes_from_source(&glb, source))
                 }

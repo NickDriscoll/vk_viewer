@@ -19,6 +19,10 @@ struct MeshVertexOutput {
     float3 bitangent;
 }
 
+struct ShadowVertexOutput {
+    float4 clip_out : SV_Position;
+}
+
 struct AtmosphereVertexOutput
 {
     float4 clip_out : SV_Position;
