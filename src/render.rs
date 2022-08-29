@@ -125,16 +125,17 @@ pub struct CascadedShadowMap {
     framebuffer: vk::Framebuffer,
     image: vk::Image,
     image_view: vk::ImageView,
-    format: vk::Format,
-    cascades: u32
+    format: vk::Format
 }
 
 impl CascadedShadowMap {
-    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, resolution: u32, cascades: u32) -> Self {
+    const CASCADE_COUNT: u32 = 6;
+
+    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, resolution: u32) -> Self {
         let format = vk::Format::D32_SFLOAT;
         let image = unsafe {
             let extent = vk::Extent3D {
-                width: resolution * cascades,
+                width: resolution * Self::CASCADE_COUNT,
                 height: resolution,
                 depth: 1
             };
@@ -181,12 +182,12 @@ impl CascadedShadowMap {
 
         //Create framebuffers
         let framebuffer = unsafe {
-            let mut attachments = [vk::ImageView::default(), image_view];
+            let attachments = [vk::ImageView::default(), image_view];
             let fb_info = vk::FramebufferCreateInfo {
                 render_pass,
                 attachment_count: attachments.len() as u32,
                 p_attachments: attachments.as_ptr(),
-                width: resolution * cascades,
+                width: resolution * Self::CASCADE_COUNT,
                 height: resolution,
                 layers: 1,
                 ..Default::default()
@@ -199,8 +200,7 @@ impl CascadedShadowMap {
             framebuffer,
             image,
             image_view,
-            format,
-            cascades
+            format
         }
     }
 }
@@ -234,8 +234,10 @@ pub struct Renderer {
 
     pub global_textures: FreeList<DescriptorImageInfo>,
     pub global_materials: FreeList<Material>,
+
     pub descriptor_set_layout: vk::DescriptorSetLayout,
-    pub bindless_descriptor_set: vk::DescriptorSet
+    pub bindless_descriptor_set: vk::DescriptorSet,
+    pub samplers_descriptor_index: u32
 }
 
 impl Renderer {
@@ -328,7 +330,7 @@ impl Renderer {
         let max_imgui_vertices = 1024 * 1024;
         let imgui_buffer = GPUBuffer::allocate(
             vk,
-            8 * max_imgui_vertices * size_of::<f32>() as u64,
+            DevGui::FLOATS_PER_VERTEX as u64 * max_imgui_vertices * size_of::<f32>() as u64,
             alignment,
             usage_flags,
             MemoryLocation::CpuToGpu
@@ -336,6 +338,7 @@ impl Renderer {
 
         //Set up global bindless descriptor set
         let descriptor_set_layout;
+        let samplers_descriptor_index;
         let bindless_descriptor_set = unsafe {
             struct BufferDescriptorDesc {
                 ty: vk::DescriptorType,
@@ -447,6 +450,8 @@ impl Renderer {
                 descriptor_count: 1
             };
             pool_sizes.push(pool_size);
+
+            samplers_descriptor_index = pool_sizes.len() as u32 - 1;
 
             let total_set_count = 1;
             let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
@@ -573,7 +578,8 @@ impl Renderer {
             imgui_buffer,
             uniform_buffer,
             instance_buffer,
-            material_buffer
+            material_buffer,
+            samplers_descriptor_index
         }
     }
 

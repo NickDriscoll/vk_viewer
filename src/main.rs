@@ -31,6 +31,7 @@ use std::fmt::Display;
 use std::fs::{File};
 use std::ffi::CStr;
 use std::mem::size_of;
+use std::ptr;
 use std::time::SystemTime;
 
 use ozy::structs::{FrameTimer, OptionVec};
@@ -297,8 +298,43 @@ fn main() {
         }
     }
     drop(surf_formats);
+
+    let shadow_pass = unsafe {
+        let depth_description = vk::AttachmentDescription {
+            format: vk::Format::D32_SFLOAT,
+            samples: vk::SampleCountFlags::TYPE_1,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::STORE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ..Default::default()
+        };
+
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        };
+
+        let subpass = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+            color_attachment_count: 0,
+            p_color_attachments: ptr::null(),
+            p_depth_stencil_attachment: &depth_attachment_reference,
+            ..Default::default()
+        };
+
+        let attachments = [depth_description];
+        let renderpass_info = vk::RenderPassCreateInfo {
+            attachment_count: attachments.len() as u32,
+            p_attachments: attachments.as_ptr(),
+            subpass_count: 1,
+            p_subpasses: &subpass,
+            ..Default::default()
+        };
+        vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+    };
     
-    let vk_render_pass = unsafe {
+    let main_forward_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
             format: vk_surface_format.format,
             samples: vk::SampleCountFlags::TYPE_1,
@@ -352,14 +388,14 @@ fn main() {
     };
 
     //Create the main swapchain for window present
-    let mut vk_swapchain = vkutil::Swapchain::init(&mut vk, vk_render_pass);
+    let mut vk_swapchain = vkutil::Swapchain::init(&mut vk, main_forward_pass);
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let pipeline_layout = unsafe {
         let push_constant_range = vk::PushConstantRange {
             stage_flags: push_constant_shader_stage_flags,
             offset: 0,
-            size: vk.push_constant_size
+            size: 20
         };
         let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
             push_constant_range_count: 1,
@@ -394,11 +430,11 @@ fn main() {
         };
 
         let main_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
-                        .set_shader_stages(main_shader_stages).set_render_pass(vk_render_pass).build_info();
+                        .set_shader_stages(main_shader_stages).set_render_pass(main_forward_pass).build_info();
         let terrain_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
-                            .set_shader_stages(terrain_shader_stages).set_render_pass(vk_render_pass).build_info();
+                            .set_shader_stages(terrain_shader_stages).set_render_pass(main_forward_pass).build_info();
         let atm_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
-                            .set_shader_stages(atm_shader_stages).set_render_pass(vk_render_pass).build_info();
+                            .set_shader_stages(atm_shader_stages).set_render_pass(main_forward_pass).build_info();
     
         let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &[main_info, terrain_info, atm_info]);
 
@@ -516,7 +552,7 @@ fn main() {
         totoro_list.insert(prop)
     };
 
-    let mut static_props = DenseSlotMap::new();
+    let mut static_props = DenseSlotMap::<_, StaticProp>::new();
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -538,7 +574,7 @@ fn main() {
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
-    let mut dev_gui = DevGui::new(&mut vk, vk_render_pass, pipeline_layout);
+    let mut dev_gui = DevGui::new(&mut vk, main_forward_pass, pipeline_layout);
 
     let mut input_system = input::InputSystem::init(&sdl_context);
 
@@ -614,7 +650,7 @@ fn main() {
                 vk.ext_swapchain.destroy_swapchain(vk_swapchain.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                vk_swapchain = vkutil::Swapchain::init(&mut vk, vk_render_pass);
+                vk_swapchain = vkutil::Swapchain::init(&mut vk, main_forward_pass);
 
                 window_size = glm::vec2(vk_swapchain.extent.width, vk_swapchain.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
@@ -681,27 +717,6 @@ fn main() {
             }
         }
 
-        if dev_gui.do_gui && dev_gui.do_prop_window {
-            if let Some(token) = imgui::Window::new("Props").begin(&imgui_ui) {
-                if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
-                    if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                        let data = gltfutil::gltf_meshdata(&path);                    
-                        let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
-                        let model_matrix = glm::translation(&camera.position);
-                        let s = StaticProp {
-                            model_indices,
-                            model_matrix
-                        };
-                        static_props.insert(s);
-                    }
-                }
-
-                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { dev_gui.do_prop_window = false; }
-
-                token.end()
-            }
-        }
-
         let imgui_window_token = if dev_gui.do_gui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
         } else {
@@ -713,9 +728,6 @@ fn main() {
                 if let Some(mt) = imgui_ui.begin_menu("Environment") {
                     if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) {
                         dev_gui.do_terrain_window = true;
-                    }
-                    if imgui::MenuItem::new("Props").build(&imgui_ui) {
-                        dev_gui.do_prop_window = true;
                     }
                     mt.end();
                 }
@@ -856,6 +868,18 @@ fn main() {
                     totoro_list.delete(i);
                 }
             }
+            if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
+                if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
+                    let data = gltfutil::gltf_meshdata(&path);                    
+                    let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
+                    let model_matrix = glm::translation(&camera.position);
+                    let s = StaticProp {
+                        model_indices,
+                        model_matrix
+                    };
+                    static_props.insert(s);
+                }
+            }
             if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
                 break 'running;
             }
@@ -890,7 +914,7 @@ fn main() {
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 p_image_info: image_infos.as_ptr(),
                 dst_array_element: 0,
-                dst_binding: 8,
+                dst_binding: renderer.samplers_descriptor_index,
                 ..Default::default()
             };
             unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
@@ -988,7 +1012,7 @@ fn main() {
 
             let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
             let rp_begin_info = vk::RenderPassBeginInfo {
-                render_pass: vk_render_pass,
+                render_pass: main_forward_pass,
                 framebuffer: vk_swapchain.swapchain_framebuffers[current_framebuffer_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,

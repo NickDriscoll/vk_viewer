@@ -4,6 +4,7 @@ use ash::vk;
 use gpu_allocator::vulkan::*;
 use gpu_allocator::MemoryLocation;
 use ozy::io::DDSHeader;
+use sdl2::libc::c_char;
 use sdl2::video::Window;
 use std::ptr;
 use routines::*;
@@ -628,7 +629,6 @@ pub struct VulkanAPI {
     pub ext_surface: ash::extensions::khr::Surface,
     pub ext_swapchain: ash::extensions::khr::Swapchain,
     pub graphics_queue_family_index: u32,
-    pub push_constant_size: u32,
     pub graphics_command_buffer: vk::CommandBuffer,
     pub graphics_command_buffer_fence: vk::Fence
 }
@@ -662,9 +662,9 @@ impl VulkanAPI {
             let vk_create_info = vk::InstanceCreateInfo {
                 p_application_info: &app_info,
                 enabled_extension_count: extension_names.len() as u32,
-                pp_enabled_extension_names: &extension_names as *const *const _,
+                pp_enabled_extension_names: &extension_names as *const *const c_char,
                 enabled_layer_count: layer_names.len() as u32,
-                pp_enabled_layer_names: &layer_names as *const *const _,
+                pp_enabled_layer_names: &layer_names as *const *const c_char,
                 ..Default::default()
             };
 
@@ -683,7 +683,6 @@ impl VulkanAPI {
         //Create the Vulkan device
         let vk_physical_device;
         let vk_physical_device_properties;
-        let min_pc_size = 20;
         let mut graphics_queue_family_index = 0;
         let buffer_device_address;
         let vk_device = unsafe {
@@ -728,11 +727,6 @@ impl VulkanAPI {
                 tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
             buffer_device_address = buffer_address_features.buffer_device_address != 0;
-
-            let pc_working_size = vk_physical_device_properties.limits.max_push_constants_size;
-            if pc_working_size < min_pc_size {
-                crash_with_error_dialog_titled("Your Vulkan implementation sucks, dude", &format!("Your system only supports {} push constant bytes,\nbut this application requires at least {}.", pc_working_size, min_pc_size));
-            }
 
             let mut i = 0;
             let qfps = vk_instance.get_physical_device_queue_family_properties(vk_physical_device);
@@ -793,7 +787,7 @@ impl VulkanAPI {
     
             let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
                 command_pool,
-                command_buffer_count: 1,
+                command_buffer_count: 256,
                 level: vk::CommandBufferLevel::PRIMARY,
                 ..Default::default()
             };
@@ -818,7 +812,6 @@ impl VulkanAPI {
             ext_surface: vk_ext_surface,
             ext_swapchain: vk_ext_swapchain,
             graphics_queue_family_index,
-            push_constant_size: min_pc_size,
             graphics_command_buffer,
             graphics_command_buffer_fence
         }
