@@ -493,13 +493,6 @@ fn main() {
     let mut totoro_lookat_dist = 7.5;
     let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
-    //Load gltf object
-    let glb_name = "./data/models/nice_tree.glb";
-    let tree_data = gltfutil::gltf_meshdata(glb_name);
-
-    //Register each primitive with the renderer
-    let tree_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &tree_data, vk_3D_graphics_pipeline);
-
     //Load totoro as glb
     let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
 
@@ -507,7 +500,8 @@ fn main() {
     let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
-    let totoro_prop = {
+    let mut totoro_list = OptionVec::new();
+    let main_totoro_idx = {
         let rigid_body = RigidBodyBuilder::dynamic()
         .translation(glm::vec3(0.0, 0.0, 20.0))
         .ccd_enabled(true)
@@ -515,14 +509,12 @@ fn main() {
         let collider = ColliderBuilder::ball(2.1).restitution(2.5).build();
         let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
         let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
-        PhysicsProp {
+        let prop = PhysicsProp {
             rigid_body_handle,
             collider_handle
-        }
+        };
+        totoro_list.insert(prop)
     };
-
-    let mut totoro_list = OptionVec::new();
-    let main_totoro_idx = totoro_list.insert(totoro_prop);
 
     let mut static_props = DenseSlotMap::new();
 
@@ -836,20 +828,6 @@ fn main() {
         };
         last_view_from_world = view_from_world;
         renderer.uniform_data.view_from_world = view_from_world;
-
-        let bb_mats = {
-            let mut ms = Vec::with_capacity((trees_width * trees_height) as usize);
-            for i in 0..trees_width {
-                for j in 0..trees_height {
-                    let mat = glm::translation(&glm::vec3(25.0 * i as f32 - 50.0, 25.0 * j as f32 - 50.0, 0.0)) * ozy::routines::uniform_scale(3.0);
-                    ms.push(mat);
-                }
-            }
-            ms
-        };
-        for idx in &tree_model_indices {
-            renderer.queue_drawcall(*idx, &bb_mats);
-        }
 
         for (_, prop) in static_props.iter() {
             for idx in prop.model_indices.iter() {

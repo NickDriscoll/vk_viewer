@@ -56,29 +56,31 @@ struct PBRParams
 
 float3 pbr_mettalic_roughness(PBRParams params)
 {
-    float ambient_occlusion = 1.0 - params.ambient_occlusion;
+    float ambient_occlusion = params.ambient_occlusion;
 
     float3 halfway = normalize(params.view + params.light_direction);
     float3 ks = fresnel_schlick(float3(0.04), halfway, params.view);
     float3 kd = float3(1.0) - ks;
     kd *= 1.0 - params.metalness;
 
+    float shading_light_dot = max(dot(params.shading_normal, params.light_direction), 0.0);
+
     // Cook-Torrence specular term evaluation
     float D = NDFggxtr(params.shading_normal, halfway, params.roughness);
     float3 F = ks;
     float G = geometry_smith(params.shading_normal, params.view, params.light_direction, params.roughness);
     float3 numerator = D * F * G;
-    float denominator = 4.0 * max(dot(params.shading_normal, params.view), 0.0) * max(dot(params.shading_normal, params.light_direction), 0.0) + 0.0001;
+    float denominator = 4.0 * max(dot(params.shading_normal, params.view), 0.0) * shading_light_dot + 0.0001;
     float3 cook_torrence = numerator / denominator;
 
     // Luminance from the sun
-    float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * params.light_radiance *
-                max(0.0, dot(params.shading_normal, params.light_direction));
+    float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * params.light_radiance * shading_light_dot;
     float sun_contribution = 1.0 - smoothstep(0.0, -0.05, params.light_direction.z);
     Lo *= sun_contribution;
     float3 ambient = float3(0.05) * params.albedo * ambient_occlusion;
 
     // Tone-mapping step
     float3 color = Lo + ambient;
-    return color / (color + float3(1.0));
+    // return color / (color + float3(1.0));
+    return color;
 }

@@ -178,9 +178,6 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 Some(t) => {
                     let image = t.texture().source();
                     let idx = image.index();
-                    if let Some(name) = image.name() {
-                        println!("{}: {}", idx, name);
-                    }
                     let source = image.source();
 
                     if texture_bytes[idx].len() == 0 {
@@ -196,9 +193,6 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 Some(t) => {
                     let image = t.texture().source();
                     let idx = image.index();
-                    if let Some(name) = image.name() {
-                        println!("{}: {}", idx, name);
-                    }
                     let source = image.source();
 
                     if texture_bytes[idx].len() == 0 {
@@ -214,9 +208,6 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 Some(t) => {
                     let image = t.texture().source();
                     let idx = image.index();
-                    if let Some(name) = image.name() {
-                        println!("{}: {}", idx, name);
-                    }
                     let source = image.source();
 
                     if texture_bytes[idx].len() == 0 {
