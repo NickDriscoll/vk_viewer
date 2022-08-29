@@ -3,6 +3,7 @@ use ash::vk::DescriptorImageInfo;
 
 use crate::*;
 
+//1:1 with shader struct
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct MaterialData {
@@ -259,9 +260,10 @@ impl Renderer {
             MemoryLocation::CpuToGpu
         );
         
-        //Allocate buffer for instance data
         let storage_buffer_alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
-        let global_transform_slots = 1024 * 1024;
+        
+        //Allocate buffer for instance data
+        let global_transform_slots = 1024 * 4;
         let buffer_size = (size_of::<render::InstanceData>() * global_transform_slots) as vk::DeviceSize;
         let instance_buffer = GPUBuffer::allocate(
             vk,
@@ -272,11 +274,11 @@ impl Renderer {
         );
 
         //Allocate material buffer
-        let global_material_slots = 1024 * 1024;
-        let material_size = 2 * size_of::<u32>() as u64;
+        let global_material_slots = 1024 * 4;
+        let buffer_size = (global_material_slots * size_of::<MaterialData>()) as vk::DeviceSize;
         let material_buffer = GPUBuffer::allocate(
             vk,
-            material_size * global_material_slots,
+            buffer_size,
             storage_buffer_alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             MemoryLocation::GpuOnly

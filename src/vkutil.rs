@@ -917,6 +917,8 @@ impl Swapchain {
             let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
             let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
 
+            println!("{:#?}", surf_formats);
+
             //Search for an SRGB swapchain format
             let mut surf_format = vk::SurfaceFormatKHR::default();
             for sformat in surf_formats.iter() {
