@@ -909,9 +909,7 @@ impl Swapchain {
             let present_modes = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap();
             let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
             let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
-
-            println!("{:#?}", surf_formats);
-
+            
             //Search for an SRGB swapchain format
             let mut surf_format = vk::SurfaceFormatKHR::default();
             for sformat in surf_formats.iter() {
@@ -1168,9 +1166,10 @@ impl GraphicsPipelineBuilder {
         }
     }
 
-    pub fn init(pipeline_layout: vk::PipelineLayout) -> Self {
+    pub fn init(render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
         let mut tmp = Self::new();
         tmp.pipeline_layout = pipeline_layout;
+        tmp.render_pass = render_pass;
         tmp
     }
 
@@ -1198,6 +1197,12 @@ impl GraphicsPipelineBuilder {
         t
     }
 
+    pub fn set_front_face(self, front_face: vk::FrontFace) -> Self {
+        let mut t = self;
+        t.rasterization_state.front_face = front_face;
+        t
+    }
+
     pub fn set_depth_test(self, set_it: vk::Bool32) -> Self {
         let mut t = self;
         t.depthstencil_state.depth_test_enable = set_it;
@@ -1207,13 +1212,6 @@ impl GraphicsPipelineBuilder {
     pub fn set_shader_stages(self, stages: Vec<vk::PipelineShaderStageCreateInfo>) -> Self {
         GraphicsPipelineBuilder {
             shader_stages: stages,
-            ..self
-        }
-    }
-
-    pub fn set_render_pass(self, render_pass: vk::RenderPass) -> Self {
-        GraphicsPipelineBuilder {
-            render_pass,
             ..self
         }
     }

@@ -1,3 +1,5 @@
+static const uint SHADOW_CASCADE_COUNT = 5;
+
 struct InstanceData {
     float4x4 world_from_model;
     float4x4 normal_matrix;
@@ -36,9 +38,11 @@ struct FrameUniforms {
     float4x4 view_from_world;
     float4x4 clip_from_skybox;
     float4x4 clip_from_screen;
+    float4x4 sun_shadow_matrices[5];
     float4 camera_position;
     float4 sun_direction;
     float4 sun_radiance;
+    uint sun_shadowmap_idx;
     float time;
     float stars_threshold;
     float stars_exposure;

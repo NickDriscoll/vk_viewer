@@ -77,10 +77,6 @@ float3 pbr_mettalic_roughness(PBRParams params)
     float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * params.light_radiance * shading_light_dot;
     float sun_contribution = 1.0 - smoothstep(0.0, -0.05, params.light_direction.z);
     Lo *= sun_contribution;
-    float3 ambient = float3(0.05) * params.albedo * ambient_occlusion;
 
-    // Tone-mapping step
-    float3 color = Lo + ambient;
-    // return color / (color + float3(1.0));
-    return color;
+    return Lo;
 }

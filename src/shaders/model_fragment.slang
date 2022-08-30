@@ -45,12 +45,20 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.metalness = sampled_metalness;
     params.ambient_occlusion = sampled_ao;
 
-    float3 lit_color = pbr_mettalic_roughness(params);
+    float3 final_color = float3(0.0);
 
-    lit_color += global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
+    final_color = pbr_mettalic_roughness(params);
+
+    float3 ambient = float3(0.05) * params.albedo * sampled_ao;
+
+    // Tone-mapping step
+    final_color = final_color + ambient;
+    final_color = final_color / (final_color + float3(1.0));
+
+    final_color += global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
 
     // Apply fog like GL_EXP2
-    float3 final_color = exp2_fog(uniforms, input.position, lit_color, sun_color);
+    final_color = exp2_fog(uniforms, input.position, final_color, sun_color);
     
     return float4(final_color, 1.0);
 }

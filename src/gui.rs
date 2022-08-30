@@ -22,15 +22,13 @@ impl DevGui {
             frames.push(DevGuiFrame::default());
         }
         
-
         let im_shader_stages = {
             let v = load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/imgui_vert.spv");
             let f = load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui_frag.spv");
             vec![v, f]
         };
-        let im_info = GraphicsPipelineBuilder::init(pipeline_layout)
+        let im_info = GraphicsPipelineBuilder::init(render_pass, pipeline_layout)
             .set_shader_stages(im_shader_stages)
-            .set_render_pass(render_pass)
             .set_depth_test(vk::FALSE)           
             .set_cull_mode(vk::CullModeFlags::NONE) 
             .build_info();

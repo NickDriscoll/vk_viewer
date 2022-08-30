@@ -11,13 +11,3 @@ StructuredBuffer<float4> vertex_tangents;
 StructuredBuffer<float4> vertex_normals;
 [[vk_binding(6, 0)]]
 StructuredBuffer<float2> vertex_uvs;
-
-[[vk::push_constant]]
-cbuffer PushConstants
-{
-    uint material_idx;
-    uint position_buffer_offset;
-    uint tangent_buffer_offset;
-    uint normal_buffer_offset;
-    uint uv_buffer_offset;
-}

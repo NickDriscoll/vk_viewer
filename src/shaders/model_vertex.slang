@@ -1,6 +1,16 @@
 import structs;
 import vertex_bindings;
 
+[[vk::push_constant]]
+cbuffer PushConstants
+{
+    uint material_idx;
+    uint position_buffer_offset;
+    uint tangent_buffer_offset;
+    uint normal_buffer_offset;
+    uint uv_buffer_offset;
+}
+
 [shader("vertex")]
 MeshVertexOutput vertex_main(ModelVertex vertex) {
     float4x4 model_matrix = instance_buffer[vertex.instance_id].world_from_model;
@@ -21,6 +31,8 @@ MeshVertexOutput vertex_main(ModelVertex vertex) {
     float3 world_bitangent = normalize(mul(normal_matrix, float4(bitangent, 1.0)).xyz);
 
     float2 uv = vertex_uvs[vertex.id + uv_buffer_offset];
+
+    
 
     //Assemble and return output
     MeshVertexOutput output;

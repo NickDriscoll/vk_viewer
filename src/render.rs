@@ -51,9 +51,15 @@ pub struct DrawCall {
     pub first_instance: u32
 }
 
+pub enum ShadowType {
+    OpaqueCaster,
+    NonCaster
+}
+
 //This is a struct that contains mesh and material data
 //In other words, the data required to draw a specific kind of thing
-pub struct DrawPrimitive {
+pub struct Primitive {
+    pub shadow_type: ShadowType,
     pub index_buffer: GPUBuffer,
     pub index_count: u32,
     pub position_offset: u32,
@@ -118,9 +124,11 @@ pub struct FrameUniforms {
     pub view_from_world: glm::TMat4<f32>,
     pub clip_from_skybox: glm::TMat4<f32>,
     pub clip_from_screen: glm::TMat4<f32>,
+    pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT],
     pub camera_position: glm::TVec4<f32>,
     pub sun_direction: glm::TVec4<f32>,
     pub sun_luminance: [f32; 4],
+    pub sun_shadowmap_idx: u32,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
 	pub stars_exposure: f32,  // modifies the overall strength of the stars
@@ -134,17 +142,27 @@ pub struct CascadedShadowMap {
     framebuffer: vk::Framebuffer,
     image: vk::Image,
     image_view: vk::ImageView,
-    format: vk::Format
+    format: vk::Format,
+    texture_index: usize,
+    resolution: u32,
+    clip_distances: [f32; Self::CASCADE_COUNT + 1],
+    view_distances: [f32; Self::CASCADE_COUNT + 1]
 }
 
 impl CascadedShadowMap {
-    const CASCADE_COUNT: u32 = 6;
+    pub const CASCADE_COUNT: usize = 5;
 
-    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, resolution: u32) -> Self {
+    pub fn framebuffer(&self) -> vk::Framebuffer { self.framebuffer }
+    pub fn resolution(&self) -> u32 { self.resolution }
+    pub fn texture_index(&self) -> usize { self.texture_index }
+    pub fn view(&self) -> vk::ImageView { self.image_view }
+
+    pub fn new(vk: &mut VulkanAPI, renderer: &mut Renderer, render_pass: vk::RenderPass, resolution: u32, clipping_from_view: &glm::TMat4<f32>) -> Self {
         let format = vk::Format::D32_SFLOAT;
+
         let image = unsafe {
             let extent = vk::Extent3D {
-                width: resolution * Self::CASCADE_COUNT,
+                width: resolution * Self::CASCADE_COUNT as u32,
                 height: resolution,
                 depth: 1
             };
@@ -159,7 +177,7 @@ impl CascadedShadowMap {
                 mip_levels: 1,
                 array_layers: 1,
                 samples: vk::SampleCountFlags::TYPE_1,
-                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
             };
@@ -191,12 +209,12 @@ impl CascadedShadowMap {
 
         //Create framebuffers
         let framebuffer = unsafe {
-            let attachments = [vk::ImageView::default(), image_view];
+            let attachments = [image_view];
             let fb_info = vk::FramebufferCreateInfo {
                 render_pass,
                 attachment_count: attachments.len() as u32,
                 p_attachments: attachments.as_ptr(),
-                width: resolution * Self::CASCADE_COUNT,
+                width: resolution * Self::CASCADE_COUNT as u32,
                 height: resolution,
                 layers: 1,
                 ..Default::default()
@@ -205,12 +223,109 @@ impl CascadedShadowMap {
             vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap()
         };
 
+        //Manually picking the cascade distances because math is hard
+        //The shadow cascade distances are negative bc they apply to view space
+        let mut view_distances = [0.0; Self::CASCADE_COUNT + 1];
+        let near_dist = 0.1;
+        view_distances[0] = -(near_dist);
+        view_distances[1] = -(near_dist + 5.0);
+        view_distances[2] = -(near_dist + 15.0);
+        view_distances[3] = -(near_dist + 25.0);
+        view_distances[4] = -(near_dist + 75.0);
+        view_distances[5] = -(near_dist + 125.0);
+
+        //Compute the clip space distances
+        let mut clip_distances = [0.0; Self::CASCADE_COUNT + 1];
+        for i in 0..view_distances.len() {
+            let p = clipping_from_view * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
+            clip_distances[i] = p.z;
+        }
+        
+        let texture_index = renderer.global_textures.insert(vk::DescriptorImageInfo {
+            sampler: renderer.point_sampler,
+            image_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        });
+
         CascadedShadowMap {
             framebuffer,
             image,
             image_view,
-            format
+            format,
+            texture_index,
+            resolution,
+            clip_distances,
+            view_distances
         }
+    }
+
+    pub fn compute_shadow_cascade_matrices(
+        &self,
+        light_direction: &glm::TVec3<f32>,
+        v_mat: &glm::TMat4<f32>,
+        projection: &glm::TMat4<f32>
+    ) -> [glm::TMat4<f32>; Self::CASCADE_COUNT] {
+        let mut out_mats = [glm::identity(); Self::CASCADE_COUNT];
+
+        let shadow_view = glm::look_at(&(light_direction * 20.0), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));    
+        let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
+        let fovx = f32::atan(1.0 / projection[0]);
+        let fovy = f32::atan(1.0 / projection[5]);
+    
+        //Loop computes the shadow matrices for this frame
+        for i in 0..Self::CASCADE_COUNT {
+            //Near and far distances for this sub-frustum
+            let z0 = self.view_distances[i];
+            let z1 = self.view_distances[i + 1];
+    
+            //Computing the view-space coords of the sub-frustum vertices
+            let x0 = -z0 * f32::tan(fovx);
+            let x1 = z0 * f32::tan(fovx);
+            let x2 = -z1 * f32::tan(fovx);
+            let x3 = z1 * f32::tan(fovx);
+            let y0 = -z0 * f32::tan(fovy);
+            let y1 = z0 * f32::tan(fovy);
+            let y2 = -z1 * f32::tan(fovy);
+            let y3 = z1 * f32::tan(fovy);
+    
+            //The extreme vertices of the sub-frustum
+            let shadow_space_points = [
+                shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
+                shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
+                shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
+                shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
+                shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
+                shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
+                shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
+                shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
+            ];
+    
+            //Determine the boundaries of the orthographic projection
+            let mut min_x = f32::INFINITY;
+            let mut min_y = f32::INFINITY;
+            let mut max_x = 0.0;
+            let mut max_y = 0.0;
+            for point in shadow_space_points.iter() {
+                if max_x < point.x { max_x = point.x; }
+                if min_x > point.x { min_x = point.x; }
+                if max_y < point.y { max_y = point.y; }
+                if min_y > point.y { min_y = point.y; }
+            }
+    
+            let projection_depth = 20.0;
+            let shadow_projection = glm::ortho_rh_zo(
+                min_x, max_x, min_y, max_y, -8.0 * projection_depth, projection_depth * 6.0
+            );
+            let shadow_projection = glm::mat4(
+                1.0, 0.0, 0.0, 0.0,
+                0.0, -1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ) * shadow_projection;
+    
+            out_mats[i] = shadow_projection * shadow_view;
+        }
+        out_mats
     }
 }
 
@@ -223,7 +338,7 @@ pub struct Renderer {
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
 
-    primitives: OptionVec<DrawPrimitive>,
+    primitives: OptionVec<Primitive>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
     pub uniform_data: FrameUniforms,
@@ -595,7 +710,7 @@ impl Renderer {
         }
     }
 
-    pub fn register_model(&mut self, data: DrawPrimitive) -> usize {
+    pub fn register_model(&mut self, data: Primitive) -> usize {
         self.primitives.insert(data)
     }
 
@@ -648,7 +763,7 @@ impl Renderer {
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 
-    pub fn get_model(&self, idx: usize) -> &Option<DrawPrimitive> {
+    pub fn get_model(&self, idx: usize) -> &Option<Primitive> {
         &self.primitives[idx]
     }
 

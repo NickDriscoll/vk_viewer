@@ -40,7 +40,7 @@ use input::UserInput;
 use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualImage, VulkanAPI};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp};
-use render::{DrawPrimitive, Renderer, Material};
+use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType};
 
 use crate::routines::*;
 use crate::gltfutil::GLTFData;
@@ -238,7 +238,8 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
         let offsets = upload_primitive_vertices(vk, renderer, &prim);
 
         let index_buffer = vkutil::make_index_buffer(vk, &prim.indices);
-        let model_idx = renderer.register_model(DrawPrimitive {
+        let model_idx = renderer.register_model(Primitive {
+            shadow_type: ShadowType::OpaqueCaster,
             index_buffer,
             index_count: prim.indices.len().try_into().unwrap(),
             position_offset: offsets.position_offset,
@@ -357,7 +358,10 @@ fn main() {
         };
         vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
-    
+
+    let sun_shadow_map = CascadedShadowMap::new(&mut vk, &mut renderer, shadow_pass, 1024, &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0));
+    renderer.uniform_data.sun_shadowmap_idx = sun_shadow_map.texture_index() as u32;
+
     let main_forward_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
             format: vk_surface_format.format,
@@ -433,7 +437,7 @@ fn main() {
     };
 
     //Create pipelines
-    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline] = unsafe {
+    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
@@ -453,19 +457,29 @@ fn main() {
             vec![v, f]
         };
 
-        let main_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
-                        .set_shader_stages(main_shader_stages).set_render_pass(main_forward_pass).build_info();
-        let terrain_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
-                            .set_shader_stages(terrain_shader_stages).set_render_pass(main_forward_pass).build_info();
-        let atm_info = vkutil::GraphicsPipelineBuilder::init(pipeline_layout)
-                            .set_shader_stages(atm_shader_stages).set_render_pass(main_forward_pass).build_info();
+        let s_shader_stages = {
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/shadow_vert.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/shadow_frag.spv");
+            vec![v, f]
+        };
+
+        let main_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
+                        .set_shader_stages(main_shader_stages).build_info();
+        let terrain_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
+                            .set_shader_stages(terrain_shader_stages).build_info();
+        let atm_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
+                            .set_shader_stages(atm_shader_stages).build_info();
+        let shadow_info = vkutil::GraphicsPipelineBuilder::init(shadow_pass, pipeline_layout)
+                            .set_shader_stages(s_shader_stages).set_front_face(vk::FrontFace::CLOCKWISE).build_info();
     
-        let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &[main_info, terrain_info, atm_info]);
+        let infos = [main_info, terrain_info, atm_info, shadow_info];
+        let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
 
         [
             pipelines[0],
             pipelines[1],
-            pipelines[2]
+            pipelines[2],
+            pipelines[3]
         ]
     };
 
@@ -541,7 +555,8 @@ fn main() {
         let terrain_offsets = uninterleave_and_upload_vertices(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = vkutil::make_index_buffer(&mut vk, &terrain_indices);
-        renderer.register_model(DrawPrimitive {
+        renderer.register_model(Primitive {
+            shadow_type: ShadowType::OpaqueCaster,
             index_buffer,
             index_count: terrain_indices.len().try_into().unwrap(),
             position_offset: terrain_offsets.position_offset,
@@ -986,6 +1001,12 @@ fn main() {
                 glm::rotation(sun_yaw, &glm::vec3(0.0, 0.0, 1.0)) *
                 glm::rotation(sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
                 glm::vec4(-1.0, 0.0, 0.0, 0.0);
+
+            uniforms.sun_shadow_matrices = sun_shadow_map.compute_shadow_cascade_matrices(
+                &uniforms.sun_direction.xxz(),
+                &uniforms.view_from_world,
+                &uniforms.clip_from_view
+            );
             
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
             //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
@@ -1008,6 +1029,59 @@ fn main() {
 
             //Put command buffer in recording state
             vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+
+            //Once-per-frame bindless descriptor setup
+            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[renderer.bindless_descriptor_set], &[]);
+
+            //Shadow rendering
+            let render_area = {
+                vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent: vk::Extent2D {
+                        width: sun_shadow_map.resolution() * CascadedShadowMap::CASCADE_COUNT as u32,
+                        height: sun_shadow_map.resolution() 
+                    }
+                }
+            };
+            vk.device.cmd_set_scissor(vk.graphics_command_buffer, 0, &[render_area]);
+            let clear_values = [vkutil::DEPTH_STENCIL_CLEAR];
+            let rp_begin_info = vk::RenderPassBeginInfo {
+                render_pass: shadow_pass,
+                framebuffer: sun_shadow_map.framebuffer(),
+                render_area,
+                clear_value_count: clear_values.len() as u32,
+                p_clear_values: clear_values.as_ptr(),
+                ..Default::default()
+            };
+            vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
+            for i in 0..CascadedShadowMap::CASCADE_COUNT {
+                let viewport = vk::Viewport {
+                    x: (i as u32 * sun_shadow_map.resolution()) as f32,
+                    y: 0.0,
+                    width: sun_shadow_map.resolution() as f32,
+                    height: sun_shadow_map.resolution() as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0
+                };
+                vk.device.cmd_set_viewport(vk.graphics_command_buffer, 0, &[viewport]);
+
+                for drawcall in renderer.drawlist_iter() {
+                    if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
+                        if let ShadowType::NonCaster = model.shadow_type { continue; }
+
+                        let pcs = [
+                            model.material_idx.to_le_bytes(),
+                            model.position_offset.to_le_bytes(),
+                            (i as u32).to_le_bytes()
+                        ].concat();
+                        vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                        vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                        vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                    }
+                }
+            }
+            vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
             
             //Set the viewport for this frame
             let viewport = vk::Viewport {
@@ -1046,9 +1120,6 @@ fn main() {
                 ..Default::default()
             };
             vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-
-            //Once-per-frame bindless descriptor setup
-            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[renderer.bindless_descriptor_set], &[]);
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
