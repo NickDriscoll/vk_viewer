@@ -201,13 +201,37 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
             }
         };
 
+        let emissive_idx = match prim.material.emissive_index {
+            Some(idx) => {
+                match tex_id_map.get(&idx) {
+                    Some(id) => { *id }
+                    None => {
+                        let image = VirtualImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
+                        let image_info = vk::DescriptorImageInfo {
+                            sampler: renderer.material_sampler,
+                            image_view: image.vk_view,
+                            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                        };
+                        let global_tex_id = renderer.global_textures.insert(image_info) as u32;
+                        tex_id_map.insert(idx, global_tex_id);
+                        global_tex_id
+                    }
+                }
+
+            }
+            None => {
+                renderer.default_emissive_idx
+            }
+        };
+
         let material = Material {
             pipeline,
             base_color: prim.material.base_color,
             base_roughness: prim.material.base_roughness,
             color_idx,
             normal_idx,
-            metal_roughness_idx
+            metal_roughness_idx,
+            emissive_idx
         };
         let material_idx = renderer.global_materials.insert(material) as u32;
 
@@ -496,7 +520,8 @@ fn main() {
             base_roughness: 1.0,
             color_idx: grass_color_global_index,
             normal_idx: grass_normal_global_index,
-            metal_roughness_idx: grass_aoroughmetal_global_index
+            metal_roughness_idx: grass_aoroughmetal_global_index,
+            emissive_idx: renderer.default_emissive_idx
         }
     ) as u32;
     let terrain_rock_matidx = renderer.global_materials.insert(
@@ -506,7 +531,8 @@ fn main() {
             base_roughness: 1.0,
             color_idx: rock_color_global_index,
             normal_idx: rock_normal_global_index,
-            metal_roughness_idx: rock_aoroughmetal_global_index
+            metal_roughness_idx: rock_aoroughmetal_global_index,
+            emissive_idx: renderer.default_emissive_idx
         }
     ) as u32;
     
@@ -522,7 +548,7 @@ fn main() {
             tangent_offset: terrain_offsets.tangent_offset,
             normal_offset: terrain_offsets.normal_offset,
             uv_offset: terrain_offsets.uv_offset,
-            material_idx: terrain_grass_matidx
+            material_idx: terrain_grass_matidx,
         })
     };
 

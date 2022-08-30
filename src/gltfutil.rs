@@ -14,12 +14,15 @@ pub enum GLTFImageType {
 pub struct GLTFMaterial {
     pub base_color: [f32; 4],
     pub base_roughness: f32,
+    pub emissive_factor: [f32; 3],
     pub color_index: Option<usize>,
     pub color_imagetype: GLTFImageType,
     pub normal_index: Option<usize>,
     pub normal_imagetype: GLTFImageType,
     pub metallic_roughness_index: Option<usize>,
     pub metallic_roughness_imagetype: GLTFImageType,
+    pub emissive_index: Option<usize>,
+    pub emissive_imagetype: GLTFImageType
 }
 
 pub struct GLTFPrimitive {
@@ -219,15 +222,34 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 None => { None }
             };
 
+            let emissive_factor = mat.emissive_factor();
+            let emissive_index = match mat.emissive_texture() {
+                Some(t) => {
+                    let image = t.texture().source();
+                    let idx = image.index();
+                    let source = image.source();
+
+                    if texture_bytes[idx].len() == 0 {
+                        texture_bytes[idx] = png_bytes_from_source(&glb, source);
+                    }
+
+                    Some(idx)
+                }
+                None => { None }
+            };
+
             let mat = GLTFMaterial {
                 base_color: pbr_model.base_color_factor(),
                 base_roughness: pbr_model.roughness_factor(),
+                emissive_factor,
                 color_index,
                 color_imagetype: GLTFImageType::PNG,
                 normal_index,
                 normal_imagetype: GLTFImageType::PNG,
                 metallic_roughness_index,
-                metallic_roughness_imagetype: GLTFImageType::PNG
+                metallic_roughness_imagetype: GLTFImageType::PNG,
+                emissive_index,
+                emissive_imagetype: GLTFImageType::PNG
             };
 
             let p = GLTFPrimitive {

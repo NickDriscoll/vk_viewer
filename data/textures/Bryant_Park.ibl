@@ -1,0 +1,50 @@
+[Header]
+ICOfile = "Bryant_Park_Thumb.jpg"
+PREVIEWfile = "Bryant_Park_preview.jpg"
+Name = "Bryant Park"
+; Note, that this set is the replacement for Hyatt Park. Looked up the real name on Googlemaps.
+Author = "Blochi"
+Location = "New York"
+Comment = "Bright daylight, double keylight from sun reflection, large green lawn."
+GEOlat = 40.75372663620059
+GEOlong = -73.98353219032288
+Link = "http://www.hdrlabs.com/sibl/archive.html"
+Date = "2007:07:27"
+Time = "16:27:00"
+Height = 1.3
+North = 0.12
+
+[Background]
+; blend of Picturenaut, Photomatix and Photoshop tonemapping
+BGfile = "Bryant_Park_8k.jpg"
+BGmap = 1
+BGu = 0.000000
+BGv = 0.000000
+BGheight = 4000
+
+[Enviroment]
+; strange, this image only picks up the sun itself
+EVfile = "Bryant_Park_Env.hdr"
+EVmap = 1
+EVu = 0.000000
+EVv = 0.000000
+EVheight = 180
+EVmulti = 1.000000
+EVgamma = 1.800000
+
+[Reflection]
+; here you should get a crisp secondary glint from the reflected sun
+REFfile = "Bryant_Park_2k.hdr"
+REFmap = 1
+REFu = 0.000000
+REFv = 0.000000
+REFheight = 1024
+REFmulti = 1.000000
+REFgamma = 2.000000
+
+[Sun]
+SUNcolor = 255,251,246
+SUNmulti = 1.500000
+SUNu = 0.342000
+SUNv = 0.264000
+

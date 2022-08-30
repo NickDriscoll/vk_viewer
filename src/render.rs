@@ -12,6 +12,10 @@ pub struct MaterialData {
     pub color_idx: u32,
     pub normal_idx: u32,
     pub metal_roughness_idx: u32,
+    pub emissive_idx: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 }
 
 pub struct Material {
@@ -21,6 +25,7 @@ pub struct Material {
     pub color_idx: u32,
     pub normal_idx: u32,
     pub metal_roughness_idx: u32,
+    pub emissive_idx: u32
 }
 
 impl Material {
@@ -31,6 +36,10 @@ impl Material {
             color_idx: self.color_idx,
             normal_idx: self.normal_idx,
             metal_roughness_idx: self.metal_roughness_idx,
+            emissive_idx: self.emissive_idx,
+            pad0: 0,
+            pad1: 0,
+            pad2: 0
         }
     }
 }
@@ -209,6 +218,7 @@ pub struct Renderer {
     pub default_diffuse_idx: u32,
     pub default_normal_idx: u32,
     pub default_metal_roughness_idx: u32,
+    pub default_emissive_idx: u32,
 
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
@@ -535,6 +545,7 @@ impl Renderer {
 
         let default_color_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
         let default_metalrough_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0xFF, 0xFF, 0x00, 0xFF])) as u32};
+        let default_emissive_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x00, 0x00, 0x00, 0xFF])) as u32};
         let default_normal_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
         //Create free list for materials
@@ -557,6 +568,7 @@ impl Renderer {
             default_diffuse_idx: default_color_idx,
             default_normal_idx,
             default_metal_roughness_idx: default_metalrough_idx,
+            default_emissive_idx,
             material_sampler,
             point_sampler,
             primitives: OptionVec::new(),
