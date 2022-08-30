@@ -4,6 +4,31 @@ import routines;
 import fragment_bindings;
 import bindings.global_textures;
 
+struct MaterialInfo {
+    float3 albedo;
+    float3 normal;
+    float roughness;
+    float metalness;
+    float ao;
+}
+
+MaterialInfo info_from_material(Material mat, float2 uvs) {
+    MaterialInfo out;
+
+    float4 sample = global_textures[mat.color_map_index].Sample(uvs);
+    out.albedo = sample.rgb;
+    float3 n_sample = 2.0 * global_textures[mat.normal_map_index].Sample(uvs).xyz - 1.0;
+    out.normal = normalize(n_sample);
+
+    float4 metal_roughness_sample = global_textures[mat.metal_roughness_index].Sample(uvs);
+
+    out.roughness = toksvigs_method(n_sample, mat.base_roughness * metal_roughness_sample.g);
+    out.metalness = metal_roughness_sample.b;
+    out.ao = metal_roughness_sample.r;
+
+    return out;
+}
+
 float4 fragment_main(MeshVertexOutput input) : SV_Target0
 {
     float3 tangent = normalize(input.tangent);
@@ -14,51 +39,18 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float2 uvs = input.uv;
 
     Material grass_material = material_buffer[material_idx];
+    MaterialInfo grass_info = info_from_material(grass_material, input.uv);
+
     Material rock_material = material_buffer[material_idx + 1];
-
-    float3 grass_albedo;
-    float3 grass_normal;
-    float grass_roughness;
-    float grass_metalness;
-    float grass_ao;
-    {
-        float4 sample = global_textures[grass_material.color_map_index].Sample(uvs);
-        grass_albedo = sample.rgb;
-        float3 n_sample = 2.0 * global_textures[grass_material.normal_map_index].Sample(uvs).xyz - 1.0;
-        grass_normal = normalize(n_sample);
-
-        float4 metal_roughness_sample = global_textures[grass_material.metal_roughness_index].Sample(input.uv);
-
-        grass_roughness = toksvigs_method(n_sample, grass_material.base_roughness * metal_roughness_sample.g);
-        grass_metalness = metal_roughness_sample.b;
-        grass_ao = metal_roughness_sample.r;
-    }
-
-    float3 rock_albedo;
-    float3 rock_normal;
-    float rock_roughness;
-    float rock_metalness;
-    float rock_ao;
-    {
-        float4 sample = global_textures[rock_material.color_map_index].Sample(uvs);
-        rock_albedo = sample.rgb;
-        float3 n_sample = 2.0 * global_textures[rock_material.normal_map_index].Sample(uvs).xyz - 1.0;
-        rock_normal = normalize(n_sample);
-
-        float4 metal_roughness_sample = global_textures[rock_material.metal_roughness_index].Sample(input.uv);
-
-        rock_roughness = toksvigs_method(n_sample, rock_material.base_roughness * metal_roughness_sample.g);
-        rock_metalness = metal_roughness_sample.b;
-        rock_ao = metal_roughness_sample.r;
-    }
+    MaterialInfo rock_info = info_from_material(rock_material, input.uv);
 
     float mix_factor = max(0.0, dot(normal, float3(0.0, 0.0, 1.0)));
     mix_factor = smoothstep(0.60, 0.70, mix_factor);
 
-    float3 world_normal = mul(lerp(rock_normal, grass_normal, mix_factor), TBN);
-    float roughness = lerp(rock_roughness, grass_roughness, mix_factor);
-    float metalness = lerp(rock_metalness, grass_metalness, mix_factor);
-    float ao = lerp(rock_ao, grass_ao, mix_factor);
+    float3 world_normal = mul(lerp(rock_info.normal, grass_info.normal, mix_factor), TBN);
+    float roughness = lerp(rock_info.roughness, grass_info.roughness, mix_factor);
+    float metalness = lerp(rock_info.metalness, grass_info.metalness, mix_factor);
+    float ao = lerp(rock_info.ao, grass_info.ao, mix_factor);
 
     //Compute sun color
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
@@ -67,7 +59,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3 sun_color = lerp(sky_color, halo_color, 0.2);
 
     PBRParams params;
-    params.albedo = lerp(rock_albedo, grass_albedo, mix_factor);
+    params.albedo = lerp(rock_info.albedo, grass_info.albedo, mix_factor);
     params.shading_normal = world_normal;
     params.geometry_normal = normal;
     params.view = view;
