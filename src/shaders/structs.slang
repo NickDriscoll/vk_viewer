@@ -1,4 +1,5 @@
 static const uint SHADOW_CASCADE_COUNT = 5;
+static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = (SHADOW_CASCADE_COUNT + 1) / 5 + 1;
 
 struct InstanceData {
     float4x4 world_from_model;
@@ -52,7 +53,7 @@ struct FrameUniforms {
     uint sunzenith_idx;
     uint viewzenith_idx;
     uint sunview_idx;
-    float sun_shadow_distances[SHADOW_CASCADE_COUNT + 1];
+    float4 sun_shadow_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS];
 }
 
 struct Material {

@@ -20,8 +20,3 @@ ShadowVertexOutput vertex_main(ModelVertex vertex) {
 
     return out;
 }
-
-[shader("fragment")]
-float4 fragment_main(ShadowVertexOutput input) {
-    return float4(0.0);
-}

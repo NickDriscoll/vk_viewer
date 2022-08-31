@@ -9,7 +9,8 @@ pub struct DevGui {
     pub current_frame: usize,
     pub do_gui: bool,
     pub do_terrain_window: bool,
-    pub do_prop_window: bool
+    pub do_prop_window: bool,
+    pub do_sun_shadowmap: bool
 }
 
 impl DevGui {
@@ -41,7 +42,8 @@ impl DevGui {
             current_frame: 0,
             do_gui: true,
             do_terrain_window: false,
-            do_prop_window: false
+            do_prop_window: false,
+            do_sun_shadowmap: false
         }
     }
 

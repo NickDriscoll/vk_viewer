@@ -45,5 +45,6 @@ MeshVertexOutput vertex_main(ModelVertex vertex) {
         output.sunshadow_space_positions[i] = mul(uniforms.sun_shadow_matrices[i], float4(world_position, 1.0));
     }
 
+    output.clip_space_z = output.clip_out.z;
     return output;
 }

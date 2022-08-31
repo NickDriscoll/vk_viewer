@@ -230,11 +230,11 @@ impl CascadedShadowMap {
         let mut view_distances = [0.0; Self::CASCADE_COUNT + 1];
         let near_dist = 0.1;
         view_distances[0] = -(near_dist);
-        view_distances[1] = -(near_dist + 5.0);
-        view_distances[2] = -(near_dist + 15.0);
-        view_distances[3] = -(near_dist + 25.0);
-        view_distances[4] = -(near_dist + 75.0);
-        view_distances[5] = -(near_dist + 125.0);
+        view_distances[1] = -(near_dist + 15.0);
+        view_distances[2] = -(near_dist + 30.0);
+        view_distances[3] = -(near_dist + 60.0);
+        view_distances[4] = -(near_dist + 120.0);
+        view_distances[5] = -(near_dist + 500.0);
 
         //Compute the clip space distances
         let mut clip_distances = [0.0; Self::CASCADE_COUNT + 1];
@@ -305,8 +305,8 @@ impl CascadedShadowMap {
             //Determine the boundaries of the orthographic projection
             let mut min_x = f32::INFINITY;
             let mut min_y = f32::INFINITY;
-            let mut max_x = 0.0;
-            let mut max_y = 0.0;
+            let mut max_x = f32::NEG_INFINITY;
+            let mut max_y = f32::NEG_INFINITY;
             for point in shadow_space_points.iter() {
                 if max_x < point.x { max_x = point.x; }
                 if min_x > point.x { min_x = point.x; }
@@ -314,9 +314,9 @@ impl CascadedShadowMap {
                 if min_y > point.y { min_y = point.y; }
             }
     
-            let projection_depth = 20.0;
+            let projection_depth = 500.0;
             let shadow_projection = glm::ortho_rh_zo(
-                min_x, max_x, min_y, max_y, -8.0 * projection_depth, projection_depth * 6.0
+                min_x, max_x, min_y, max_y, -projection_depth, projection_depth
             );
             let shadow_projection = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,

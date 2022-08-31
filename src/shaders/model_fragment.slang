@@ -47,7 +47,14 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     float3 final_color = float3(0.0);
 
-    final_color = pbr_mettalic_roughness(params);
+    float2 sun_shadowing = compute_cascade_shadowing(
+        global_textures[uniforms.sun_shadowmap_idx],
+        normal,
+        input.sunshadow_space_positions,
+        uniforms.sun_shadow_distances,
+        input.clip_space_z
+    );
+    final_color = sun_shadowing.x * pbr_mettalic_roughness(params);
 
     float3 ambient = float3(0.05) * params.albedo * sampled_ao;
 

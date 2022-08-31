@@ -19,7 +19,7 @@ mod vkutil;
 use ash::vk;
 use gltfutil::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
-use imgui::{FontAtlasRefMut};
+use imgui::{FontAtlasRefMut, TextureId};
 use rapier3d::prelude::*;
 use routines::struct_to_bytes;
 use sdl2::event::Event;
@@ -459,8 +459,7 @@ fn main() {
 
         let s_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/shadow_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/shadow_frag.spv");
-            vec![v, f]
+            vec![v]
         };
 
         let main_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
@@ -470,7 +469,7 @@ fn main() {
         let atm_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
         let shadow_info = vkutil::GraphicsPipelineBuilder::init(shadow_pass, pipeline_layout)
-                            .set_shader_stages(s_shader_stages).set_front_face(vk::FrontFace::CLOCKWISE).build_info();
+                            .set_shader_stages(s_shader_stages).build_info();
     
         let infos = [main_info, terrain_info, atm_info, shadow_info];
         let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
@@ -758,6 +757,24 @@ fn main() {
             }
         }
 
+        if dev_gui.do_gui && dev_gui.do_sun_shadowmap {
+            let win = imgui::Window::new("Shadow atlas");
+            if let Some(win_token) = win.begin(&imgui_ui) {
+                imgui::Image::new(
+                    TextureId::new(sun_shadow_map.texture_index()),
+                    [(sun_shadow_map.resolution() * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, sun_shadow_map.resolution() as f32 / 6.0]
+                ).build(&imgui_ui);
+
+                // let im = imgui::Image::new(
+                //     TextureId::new(scene_data.sun_shadow_map.rendertarget.texture as usize),
+                //     [(cascade_size * render::SHADOW_CASCADE_COUNT as i32 / 6) as f32,
+                //     (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
+                // im.build(&imgui_ui);
+
+                win_token.end();
+            }
+        }
+
         let imgui_window_token = if dev_gui.do_gui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
         } else {
@@ -901,6 +918,7 @@ fn main() {
         if let Some(t) = imgui_window_token {
             if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
             imgui_ui.checkbox("Freecam", &mut do_freecam);
+            imgui_ui.checkbox("Shadow map", &mut dev_gui.do_sun_shadowmap);
 
             imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
             
@@ -1003,7 +1021,7 @@ fn main() {
                 glm::vec4(-1.0, 0.0, 0.0, 0.0);
 
             uniforms.sun_shadow_matrices = sun_shadow_map.compute_shadow_cascade_matrices(
-                &uniforms.sun_direction.xxz(),
+                &uniforms.sun_direction.xyz(),
                 &uniforms.view_from_world,
                 &uniforms.clip_from_view
             );
