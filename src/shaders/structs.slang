@@ -14,11 +14,13 @@ struct ModelVertex {
 //Standard output from a vertex shader
 struct MeshVertexOutput {
     float4 clip_out : SV_Position;
+    float clip_space_z;
     float3 position;
     float3 normal;
     float2 uv;
     float3 tangent;
     float3 bitangent;
+    float4 sunshadow_space_positions[SHADOW_CASCADE_COUNT];
 }
 
 struct ShadowVertexOutput {
@@ -38,7 +40,7 @@ struct FrameUniforms {
     float4x4 view_from_world;
     float4x4 clip_from_skybox;
     float4x4 clip_from_screen;
-    float4x4 sun_shadow_matrices[5];
+    float4x4 sun_shadow_matrices[SHADOW_CASCADE_COUNT];
     float4 camera_position;
     float4 sun_direction;
     float4 sun_radiance;
@@ -50,6 +52,7 @@ struct FrameUniforms {
     uint sunzenith_idx;
     uint viewzenith_idx;
     uint sunview_idx;
+    float sun_shadow_distances[SHADOW_CASCADE_COUNT + 1];
 }
 
 struct Material {

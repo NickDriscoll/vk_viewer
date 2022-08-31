@@ -1007,6 +1007,8 @@ fn main() {
                 &uniforms.view_from_world,
                 &uniforms.clip_from_view
             );
+
+            uniforms.sun_shadow_distances = sun_shadow_map.clip_distances().clone();
             
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
             //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion

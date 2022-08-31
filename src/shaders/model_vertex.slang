@@ -32,8 +32,6 @@ MeshVertexOutput vertex_main(ModelVertex vertex) {
 
     float2 uv = vertex_uvs[vertex.id + uv_buffer_offset];
 
-    
-
     //Assemble and return output
     MeshVertexOutput output;
     output.clip_out = mul(uniforms.clip_from_world, float4(world_position, 1.0));
@@ -42,6 +40,10 @@ MeshVertexOutput vertex_main(ModelVertex vertex) {
     output.uv = uv;
     output.tangent = world_tangent;
     output.bitangent = world_bitangent;
+
+    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
+        output.sunshadow_space_positions[i] = mul(uniforms.sun_shadow_matrices[i], float4(world_position, 1.0));
+    }
 
     return output;
 }

@@ -69,11 +69,19 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.metalness = metalness;
     params.ambient_occlusion = ao;
 
-    float3 lit_color = pbr_mettalic_roughness(params);
+    float3 final_color = float3(0.0);
+
+    float2 sun_shadowing = compute_cascade_shadowing(global_textures[uniforms.sun_shadowmap_idx], normal, input.sunshadow_space_positions, uniforms.sun_shadow_distances, input.clip_out.z);
+    final_color = sun_shadowing.x * pbr_mettalic_roughness(params);
+
+    float3 ambient = float3(0.05) * params.albedo * ao;
+
+    // Tone-mapping step
+    final_color = final_color + ambient;
+    final_color = final_color / (final_color + float3(1.0));
 
     // Apply fog like GL_EXP2
-    float3 final_color = exp2_fog(uniforms, input.position, lit_color, sun_color);
+    final_color = exp2_fog(uniforms, input.position, final_color, sun_color);
 
     return float4(final_color, 1.0);
-    //return float4(float3(0.0, roughness, 0.0), 1.0);
 }

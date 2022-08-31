@@ -38,7 +38,6 @@ fn main() {
         ["vertex", "shadow.slang", "shadow_vert.spv"],
         ["fragment", "shadow.slang", "shadow_frag.spv"]
     ];
-
     for shader in slang_shaders {
         let out = compile_slang_shader(shader[0], shader[1], shader[2]);
         write!(build_log, "{}\n", out).unwrap();

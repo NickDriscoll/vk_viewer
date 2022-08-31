@@ -135,7 +135,8 @@ pub struct FrameUniforms {
     pub fog_density: f32,
     pub sunzenith_idx: u32,
     pub viewzenith_idx: u32,
-    pub sunview_idx: u32
+    pub sunview_idx: u32,
+    pub sun_shadow_distances: [f32; CascadedShadowMap::CASCADE_COUNT + 1],
 }
 
 pub struct CascadedShadowMap {
@@ -152,6 +153,7 @@ pub struct CascadedShadowMap {
 impl CascadedShadowMap {
     pub const CASCADE_COUNT: usize = 5;
 
+    pub fn clip_distances(&self) -> [f32; Self::CASCADE_COUNT + 1] { self.clip_distances }
     pub fn framebuffer(&self) -> vk::Framebuffer { self.framebuffer }
     pub fn resolution(&self) -> u32 { self.resolution }
     pub fn texture_index(&self) -> usize { self.texture_index }
