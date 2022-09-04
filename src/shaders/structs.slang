@@ -1,4 +1,4 @@
-static const uint SHADOW_CASCADE_COUNT = 5;
+static const uint SHADOW_CASCADE_COUNT = 6;
 static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = (SHADOW_CASCADE_COUNT + 1) / 5 + 1;
 
 struct InstanceData {
@@ -26,6 +26,7 @@ struct MeshVertexOutput {
 
 struct ShadowVertexOutput {
     float4 clip_out : SV_Position;
+    float2 uv;
 }
 
 struct AtmosphereVertexOutput

@@ -62,7 +62,7 @@ pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::Shader
         p_code: spv.as_ptr(),
         ..Default::default()
     };
-    let module = unsafe { vk_device.create_shader_module(&module_create_info, vkutil::MEMORY_ALLOCATOR).unwrap() };
+    let module = unsafe { vk_device.create_shader_module(&module_create_info, MEMORY_ALLOCATOR).unwrap() };
 
     vk::PipelineShaderStageCreateInfo {
         stage: shader_stage_flags,
@@ -85,7 +85,7 @@ pub unsafe fn allocate_image(vk: &mut VulkanAPI, image: vk::Image) -> Allocation
     alloc
 }
 
-pub fn load_global_png(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: vkutil::ColorSpace) -> u32 {
+pub fn load_global_png(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
     let vim = VirtualImage::from_png_file(vk, path);
 
     let descriptor_info = vk::DescriptorImageInfo {
@@ -98,7 +98,7 @@ pub fn load_global_png(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::De
     index as u32
 }
 
-pub fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: vkutil::ColorSpace) -> u32 {
+pub fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
     unsafe {
         let vim = VirtualImage::from_bc7(vk, path, color_space);
 
@@ -133,10 +133,10 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         initial_layout: vk::ImageLayout::UNDEFINED,
         ..Default::default()
     };
-    let normal_image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-    let allocation = vkutil::allocate_image(vk, normal_image);
+    let normal_image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
+    let allocation = allocate_image(vk, normal_image);
 
-    let vim = vkutil::VirtualImage {
+    let vim = VirtualImage {
         vk_image: normal_image,
         vk_view: vk::ImageView::default(),
         width,
@@ -144,7 +144,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         mip_count: 1,
         allocation
     };
-    vkutil::upload_image(vk, &vim, &rgba);
+    upload_image(vk, &vim, &rgba);
 
     //Then create the image view
     let sampler_subresource_range = vk::ImageSubresourceRange {
@@ -158,11 +158,11 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         image: normal_image,
         format,
         view_type: vk::ImageViewType::TYPE_2D,
-        components: vkutil::COMPONENT_MAPPING_DEFAULT,
+        components: COMPONENT_MAPPING_DEFAULT,
         subresource_range: sampler_subresource_range,
         ..Default::default()
     };
-    let view = vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+    let view = vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
     
     vk::DescriptorImageInfo {
         sampler,
@@ -271,7 +271,7 @@ impl VirtualImage {
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 ..Default::default()
             };
-            let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
             let allocation = allocate_image(vk, image);
 
             let mut vim = VirtualImage {
@@ -282,7 +282,7 @@ impl VirtualImage {
                 mip_count: mip_levels,
                 allocation
             };
-            vkutil::upload_image(vk, &vim, &bytes);
+            upload_image(vk, &vim, &bytes);
 
             //Generate mipmaps
             vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
@@ -387,11 +387,11 @@ impl VirtualImage {
                 image,
                 format,
                 view_type: vk::ImageViewType::TYPE_2D,
-                components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                components: COMPONENT_MAPPING_DEFAULT,
                 subresource_range: sampler_subresource_range,
                 ..Default::default()
             };
-            let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let view = vk.device.create_image_view(&grass_view_info, MEMORY_ALLOCATOR).unwrap();
 
             vim.vk_view = view;
             vim
@@ -447,7 +447,7 @@ impl VirtualImage {
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
-        let image = vk.device.create_image(&image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+        let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
         let allocation = allocate_image(vk, image);
 
         let mut vim = VirtualImage {
@@ -475,7 +475,7 @@ impl VirtualImage {
             subresource_range: sampler_subresource_range,
             ..Default::default()
         };
-        let view = vk.device.create_image_view(&grass_view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+        let view = vk.device.create_image_view(&grass_view_info, MEMORY_ALLOCATOR).unwrap();
 
         vim.vk_view = view;
         vim
@@ -668,7 +668,7 @@ impl VulkanAPI {
                 ..Default::default()
             };
 
-            unsafe { vk_entry.create_instance(&vk_create_info, vkutil::MEMORY_ALLOCATOR).unwrap() }
+            unsafe { vk_entry.create_instance(&vk_create_info, MEMORY_ALLOCATOR).unwrap() }
         };
 
         //Use SDL to create the Vulkan surface
@@ -761,7 +761,7 @@ impl VulkanAPI {
                 ..Default::default()
             };
 
-            vk_instance.create_device(vk_physical_device, &create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+            vk_instance.create_device(vk_physical_device, &create_info, MEMORY_ALLOCATOR).unwrap()
         };
         
         let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);
@@ -783,7 +783,7 @@ impl VulkanAPI {
                 ..Default::default()
             };
     
-            let command_pool = vk_device.create_command_pool(&pool_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let command_pool = vk_device.create_command_pool(&pool_create_info, MEMORY_ALLOCATOR).unwrap();
     
             let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
                 command_pool,
@@ -799,7 +799,7 @@ impl VulkanAPI {
                 flags: vk::FenceCreateFlags::SIGNALED,
                 ..Default::default()
             };
-            vk_device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+            vk_device.create_fence(&create_info, MEMORY_ALLOCATOR).unwrap()
         };
 
         VulkanAPI {
@@ -839,7 +839,7 @@ impl GPUBuffer {
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
             };
-            vk_buffer = vk.device.create_buffer(&buffer_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            vk_buffer = vk.device.create_buffer(&buffer_create_info, MEMORY_ALLOCATOR).unwrap();
             let mem_reqs = vk.device.get_buffer_memory_requirements(vk_buffer);
 
             let a = vk.allocator.allocate(&AllocationCreateDesc {
@@ -944,7 +944,7 @@ impl Swapchain {
                 ..Default::default()
             };
 
-            let sc = vk.ext_swapchain.create_swapchain(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let sc = vk.ext_swapchain.create_swapchain(&create_info, MEMORY_ALLOCATOR).unwrap();
             sc
         };
         
@@ -969,7 +969,7 @@ impl Swapchain {
                     ..Default::default()
                 };
 
-                image_views.push(vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap());
+                image_views.push(vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap());
             }
 
             image_views
@@ -999,7 +999,7 @@ impl Swapchain {
                 ..Default::default()
             };
 
-            let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            let depth_image = vk.device.create_image(&create_info, MEMORY_ALLOCATOR).unwrap();
             allocate_image(vk, depth_image);
             depth_image
         };
@@ -1021,7 +1021,7 @@ impl Swapchain {
                 ..Default::default()
             };
 
-            vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+            vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap()
         };
 
         //Create framebuffers
@@ -1040,7 +1040,7 @@ impl Swapchain {
             let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
             for view in vk_swapchain_image_views.iter() {
                 attachments[0] = view.clone();
-                fbs.push(vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap())
+                fbs.push(vk.device.create_framebuffer(&fb_info, MEMORY_ALLOCATOR).unwrap())
             }
     
             fbs

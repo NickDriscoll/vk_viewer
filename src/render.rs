@@ -151,15 +151,22 @@ pub struct CascadedShadowMap {
 }
 
 impl CascadedShadowMap {
-    pub const CASCADE_COUNT: usize = 5;
+    pub const CASCADE_COUNT: usize = 6;
 
     pub fn clip_distances(&self) -> [f32; Self::CASCADE_COUNT + 1] { self.clip_distances }
     pub fn framebuffer(&self) -> vk::Framebuffer { self.framebuffer }
+    pub fn image(&self) -> vk::Image { self.image }
     pub fn resolution(&self) -> u32 { self.resolution }
     pub fn texture_index(&self) -> usize { self.texture_index }
     pub fn view(&self) -> vk::ImageView { self.image_view }
 
-    pub fn new(vk: &mut VulkanAPI, renderer: &mut Renderer, render_pass: vk::RenderPass, resolution: u32, clipping_from_view: &glm::TMat4<f32>) -> Self {
+    pub fn new(
+        vk: &mut VulkanAPI,
+        renderer: &mut Renderer,
+        render_pass: vk::RenderPass,
+        resolution: u32,
+        clipping_from_view: &glm::TMat4<f32>
+    ) -> Self {
         let format = vk::Format::D32_SFLOAT;
 
         let image = unsafe {
@@ -174,7 +181,7 @@ impl CascadedShadowMap {
                 p_queue_family_indices: [vk.graphics_queue_family_index].as_ptr(),
                 flags: vk::ImageCreateFlags::empty(),
                 image_type: vk::ImageType::TYPE_2D,
-                format: format,
+                format,
                 extent,
                 mip_levels: 1,
                 array_layers: 1,
@@ -227,14 +234,25 @@ impl CascadedShadowMap {
 
         //Manually picking the cascade distances because math is hard
         //The shadow cascade distances are negative bc they apply to view space
+        let near_distance = 1.0;
+        let far_distance = 1000.0;
+        let ratio = f32::powf(far_distance / near_distance, 1.0 / Self::CASCADE_COUNT as f32);
+
         let mut view_distances = [0.0; Self::CASCADE_COUNT + 1];
-        let near_dist = 0.1;
-        view_distances[0] = -(near_dist);
-        view_distances[1] = -(near_dist + 15.0);
-        view_distances[2] = -(near_dist + 30.0);
-        view_distances[3] = -(near_dist + 60.0);
-        view_distances[4] = -(near_dist + 120.0);
-        view_distances[5] = -(near_dist + 500.0);
+
+        // view_distances[0] = -(near_distance);
+        // for i in 1..(Self::CASCADE_COUNT + 1) {
+        //     view_distances[i] = ratio * view_distances[i - 1];
+        // }
+        // println!("{:#?}", view_distances);
+
+        view_distances[0] = -(near_distance);
+        view_distances[1] = -(near_distance + 10.0);
+        view_distances[2] = -(near_distance + 40.0);
+        view_distances[3] = -(near_distance + 100.0);
+        view_distances[4] = -(near_distance + 250.0);
+        view_distances[5] = -(near_distance + 500.0);
+        view_distances[6] = -(near_distance + 1000.0);
 
         //Compute the clip space distances
         let mut clip_distances = [0.0; Self::CASCADE_COUNT + 1];

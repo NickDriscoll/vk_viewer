@@ -50,6 +50,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float2 sun_shadowing = compute_cascade_shadowing(
         global_textures[uniforms.sun_shadowmap_idx],
         normal,
+        uniforms.sun_direction.xyz,
         input.sunshadow_space_positions,
         uniforms.sun_shadow_distances,
         input.clip_space_z

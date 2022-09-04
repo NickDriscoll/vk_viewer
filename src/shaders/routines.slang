@@ -203,9 +203,10 @@ float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D 
     return final_color;
 }
 
-float determine_shadowed(float3 f_shadow_pos, float3 tan_normal, Sampler2D shadow_map, int cascade) {
-    float bias = 0.00125;
-    //float bias = 0.0025 * (1.0 - max(0.0, dot(tan_normal, tangent_sun_direction)));
+float determine_shadowed(float3 f_shadow_pos, float3 normal, float3 light_direction, Sampler2D shadow_map, int cascade) {
+    //float bias = 0.00125;
+    //float bias = 0.0;
+    float bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.001;
     float2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x / SHADOW_CASCADE_COUNT;
     sample_uv.x += (float)cascade / (float)SHADOW_CASCADE_COUNT;
@@ -213,7 +214,7 @@ float determine_shadowed(float3 f_shadow_pos, float3 tan_normal, Sampler2D shado
     return sampled_depth + bias < f_shadow_pos.z ? 1.0 : 0.0;
 }
 
-float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2D shadow_map, int shadow_cascade, float3 normal) {
+float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2D shadow_map, int shadow_cascade, float3 normal, float3 light_direction) {
     //Compute how shadowed if we are potentially shadowed
     float shadow = 0.0;
     if (shadow_cascade > -1) {
@@ -227,13 +228,13 @@ float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2D shadow_map, 
             texel_size = 1.0 / texel_size;
             for (int x = -bound; x <= bound; x++) {
                 for (int y = -bound; y <= bound; y++) {
-                    shadow += determine_shadowed(float3(adj_shadow_space_pos.xy + float2(x, y) * texel_size, adj_shadow_space_pos.z), normal, shadow_map, shadow_cascade);
+                    shadow += determine_shadowed(float3(adj_shadow_space_pos.xy + float2(x, y) * texel_size, adj_shadow_space_pos.z), normal, light_direction, shadow_map, shadow_cascade);
                 }
             }
             float s = 2.0 * bound + 1.0;
             shadow /= s * s; //Total number of texels sampled: (2*bound + 1)^2
         } else {
-            shadow = determine_shadowed(adj_shadow_space_pos.xyz, normal, shadow_map, shadow_cascade);
+            shadow = determine_shadowed(adj_shadow_space_pos.xyz, normal, light_direction, shadow_map, shadow_cascade);
         }
     }
 
@@ -244,6 +245,7 @@ float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2D shadow_map, 
 float2 compute_cascade_shadowing(
     Sampler2D shadow_map,
     float3 normal,
+    float3 light_direction,
     float4 shadow_space_positions[SHADOW_CASCADE_COUNT],
     float4 cascade_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS],
     float clip_space_z
@@ -255,7 +257,6 @@ float2 compute_cascade_shadowing(
         float cascade_distance = cascade_distances[(i + 1) / 4][(i + 1) % 4];
         if (clip_space_z < cascade_distance) {
             adj_shadow_space_pos = float3(float2(shadow_space_positions[i].xy * 0.5 + 0.5), shadow_space_positions[i].z);
-            //adj_shadow_space_pos = shadow_space_positions[i].xyz;
             if (!(
                 adj_shadow_space_pos.z < 0.0 ||
                 adj_shadow_space_pos.z > 1.0 ||
@@ -271,6 +272,6 @@ float2 compute_cascade_shadowing(
     }
 
     // Compute sun shadow factor
-    float shadow_factor = cascaded_shadow_factor(adj_shadow_space_pos, shadow_map, shadow_cascade, normal);
+    float shadow_factor = cascaded_shadow_factor(adj_shadow_space_pos, shadow_map, shadow_cascade, normal, light_direction);
     return float2(shadow_factor, float(shadow_cascade));
 }

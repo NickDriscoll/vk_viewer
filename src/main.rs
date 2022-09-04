@@ -359,7 +359,13 @@ fn main() {
         vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
 
-    let sun_shadow_map = CascadedShadowMap::new(&mut vk, &mut renderer, shadow_pass, 1024, &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0));
+    let sun_shadow_map = CascadedShadowMap::new(
+        &mut vk,
+        &mut renderer,
+        shadow_pass,
+        2048,        
+        &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0)
+    );
     renderer.uniform_data.sun_shadowmap_idx = sun_shadow_map.texture_index() as u32;
 
     let main_forward_pass = unsafe {
@@ -459,7 +465,8 @@ fn main() {
 
         let s_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/shadow_vert.spv");
-            vec![v]
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/shadow_frag.spv");
+            vec![v, f]
         };
 
         let main_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
@@ -469,7 +476,7 @@ fn main() {
         let atm_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
         let shadow_info = vkutil::GraphicsPipelineBuilder::init(shadow_pass, pipeline_layout)
-                            .set_shader_stages(s_shader_stages).build_info();
+                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
     
         let infos = [main_info, terrain_info, atm_info, shadow_info];
         let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
@@ -605,7 +612,7 @@ fn main() {
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
-    renderer.uniform_data.sun_luminance = [2.0, 2.0, 2.0, 0.0];
+    renderer.uniform_data.sun_luminance = [2.5, 2.5, 2.5, 0.0];
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
     renderer.uniform_data.fog_density = 0.75;
@@ -621,7 +628,11 @@ fn main() {
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
-        let scaled_delta_time = timer.delta_time * timescale_factor;
+        let scaled_delta_time = if timer.delta_time > 1.0 / 30.0 {
+            timescale_factor / 30.0
+        } else {
+            timer.delta_time * timescale_factor
+        };
 
         //Reset renderer
         renderer.reset();
@@ -764,12 +775,6 @@ fn main() {
                     TextureId::new(sun_shadow_map.texture_index()),
                     [(sun_shadow_map.resolution() * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, sun_shadow_map.resolution() as f32 / 6.0]
                 ).build(&imgui_ui);
-
-                // let im = imgui::Image::new(
-                //     TextureId::new(scene_data.sun_shadow_map.rendertarget.texture as usize),
-                //     [(cascade_size * render::SHADOW_CASCADE_COUNT as i32 / 6) as f32,
-                //     (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
-                // im.build(&imgui_ui);
 
                 win_token.end();
             }
@@ -1004,7 +1009,9 @@ fn main() {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0);
+            let near_distance = 0.1;
+            let far_distance = 1000.0;
+            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, near_distance, far_distance);
             uniforms.clip_from_view = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
@@ -1093,6 +1100,7 @@ fn main() {
                         let pcs = [
                             model.material_idx.to_le_bytes(),
                             model.position_offset.to_le_bytes(),
+                            model.uv_offset.to_le_bytes(),
                             (i as u32).to_le_bytes()
                         ].concat();
                         vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
@@ -1102,6 +1110,36 @@ fn main() {
                 }
             }
             vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
+
+            // let sun_shadow_atlas_memory = vk::ImageMemoryBarrier {                
+            //     src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            //     dst_access_mask: vk::AccessFlags::SHADER_READ,
+            //     old_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            //     new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            //     image: sun_shadow_map.image(),
+            //     subresource_range: vk::ImageSubresourceRange {
+            //         aspect_mask: vk::ImageAspectFlags::DEPTH,
+            //         base_mip_level: 0,
+            //         level_count: 1,
+            //         base_array_layer: 0,
+            //         layer_count: 1
+            //     },
+            //     ..Default::default()
+            // };
+            let sun_shadow_atlas_memory = vk::MemoryBarrier {
+                src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                ..Default::default()
+            };
+            vk.device.cmd_pipeline_barrier(
+                vk.graphics_command_buffer,
+                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[sun_shadow_atlas_memory],
+                &[],
+                &[]
+            );
             
             //Set the viewport for this frame
             let viewport = vk::Viewport {

@@ -35,7 +35,8 @@ fn main() {
         ["fragment", "terrain_fragment.slang", "terrain.spv"],
         ["vertex", "imgui.slang", "imgui_vert.spv"],
         ["fragment", "imgui.slang", "imgui_frag.spv"],
-        ["vertex", "shadow.slang", "shadow_vert.spv"]
+        ["vertex", "shadow.slang", "shadow_vert.spv"],
+        ["fragment", "shadow.slang", "shadow_frag.spv"]
     ];
     for shader in slang_shaders {
         let out = compile_slang_shader(shader[0], shader[1], shader[2]);
