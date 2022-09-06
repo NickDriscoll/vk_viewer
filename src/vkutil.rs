@@ -72,7 +72,7 @@ pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::Shader
     }
 }
 
-pub unsafe fn allocate_image(vk: &mut VulkanAPI, image: vk::Image) -> Allocation {
+pub unsafe fn allocate_image_memory(vk: &mut VulkanAPI, image: vk::Image) -> Allocation {
     let requirements = vk.device.get_image_memory_requirements(image);
     let alloc = vk.allocator.allocate(&AllocationCreateDesc {
         name: "",
@@ -134,7 +134,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         ..Default::default()
     };
     let normal_image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
-    let allocation = allocate_image(vk, normal_image);
+    let allocation = allocate_image_memory(vk, normal_image);
 
     let vim = VirtualImage {
         vk_image: normal_image,
@@ -272,7 +272,7 @@ impl VirtualImage {
                 ..Default::default()
             };
             let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
-            let allocation = allocate_image(vk, image);
+            let allocation = allocate_image_memory(vk, image);
 
             let mut vim = VirtualImage {
                 vk_image: image,
@@ -287,25 +287,55 @@ impl VirtualImage {
             //Generate mipmaps
             vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
-            let subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: mip_levels,
-                base_array_layer: 0,
-                layer_count: 1
-            };
             let image_memory_barrier = vk::ImageMemoryBarrier {
                 src_access_mask: vk::AccessFlags::empty(),
                 dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
                 old_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                new_layout: vk::ImageLayout::GENERAL,
+                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 image,
-                subresource_range,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: mip_levels,
+                    base_array_layer: 0,
+                    layer_count: 1
+                },
                 ..Default::default()
             };
-            vk.device.cmd_pipeline_barrier(vk.graphics_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+            vk.device.cmd_pipeline_barrier(
+                vk.graphics_command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[], &[],
+                &[image_memory_barrier]
+            );
         
-            for i in 0..mip_levels-1 {
+            for i in 0..(mip_levels - 1) {
+                let src_mip_barrier = vk::ImageMemoryBarrier {
+                    src_access_mask: vk::AccessFlags::empty(),
+                    dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                    old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    new_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    image,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: i,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1
+                    },
+                    ..Default::default()
+                };
+                vk.device.cmd_pipeline_barrier(
+                    vk.graphics_command_buffer,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[], &[],
+                    &[src_mip_barrier]
+                );
+
                 let src_subresource = vk::ImageSubresourceLayers {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_level: i,
@@ -337,9 +367,9 @@ impl VirtualImage {
                 vk.device.cmd_blit_image(
                     vk.graphics_command_buffer,
                     image,
-                    vk::ImageLayout::GENERAL,
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                     image,
-                    vk::ImageLayout::GENERAL,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &regions,
                     vk::Filter::LINEAR
                 );
@@ -355,7 +385,7 @@ impl VirtualImage {
             let image_memory_barrier = vk::ImageMemoryBarrier {
                 src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
                 dst_access_mask: vk::AccessFlags::SHADER_READ,
-                old_layout: vk::ImageLayout::GENERAL,
+                old_layout: vk::ImageLayout::UNDEFINED,
                 new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 image,
                 subresource_range,
@@ -448,7 +478,7 @@ impl VirtualImage {
             ..Default::default()
         };
         let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
-        let allocation = allocate_image(vk, image);
+        let allocation = allocate_image_memory(vk, image);
 
         let mut vim = VirtualImage {
             vk_image: image,
@@ -524,20 +554,19 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: 
     vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
     vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
-    let subresource_range = vk::ImageSubresourceRange {
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        base_mip_level: 0,
-        level_count: image.mip_count,
-        base_array_layer: 0,
-        layer_count: 1
-    };
     let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
         old_layout: vk::ImageLayout::UNDEFINED,
         new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         image: image.vk_image,
-        subresource_range,
+        subresource_range: vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: image.mip_count,
+            base_array_layer: 0,
+            layer_count: 1
+        },
         ..Default::default()
     };
     vk.device.cmd_pipeline_barrier(vk.graphics_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
@@ -1000,7 +1029,7 @@ impl Swapchain {
             };
 
             let depth_image = vk.device.create_image(&create_info, MEMORY_ALLOCATOR).unwrap();
-            allocate_image(vk, depth_image);
+            allocate_image_memory(vk, depth_image);
             depth_image
         };
 

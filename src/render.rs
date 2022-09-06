@@ -192,27 +192,25 @@ impl CascadedShadowMap {
             };
 
             let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            vkutil::allocate_image(vk, depth_image);
+            vkutil::allocate_image_memory(vk, depth_image);
             depth_image
         };
 
         let image_view = unsafe {
-            let image_subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::DEPTH,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
             let view_info = vk::ImageViewCreateInfo {
                 image,
                 format,
                 view_type: vk::ImageViewType::TYPE_2D,
                 components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                subresource_range: image_subresource_range,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::DEPTH,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                },
                 ..Default::default()
             };
-
             vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
         };
 

@@ -1126,20 +1126,15 @@ fn main() {
             //     },
             //     ..Default::default()
             // };
-            let sun_shadow_atlas_memory = vk::MemoryBarrier {
-                src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                dst_access_mask: vk::AccessFlags::SHADER_READ,
-                ..Default::default()
-            };
-            vk.device.cmd_pipeline_barrier(
-                vk.graphics_command_buffer,
-                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::empty(),
-                &[sun_shadow_atlas_memory],
-                &[],
-                &[]
-            );
+            // vk.device.cmd_pipeline_barrier(
+            //     vk.graphics_command_buffer,
+            //     vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            //     vk::PipelineStageFlags::FRAGMENT_SHADER,
+            //     vk::DependencyFlags::empty(),
+            //     &[],
+            //     &[],
+            //     &[sun_shadow_atlas_memory]
+            // );
             
             //Set the viewport for this frame
             let viewport = vk::Viewport {

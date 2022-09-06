@@ -28,12 +28,10 @@ ShadowVertexOutput vertex_main(ModelVertex vertex) {
 }
 
 [shader("fragment")]
-float4 fragment_main(ShadowVertexOutput input) {
+void fragment_main(ShadowVertexOutput input) {
     Material my_mat = material_buffer[material_idx];
 
     // if (global_textures[my_mat.color_map_index].Sample(input.uv).a < 0.1) {
     //     discard;
     // }
-
-    return float4(0.0);
 }
