@@ -144,7 +144,7 @@ pub struct CascadedShadowMap {
     image: vk::Image,
     image_view: vk::ImageView,
     format: vk::Format,
-    texture_index: usize,
+    texture_index: u32,
     resolution: u32,
     clip_distances: [f32; Self::CASCADE_COUNT + 1],
     view_distances: [f32; Self::CASCADE_COUNT + 1]
@@ -157,7 +157,7 @@ impl CascadedShadowMap {
     pub fn framebuffer(&self) -> vk::Framebuffer { self.framebuffer }
     pub fn image(&self) -> vk::Image { self.image }
     pub fn resolution(&self) -> u32 { self.resolution }
-    pub fn texture_index(&self) -> usize { self.texture_index }
+    pub fn texture_index(&self) -> u32 { self.texture_index }
     pub fn view(&self) -> vk::ImageView { self.image_view }
 
     pub fn new(
@@ -233,17 +233,7 @@ impl CascadedShadowMap {
         //Manually picking the cascade distances because math is hard
         //The shadow cascade distances are negative bc they apply to view space
         let near_distance = 1.0;
-        let far_distance = 1000.0;
-        let ratio = f32::powf(far_distance / near_distance, 1.0 / Self::CASCADE_COUNT as f32);
-
         let mut view_distances = [0.0; Self::CASCADE_COUNT + 1];
-
-        // view_distances[0] = -(near_distance);
-        // for i in 1..(Self::CASCADE_COUNT + 1) {
-        //     view_distances[i] = ratio * view_distances[i - 1];
-        // }
-        // println!("{:#?}", view_distances);
-
         view_distances[0] = -(near_distance);
         view_distances[1] = -(near_distance + 10.0);
         view_distances[2] = -(near_distance + 40.0);
@@ -251,6 +241,14 @@ impl CascadedShadowMap {
         view_distances[4] = -(near_distance + 250.0);
         view_distances[5] = -(near_distance + 500.0);
         view_distances[6] = -(near_distance + 1000.0);
+
+        // let far_distance = 1000.0;
+        // let ratio = f32::powf(far_distance / near_distance, 1.0 / Self::CASCADE_COUNT as f32);
+        // view_distances[0] = -(near_distance);
+        // for i in 1..(Self::CASCADE_COUNT + 1) {
+        //     view_distances[i] = ratio * view_distances[i - 1];
+        // }
+        // println!("{:#?}", view_distances);
 
         //Compute the clip space distances
         let mut clip_distances = [0.0; Self::CASCADE_COUNT + 1];
@@ -262,8 +260,8 @@ impl CascadedShadowMap {
         let texture_index = renderer.global_textures.insert(vk::DescriptorImageInfo {
             sampler: renderer.point_sampler,
             image_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        });
+            image_layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL
+        }) as u32;
 
         CascadedShadowMap {
             framebuffer,
@@ -688,9 +686,9 @@ impl Renderer {
 
         //Load environment textures
         {
-            let sunzenith_index = vkutil::load_global_bc7(vk, &mut global_textures, material_sampler, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
-            let viewzenith_index = vkutil::load_global_bc7(vk, &mut global_textures, material_sampler, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
-            let sunview_index = vkutil::load_global_bc7(vk, &mut global_textures, material_sampler, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
+            let sunzenith_index = vkutil::load_bc7_texture(vk, &mut global_textures, material_sampler, "./data/textures/sunzenith_gradient.dds", ColorSpace::SRGB);
+            let viewzenith_index = vkutil::load_bc7_texture(vk, &mut global_textures, material_sampler, "./data/textures/viewzenith_gradient.dds", ColorSpace::SRGB);
+            let sunview_index = vkutil::load_bc7_texture(vk, &mut global_textures, material_sampler, "./data/textures/sunview_gradient.dds", ColorSpace::SRGB);
             
             uniforms.sunzenith_idx = sunzenith_index;
             uniforms.viewzenith_idx = viewzenith_index;

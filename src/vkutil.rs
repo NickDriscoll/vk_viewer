@@ -85,8 +85,8 @@ pub unsafe fn allocate_image_memory(vk: &mut VulkanAPI, image: vk::Image) -> All
     alloc
 }
 
-pub fn load_global_png(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
-    let vim = VirtualImage::from_png_file(vk, path);
+pub fn load_png_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
+    let vim = GPUImage::from_png_file(vk, path);
 
     let descriptor_info = vk::DescriptorImageInfo {
         sampler,
@@ -98,9 +98,9 @@ pub fn load_global_png(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::De
     index as u32
 }
 
-pub fn load_global_bc7(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
+pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
     unsafe {
-        let vim = VirtualImage::from_bc7(vk, path, color_space);
+        let vim = GPUImage::from_bc7(vk, path, color_space);
 
         let descriptor_info = vk::DescriptorImageInfo {
             sampler,
@@ -136,7 +136,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
     let normal_image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
     let allocation = allocate_image_memory(vk, normal_image);
 
-    let vim = VirtualImage {
+    let vim = GPUImage {
         vk_image: normal_image,
         vk_view: vk::ImageView::default(),
         width,
@@ -176,7 +176,7 @@ pub enum ColorSpace {
     SRGB
 }
 
-pub struct VirtualImage {
+pub struct GPUImage {
     pub vk_image: vk::Image,
     pub vk_view: vk::ImageView,
     pub width: u32,
@@ -185,7 +185,7 @@ pub struct VirtualImage {
     pub allocation: Allocation
 }
 
-impl VirtualImage {
+impl GPUImage {
     pub fn from_png_file(vk: &mut VulkanAPI, path: &str) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
@@ -249,17 +249,16 @@ impl VirtualImage {
         };
 
         unsafe {
-            let mip_levels = (f32::log2(u32::max(width, height) as f32)) as u32 + 1;
+            let mip_levels =  (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
 
-            let image_extent = vk::Extent3D {
-                width,
-                height,
-                depth: 1
-            };
             let image_create_info = vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,
                 format,
-                extent: image_extent,
+                extent: vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                },
                 mip_levels,
                 array_layers: 1,
                 samples: vk::SampleCountFlags::TYPE_1,
@@ -274,7 +273,7 @@ impl VirtualImage {
             let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
             let allocation = allocate_image_memory(vk, image);
 
-            let mut vim = VirtualImage {
+            let mut vim = GPUImage {
                 vk_image: image,
                 vk_view: vk::ImageView::default(),
                 width,
@@ -480,7 +479,7 @@ impl VirtualImage {
         let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
         let allocation = allocate_image_memory(vk, image);
 
-        let mut vim = VirtualImage {
+        let mut vim = GPUImage {
             vk_image: image,
             vk_view: vk::ImageView::default(),
             width,
@@ -543,7 +542,7 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, o
     staging_buffer.free(vk);
 }
 
-pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: &[u8]) {
+pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8]) {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
@@ -584,8 +583,8 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &VirtualImage, raw_bytes: 
 
         };
         let image_extent = vk::Extent3D {
-            width: w,
-            height: h,
+            width: u32::max(w, 1),
+            height: u32::max(h, 1),
             depth: 1
         };
 
@@ -756,10 +755,11 @@ impl VulkanAPI {
                 tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
             buffer_device_address = buffer_address_features.buffer_device_address != 0;
+            println!("{:#?}", physical_device_features);
+            println!("{:#?}", indexing_features);
 
             let mut i = 0;
             let qfps = vk_instance.get_physical_device_queue_family_properties(vk_physical_device);
-            println!("{:#?}", qfps);
             for qfp in qfps {
                 if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
                     graphics_queue_family_index = i;

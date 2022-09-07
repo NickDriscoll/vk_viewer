@@ -37,7 +37,7 @@ use std::time::SystemTime;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
-use vkutil::{ColorSpace, FreeList, GPUBuffer, VirtualImage, VulkanAPI};
+use vkutil::{ColorSpace, FreeList, GPUBuffer, GPUImage, VulkanAPI};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType};
@@ -143,7 +143,7 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
             match tex_id_map.get(&idx) {
                 Some(id) => { *id }
                 None => {
-                    let image = VirtualImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
+                    let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
                     let image_info = vk::DescriptorImageInfo {
                         sampler: renderer.material_sampler,
                         image_view: image.vk_view,
@@ -163,7 +163,7 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
                 match tex_id_map.get(&idx) {
                     Some(id) => { *id }
                     None => {
-                        let image = VirtualImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
+                        let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
                         let image_info = vk::DescriptorImageInfo {
                             sampler: renderer.material_sampler,
                             image_view: image.vk_view,
@@ -183,7 +183,7 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
                 match tex_id_map.get(&idx) {
                     Some(id) => { *id }
                     None => {
-                        let image = VirtualImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
+                        let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
                         let image_info = vk::DescriptorImageInfo {
                             sampler: renderer.material_sampler,
                             image_view: image.vk_view,
@@ -206,7 +206,7 @@ fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GL
                 match tex_id_map.get(&idx) {
                     Some(id) => { *id }
                     None => {
-                        let image = VirtualImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
+                        let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
                         let image_info = vk::DescriptorImageInfo {
                             sampler: renderer.material_sampler,
                             image_view: image.vk_view,
@@ -331,7 +331,7 @@ fn main() {
             load_op: vk::AttachmentLoadOp::CLEAR,
             store_op: vk::AttachmentStoreOp::STORE,
             initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            final_layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
             ..Default::default()
         };
 
@@ -517,17 +517,17 @@ fn main() {
     let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices, terrain_vertex_width);
     
     //Loading terrain textures
-    let grass_color_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.png", ColorSpace::SRGB);
-    let grass_normal_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.png", ColorSpace::LINEAR);
-    let grass_aoroughmetal_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/ao_roughness_metallic.png", ColorSpace::LINEAR);
+    let grass_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.png", ColorSpace::SRGB);
+    let grass_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.png", ColorSpace::LINEAR);
+    let grass_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/ao_roughness_metallic.png", ColorSpace::LINEAR);
 
     //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
     //let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
     //let grass_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/metallic_roughness.dds", ColorSpace::LINEAR);
 
-    let rock_color_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.png", ColorSpace::SRGB);
-    let rock_normal_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.png", ColorSpace::LINEAR);
-    let rock_aoroughmetal_global_index = vkutil::load_global_png(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/ao_roughness_metallic.png", ColorSpace::LINEAR);
+    let rock_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.png", ColorSpace::SRGB);
+    let rock_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.png", ColorSpace::LINEAR);
+    let rock_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/ao_roughness_metallic.png", ColorSpace::LINEAR);
     
     //let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     //let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
@@ -772,7 +772,7 @@ fn main() {
             let win = imgui::Window::new("Shadow atlas");
             if let Some(win_token) = win.begin(&imgui_ui) {
                 imgui::Image::new(
-                    TextureId::new(sun_shadow_map.texture_index()),
+                    TextureId::new(sun_shadow_map.texture_index() as usize),
                     [(sun_shadow_map.resolution() * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, sun_shadow_map.resolution() as f32 / 6.0]
                 ).build(&imgui_ui);
 
@@ -1080,6 +1080,7 @@ fn main() {
                 p_clear_values: clear_values.as_ptr(),
                 ..Default::default()
             };
+
             vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
             vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
             for i in 0..CascadedShadowMap::CASCADE_COUNT {
@@ -1110,31 +1111,6 @@ fn main() {
                 }
             }
             vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
-
-            // let sun_shadow_atlas_memory = vk::ImageMemoryBarrier {                
-            //     src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            //     dst_access_mask: vk::AccessFlags::SHADER_READ,
-            //     old_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            //     new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            //     image: sun_shadow_map.image(),
-            //     subresource_range: vk::ImageSubresourceRange {
-            //         aspect_mask: vk::ImageAspectFlags::DEPTH,
-            //         base_mip_level: 0,
-            //         level_count: 1,
-            //         base_array_layer: 0,
-            //         layer_count: 1
-            //     },
-            //     ..Default::default()
-            // };
-            // vk.device.cmd_pipeline_barrier(
-            //     vk.graphics_command_buffer,
-            //     vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-            //     vk::PipelineStageFlags::FRAGMENT_SHADER,
-            //     vk::DependencyFlags::empty(),
-            //     &[],
-            //     &[],
-            //     &[sun_shadow_atlas_memory]
-            // );
             
             //Set the viewport for this frame
             let viewport = vk::Viewport {
