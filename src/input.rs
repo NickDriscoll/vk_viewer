@@ -23,8 +23,6 @@ pub enum UserInput {
     Output(InputOutput),
     ExitProgram
 }
-
-
 pub struct InputSystem {
     pub event_pump: EventPump,
     pub controller_subsystem: GameControllerSubsystem,
@@ -84,7 +82,7 @@ impl InputSystem {
         imgui_io.delta_time = timer.delta_time;
         
         //Pump event queue
-        for event in self.event_pump.poll_iter() {
+        while let Some(event) = self.event_pump.poll_event() {
             match event {
                 Event::Quit{..} => { return UserInput::ExitProgram; }
                 Event::Window { win_event, .. } => {
@@ -98,7 +96,9 @@ impl InputSystem {
                         Scancode::Escape => { out.gui_toggle = true; }
                         Scancode::Space => { out.spawn_totoro_prop = true; }
                         Scancode::R => {
-                            //out.regen_terrain = true;
+                            out.regen_terrain = true;
+                        }
+                        Scancode::T => {
                             out.reset_totoro = true;
                         }
                         _ => {}

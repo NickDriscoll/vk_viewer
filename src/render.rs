@@ -1,4 +1,5 @@
 use core::slice::Iter;
+use std::convert::TryInto;
 use ash::vk::DescriptorImageInfo;
 
 use crate::*;
@@ -163,9 +164,9 @@ impl CascadedShadowMap {
     pub fn new(
         vk: &mut VulkanAPI,
         renderer: &mut Renderer,
-        render_pass: vk::RenderPass,
         resolution: u32,
-        clipping_from_view: &glm::TMat4<f32>
+        clipping_from_view: &glm::TMat4<f32>,
+        render_pass: vk::RenderPass
     ) -> Self {
         let format = vk::Format::D32_SFLOAT;
 
@@ -178,7 +179,7 @@ impl CascadedShadowMap {
 
             let create_info = vk::ImageCreateInfo {
                 queue_family_index_count: 1,
-                p_queue_family_indices: [vk.graphics_queue_family_index].as_ptr(),
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
                 flags: vk::ImageCreateFlags::empty(),
                 image_type: vk::ImageType::TYPE_2D,
                 format,
@@ -188,6 +189,7 @@ impl CascadedShadowMap {
                 samples: vk::SampleCountFlags::TYPE_1,
                 usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
+                initial_layout: vk::ImageLayout::UNDEFINED,
                 ..Default::default()
             };
 
@@ -214,7 +216,7 @@ impl CascadedShadowMap {
             vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
         };
 
-        //Create framebuffers
+        //Create framebuffer
         let framebuffer = unsafe {
             let attachments = [image_view];
             let fb_info = vk::FramebufferCreateInfo {
@@ -345,6 +347,19 @@ impl CascadedShadowMap {
     }
 }
 
+pub struct SunLight {
+    pub pitch: f32,
+    pub yaw: f32,
+    pub pitch_speed: f32,
+    pub yaw_speed: f32,
+    pub shadow_map: CascadedShadowMap
+}
+
+pub struct FrameData {
+    pub command_buffer: vk::CommandBuffer,
+    pub fence: vk::Fence
+}
+
 pub struct Renderer {
     pub default_diffuse_idx: u32,
     pub default_normal_idx: u32,
@@ -357,6 +372,7 @@ pub struct Renderer {
     primitives: OptionVec<Primitive>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
+    pub main_sun: Option<SunLight>,
     pub uniform_data: FrameUniforms,
 
     //Various GPU allocated buffers
@@ -374,6 +390,7 @@ pub struct Renderer {
     pub material_buffer: GPUBuffer,
 
     pub global_textures: FreeList<DescriptorImageInfo>,
+    pub default_texture_idx: u32,
     pub global_materials: FreeList<Material>,
 
     pub descriptor_set_layout: vk::DescriptorSetLayout,
@@ -382,7 +399,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    //pub const FRAMES_IN_FLIGHT: usize = 2;
+    pub const FRAMES_IN_FLIGHT: usize = 2;
 
     pub fn get_instance_data(&self) -> &Vec<InstanceData> {
         &self.instance_data
@@ -695,6 +712,9 @@ impl Renderer {
             uniforms.sunview_idx = sunview_index;
         };
 
+        //Data for each in-flight frame
+        
+
         Renderer {
             default_diffuse_idx: default_color_idx,
             default_normal_idx,
@@ -707,6 +727,7 @@ impl Renderer {
             instance_data: Vec::new(),
             uniform_data: uniforms,
             global_textures,
+            default_texture_idx: 0,
             global_materials,
             descriptor_set_layout,
             bindless_descriptor_set,
@@ -722,7 +743,8 @@ impl Renderer {
             uniform_buffer,
             instance_buffer,
             material_buffer,
-            samplers_descriptor_index
+            samplers_descriptor_index,
+            main_sun: None
         }
     }
 
@@ -781,6 +803,103 @@ impl Renderer {
 
     pub fn get_model(&self, idx: usize) -> &Option<Primitive> {
         &self.primitives[idx]
+    }
+
+    pub fn prepare_frame(&mut self, vk: &mut VulkanAPI, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) {
+        //We need to wait until it's safe to write GPU data
+        unsafe {
+            vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+        }
+
+        //Update bindless texture sampler descriptors
+        if self.global_textures.updated {
+            self.global_textures.updated = false;
+
+            let mut image_infos = vec![self.global_textures[self.default_texture_idx.try_into().unwrap()].unwrap(); self.global_textures.size() as usize];
+            for i in 0..self.global_textures.len() {
+                if let Some(info) = self.global_textures[i] {
+                    image_infos[i] = info;
+                }
+            }
+
+            let sampler_write = vk::WriteDescriptorSet {
+                dst_set: self.bindless_descriptor_set,
+                descriptor_count: self.global_textures.size() as u32,
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                p_image_info: image_infos.as_ptr(),
+                dst_array_element: 0,
+                dst_binding: self.samplers_descriptor_index,
+                ..Default::default()
+            };
+            unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
+        }
+
+        //Update bindless material definitions
+        if self.global_materials.updated {
+            self.global_materials.updated = false;
+
+            let mut upload_mats = Vec::with_capacity(self.global_materials.len());
+            for i in 0..self.global_materials.len() {
+                if let Some(mat) = &self.global_materials[i] {
+                    upload_mats.push(mat.data());
+                }
+            }
+
+            self.material_buffer.upload_buffer(vk, &upload_mats);
+        }
+        
+        //Update uniform/storage buffers
+        {
+            let uniforms = &mut self.uniform_data;
+            //Update static scene data
+            uniforms.clip_from_screen = glm::mat4(
+                2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
+                0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            );
+
+            let near_distance = 0.1;
+            let far_distance = 1000.0;
+            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, near_distance, far_distance);
+            uniforms.clip_from_view = glm::mat4(
+                1.0, 0.0, 0.0, 0.0,
+                0.0, -1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ) * projection_matrix;
+    
+            uniforms.clip_from_world = uniforms.clip_from_view * view_from_world;
+
+            if let Some(sunlight) = &self.main_sun {
+                //Compute sun direction from pitch and yaw
+                uniforms.sun_direction = 
+                    glm::rotation(sunlight.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+                    glm::rotation(sunlight.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+                    glm::vec4(-1.0, 0.0, 0.0, 0.0);
+
+                uniforms.sun_shadow_matrices = sunlight.shadow_map.compute_shadow_cascade_matrices(
+                    &uniforms.sun_direction.xyz(),
+                    &uniforms.view_from_world,
+                    &uniforms.clip_from_view
+                );
+
+                uniforms.sun_shadow_distances = sunlight.shadow_map.clip_distances().clone();
+            }
+            
+            //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
+            //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
+            //that the sky is infinitely far away
+            uniforms.clip_from_skybox = uniforms.clip_from_view * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_from_world));
+
+            uniforms.time = elapsed_time;
+
+            let uniform_bytes = struct_to_bytes(&self.uniform_data);
+            self.uniform_buffer.upload_buffer(vk, uniform_bytes);
+        };
+
+        //Update model matrix storage buffer
+        self.instance_buffer.upload_buffer(vk, &self.instance_data);
     }
 
     pub fn queue_drawcall(&mut self, model_idx: usize, transforms: &[glm::TMat4<f32>]) {

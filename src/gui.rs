@@ -1,6 +1,7 @@
 use ash::vk;
-use imgui::DrawCmd;
+use imgui::{DrawCmd, Ui};
 use crate::render::Renderer;
+use crate::structs::TerrainSpec;
 use crate::vkutil::*;
 
 pub struct DevGui {
@@ -44,6 +45,41 @@ impl DevGui {
             do_terrain_window: false,
             do_prop_window: false,
             do_sun_shadowmap: false
+        }
+    }
+
+    pub fn do_terrain_window(&mut self, imgui_ui: &Ui, terrain: &mut TerrainSpec) {
+        if self.do_gui && self.do_terrain_window {
+            if let Some(token) = imgui::Window::new("Terrain generator").begin(&imgui_ui) { 
+                let mut parameters_changed = false;
+
+                imgui_ui.text("Global terrain variables:");
+                parameters_changed |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut terrain.amplitude);
+                parameters_changed |= imgui::Slider::new("Exponent", 1.0, 5.0).build(&imgui_ui, &mut terrain.exponent);
+                parameters_changed |= imgui::Slider::new("Octaves", 1, 16).build(&imgui_ui, &mut terrain.octaves);
+                parameters_changed |= imgui::Slider::new("Lacunarity", 0.0, 5.0).build(&imgui_ui, &mut terrain.lacunarity);
+                parameters_changed |= imgui::Slider::new("Gain", 0.0, 2.0).build(&imgui_ui, &mut terrain.gain);
+                imgui_ui.separator();
+
+                imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
+                imgui_ui.checkbox("Use fixed seed", &mut terrain.fixed_seed);
+                imgui_ui.checkbox("Interactive mode", &mut terrain.interactive_generation);
+                // if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) || terrain.interactive_generation && parameters_changed {
+                //     regenerate_terrain(
+                //         &mut vk,
+                //         &mut renderer,
+                //         &mut physics_engine,
+                //         &mut terrain_collider_handle,
+                //         terrain_model_idx,
+                //         &mut terrain,
+                //         terrain_generation_scale
+                //     );
+                // }
+
+                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { self.do_terrain_window = false; }
+
+                token.end();
+            }
         }
     }
 

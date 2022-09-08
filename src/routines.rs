@@ -43,17 +43,15 @@ pub fn regenerate_terrain(
     terrain_collider_handle: &mut ColliderHandle,
     terrain_model_idx: usize,
     terrain: &mut TerrainSpec,
-    terrain_vertex_width: usize,
-    terrain_fixed_seed: bool,
     terrain_generation_scale: f32
 ) {
     if let Some(ter) = renderer.get_model(terrain_model_idx) {
         let offset = ter.position_offset;
-        let verts = compute_terrain_vertices(terrain, terrain_fixed_seed, terrain_generation_scale);
+        let verts = compute_terrain_vertices(terrain, terrain.fixed_seed, terrain_generation_scale);
         replace_uploaded_uninterleaved_vertices(vk, renderer, &verts, offset.into());
 
         physics_engine.collider_set.remove(*terrain_collider_handle, &mut physics_engine.island_manager, &mut physics_engine.rigid_body_set, false);
 
-        *terrain_collider_handle = physics_engine.make_terrain_collider(&verts, terrain_vertex_width);
+        *terrain_collider_handle = physics_engine.make_terrain_collider(&verts, terrain.vertex_width, terrain.vertex_height);
     }
 }

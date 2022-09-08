@@ -40,7 +40,7 @@ use input::UserInput;
 use vkutil::{ColorSpace, FreeList, GPUBuffer, GPUImage, VulkanAPI};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp};
-use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType};
+use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
 
 use crate::routines::*;
 use crate::gltfutil::GLTFData;
@@ -293,16 +293,14 @@ fn main() {
     //Initialize the physics engine
     let mut physics_engine = PhysicsEngine::new();
 
-    let default_image_info;
-
     //Create and upload Dear IMGUI font atlas
     match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
             let atlas_format = vk::Format::R8_UNORM;
             let descriptor_info = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_texture.width, atlas_texture.height, atlas_texture.data);
-            default_image_info = descriptor_info;
             let index = renderer.global_textures.insert(descriptor_info);
+            renderer.default_texture_idx = index as u32;
             
             atlas.clear_tex_data();  //Free atlas memory CPU-side
             atlas.tex_id = imgui::TextureId::new(index);    //Giving Dear Imgui a reference to the font atlas GPU texture
@@ -358,15 +356,6 @@ fn main() {
         };
         vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
-
-    let sun_shadow_map = CascadedShadowMap::new(
-        &mut vk,
-        &mut renderer,
-        shadow_pass,
-        2048,        
-        &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0)
-    );
-    renderer.uniform_data.sun_shadowmap_idx = sun_shadow_map.texture_index() as u32;
 
     let main_forward_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
@@ -442,6 +431,24 @@ fn main() {
         vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
 
+    let sun_shadow_map = CascadedShadowMap::new(
+        &mut vk,
+        &mut renderer,
+        2048,        
+        &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0),
+        shadow_pass
+    );
+    renderer.uniform_data.sun_shadowmap_idx = sun_shadow_map.texture_index() as u32;
+    renderer.main_sun = Some(
+        SunLight {
+            pitch: 0.118,
+            yaw: 0.783,
+            pitch_speed: 0.003,
+            yaw_speed: 0.0,
+            shadow_map: sun_shadow_map
+        }
+    );
+
     //Create pipelines
     let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline] = unsafe {
         //Load shaders
@@ -489,22 +496,13 @@ fn main() {
         ]
     };
 
-    let mut sun_pitch_speed = 0.003;
-    let mut sun_yaw_speed = 0.0;
-    let mut sun_pitch = 0.118;
-    let mut sun_yaw = 0.783;
-    let mut trees_width = 1;
-    let mut trees_height = 1;
     let mut timescale_factor = 1.0;
     let terrain_generation_scale = 20.0;
 
     //Define terrain
-    let terrain_vertex_width = 256;
-    let mut terrain_fixed_seed = false;
-    let mut terrain_interactive_generation = false;
     let mut terrain = TerrainSpec {
-        vertex_width: terrain_vertex_width,
-        vertex_height: terrain_vertex_width,
+        vertex_width: 256,
+        vertex_height: 256,
         amplitude: 2.0,
         exponent: 2.2,
         seed: unix_epoch_ms(),
@@ -512,23 +510,22 @@ fn main() {
     };
 
     let terrain_vertices = terrain.generate_vertices(terrain_generation_scale);
-    let terrain_indices = ozy::prims::plane_index_buffer(terrain_vertex_width, terrain_vertex_width);
+    let terrain_indices = ozy::prims::plane_index_buffer(terrain.vertex_width, terrain.vertex_height);
 
-    let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices, terrain_vertex_width);
+    let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices, terrain.vertex_width, terrain.vertex_height);
     
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.png", ColorSpace::SRGB);
     let grass_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.png", ColorSpace::LINEAR);
     let grass_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/ao_roughness_metallic.png", ColorSpace::LINEAR);
-
-    //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
-    //let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
-    //let grass_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/metallic_roughness.dds", ColorSpace::LINEAR);
-
     let rock_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.png", ColorSpace::SRGB);
     let rock_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.png", ColorSpace::LINEAR);
     let rock_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/ao_roughness_metallic.png", ColorSpace::LINEAR);
     
+
+    //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
+    //let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
+    //let grass_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/metallic_roughness.dds", ColorSpace::LINEAR);
     //let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
     //let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
     //let rock_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/metallic_roughness.dds", ColorSpace::LINEAR);
@@ -654,8 +651,6 @@ fn main() {
                 &mut terrain_collider_handle,
                 terrain_model_idx,
                 &mut terrain,
-                terrain_vertex_width,
-                terrain_fixed_seed,
                 terrain_generation_scale
             );
         }
@@ -732,9 +727,9 @@ fn main() {
                 imgui_ui.separator();
 
                 imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
-                imgui_ui.checkbox("Use fixed seed", &mut terrain_fixed_seed);
-                imgui_ui.checkbox("Interactive mode", &mut terrain_interactive_generation);
-                if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) {
+                imgui_ui.checkbox("Use fixed seed", &mut terrain.fixed_seed);
+                imgui_ui.checkbox("Interactive mode", &mut terrain.interactive_generation);
+                if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) || terrain.interactive_generation && parameters_changed {
                     regenerate_terrain(
                         &mut vk,
                         &mut renderer,
@@ -742,22 +737,6 @@ fn main() {
                         &mut terrain_collider_handle,
                         terrain_model_idx,
                         &mut terrain,
-                        terrain_vertex_width,
-                        terrain_fixed_seed,
-                        terrain_generation_scale
-                    );
-                }
-
-                if terrain_interactive_generation && parameters_changed {
-                    regenerate_terrain(
-                        &mut vk,
-                        &mut renderer,
-                        &mut physics_engine,
-                        &mut terrain_collider_handle,
-                        terrain_model_idx,
-                        &mut terrain,
-                        terrain_vertex_width,
-                        terrain_fixed_seed,
                         terrain_generation_scale
                     );
                 }
@@ -771,9 +750,13 @@ fn main() {
         if dev_gui.do_gui && dev_gui.do_sun_shadowmap {
             let win = imgui::Window::new("Shadow atlas");
             if let Some(win_token) = win.begin(&imgui_ui) {
+                let (idx, res) = match &renderer.main_sun {
+                    Some(sun) => { (sun.shadow_map.texture_index(), sun.shadow_map.resolution()) }
+                    None => { (renderer.default_texture_idx, 1) }
+                };
                 imgui::Image::new(
-                    TextureId::new(sun_shadow_map.texture_index() as usize),
-                    [(sun_shadow_map.resolution() * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, sun_shadow_map.resolution() as f32 / 6.0]
+                    TextureId::new(idx as usize),
+                    [(res * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, res as f32 / 6.0]
                 ).build(&imgui_ui);
 
                 win_token.end();
@@ -808,16 +791,17 @@ fn main() {
             imgui_ui.text(message);
             color_token.pop();
 
-            imgui::Slider::new("Sun pitch speed", 0.0, 1.0).build(&imgui_ui, &mut sun_pitch_speed);
-            imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_pitch);
-            imgui::Slider::new("Sun yaw speed", 0.0, 1.0).build(&imgui_ui, &mut sun_yaw_speed);
-            imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun_yaw);
+            if let Some(sun) = &mut renderer.main_sun {
+                imgui::Slider::new("Sun pitch speed", -1.0, 1.0).build(&imgui_ui, &mut sun.pitch_speed);
+                imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.pitch);
+                imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
+                imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
+            }
+
             imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
             imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
             imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
-            imgui::Slider::new("Trees width", 1, 10).build(&imgui_ui, &mut trees_width);
-            imgui::Slider::new("Trees height", 1, 10).build(&imgui_ui, &mut trees_height);
         }
 
         //Step the physics engine
@@ -911,13 +895,21 @@ fn main() {
         }
         
         //Update sun
-        sun_pitch += sun_pitch_speed * scaled_delta_time;
-        sun_yaw += sun_yaw_speed * scaled_delta_time;
-        if sun_pitch > glm::two_pi() {
-            sun_pitch -= glm::two_pi::<f32>();
-        }
-        if sun_yaw > glm::two_pi() {
-            sun_yaw -= glm::two_pi::<f32>();
+        if let Some(sun) = &mut renderer.main_sun {
+            sun.pitch += sun.pitch_speed * scaled_delta_time;
+            sun.yaw += sun.yaw_speed * scaled_delta_time;
+            if sun.pitch > glm::two_pi() {
+                sun.pitch -= glm::two_pi::<f32>();
+            }
+            if sun.pitch < 0.0 {
+                sun.pitch += glm::two_pi::<f32>();
+            }
+            if sun.yaw > glm::two_pi() {
+                sun.yaw -= glm::two_pi::<f32>();
+            }
+            if sun.yaw < 0.0 {
+                sun.yaw += glm::two_pi::<f32>();
+            }
         }
 
         if let Some(t) = imgui_window_token {
@@ -960,94 +952,9 @@ fn main() {
         unsafe {
             vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
         }
-
-        //Update bindless texture sampler descriptors
-        if renderer.global_textures.updated {
-            renderer.global_textures.updated = false;
-
-            let mut image_infos = vec![default_image_info; renderer.global_textures.size() as usize];
-            for i in 0..renderer.global_textures.len() {
-                if let Some(info) = renderer.global_textures[i] {
-                    image_infos[i] = info;
-                }
-            }
-
-            let sampler_write = vk::WriteDescriptorSet {
-                dst_set: renderer.bindless_descriptor_set,
-                descriptor_count: renderer.global_textures.size() as u32,
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                p_image_info: image_infos.as_ptr(),
-                dst_array_element: 0,
-                dst_binding: renderer.samplers_descriptor_index,
-                ..Default::default()
-            };
-            unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
-        }
-
-        //Update bindless material definitions
-        if renderer.global_materials.updated {
-            renderer.global_materials.updated = false;
-
-            let mut upload_mats = Vec::with_capacity(renderer.global_materials.len());
-            for i in 0..renderer.global_materials.len() {
-                if let Some(mat) = &renderer.global_materials[i] {
-                    upload_mats.push(mat.data());
-                }
-            }
-
-            renderer.material_buffer.upload_buffer(&mut vk, &upload_mats);
-        }
         
-        //Update uniform/storage buffers
-        {
-            let uniforms = &mut renderer.uniform_data;
-            //Update static scene data
-            uniforms.clip_from_screen = glm::mat4(
-                2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
-                0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0
-            );
-
-            let near_distance = 0.1;
-            let far_distance = 1000.0;
-            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, near_distance, far_distance);
-            uniforms.clip_from_view = glm::mat4(
-                1.0, 0.0, 0.0, 0.0,
-                0.0, -1.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0,
-            ) * projection_matrix;
-    
-            uniforms.clip_from_world = uniforms.clip_from_view * view_from_world;
-            
-            //Compute sun direction from pitch and yaw
-            uniforms.sun_direction = 
-                glm::rotation(sun_yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-                glm::rotation(sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
-                glm::vec4(-1.0, 0.0, 0.0, 0.0);
-
-            uniforms.sun_shadow_matrices = sun_shadow_map.compute_shadow_cascade_matrices(
-                &uniforms.sun_direction.xyz(),
-                &uniforms.view_from_world,
-                &uniforms.clip_from_view
-            );
-
-            uniforms.sun_shadow_distances = sun_shadow_map.clip_distances().clone();
-            
-            //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
-            //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
-            //that the sky is infinitely far away
-            uniforms.clip_from_skybox = uniforms.clip_from_view * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_from_world));
-
-            uniforms.time = timer.elapsed_time;
-
-            let uniform_bytes = struct_to_bytes(&renderer.uniform_data);
-            renderer.uniform_buffer.upload_buffer(&mut vk, uniform_bytes);
-        };
-
-        //Update model matrix storage buffer
-        renderer.instance_buffer.upload_buffer(&mut vk, &renderer.get_instance_data());
+        //Does all work that needs to happen before the render pass
+        renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
 
         //Draw
         unsafe {
@@ -1061,56 +968,59 @@ fn main() {
             vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[renderer.bindless_descriptor_set], &[]);
 
             //Shadow rendering
-            let render_area = {
-                vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: vk::Extent2D {
-                        width: sun_shadow_map.resolution() * CascadedShadowMap::CASCADE_COUNT as u32,
-                        height: sun_shadow_map.resolution() 
+            if let Some(sun) = &renderer.main_sun {
+                let sun_shadow_map = &sun.shadow_map;
+                let render_area = {
+                    vk::Rect2D {
+                        offset: vk::Offset2D { x: 0, y: 0 },
+                        extent: vk::Extent2D {
+                            width: sun_shadow_map.resolution() * CascadedShadowMap::CASCADE_COUNT as u32,
+                            height: sun_shadow_map.resolution() 
+                        }
                     }
-                }
-            };
-            vk.device.cmd_set_scissor(vk.graphics_command_buffer, 0, &[render_area]);
-            let clear_values = [vkutil::DEPTH_STENCIL_CLEAR];
-            let rp_begin_info = vk::RenderPassBeginInfo {
-                render_pass: shadow_pass,
-                framebuffer: sun_shadow_map.framebuffer(),
-                render_area,
-                clear_value_count: clear_values.len() as u32,
-                p_clear_values: clear_values.as_ptr(),
-                ..Default::default()
-            };
-
-            vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-            vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
-            for i in 0..CascadedShadowMap::CASCADE_COUNT {
-                let viewport = vk::Viewport {
-                    x: (i as u32 * sun_shadow_map.resolution()) as f32,
-                    y: 0.0,
-                    width: sun_shadow_map.resolution() as f32,
-                    height: sun_shadow_map.resolution() as f32,
-                    min_depth: 0.0,
-                    max_depth: 1.0
                 };
-                vk.device.cmd_set_viewport(vk.graphics_command_buffer, 0, &[viewport]);
+                vk.device.cmd_set_scissor(vk.graphics_command_buffer, 0, &[render_area]);
+                let clear_values = [vkutil::DEPTH_STENCIL_CLEAR];
+                let rp_begin_info = vk::RenderPassBeginInfo {
+                    render_pass: shadow_pass,
+                    framebuffer: sun_shadow_map.framebuffer(),
+                    render_area,
+                    clear_value_count: clear_values.len() as u32,
+                    p_clear_values: clear_values.as_ptr(),
+                    ..Default::default()
+                };
 
-                for drawcall in renderer.drawlist_iter() {
-                    if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
-                        if let ShadowType::NonCaster = model.shadow_type { continue; }
+                vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+                vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
+                for i in 0..CascadedShadowMap::CASCADE_COUNT {
+                    let viewport = vk::Viewport {
+                        x: (i as u32 * sun_shadow_map.resolution()) as f32,
+                        y: 0.0,
+                        width: sun_shadow_map.resolution() as f32,
+                        height: sun_shadow_map.resolution() as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0
+                    };
+                    vk.device.cmd_set_viewport(vk.graphics_command_buffer, 0, &[viewport]);
 
-                        let pcs = [
-                            model.material_idx.to_le_bytes(),
-                            model.position_offset.to_le_bytes(),
-                            model.uv_offset.to_le_bytes(),
-                            (i as u32).to_le_bytes()
-                        ].concat();
-                        vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                        vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                        vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                    for drawcall in renderer.drawlist_iter() {
+                        if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
+                            if let ShadowType::NonCaster = model.shadow_type { continue; }
+
+                            let pcs = [
+                                model.material_idx.to_le_bytes(),
+                                model.position_offset.to_le_bytes(),
+                                model.uv_offset.to_le_bytes(),
+                                (i as u32).to_le_bytes()
+                            ].concat();
+                            vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                            vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                            vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                        }
                     }
                 }
+                vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
             }
-            vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
             
             //Set the viewport for this frame
             let viewport = vk::Viewport {
@@ -1193,7 +1103,7 @@ fn main() {
                 ..Default::default()
             };
 
-            let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
+            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
             vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
             vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
 

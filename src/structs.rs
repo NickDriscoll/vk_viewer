@@ -35,7 +35,9 @@ pub struct TerrainSpec {
     pub gain: f64,
     pub amplitude: f64,
     pub exponent: f64,
-    pub seed: u128
+    pub seed: u128,
+    pub interactive_generation: bool,
+    pub fixed_seed: bool
 }
 
 impl TerrainSpec {
@@ -87,7 +89,9 @@ impl Default for TerrainSpec {
             gain: 0.5,
             amplitude: 2.0,
             exponent: 2.2,
-            seed: 0
+            seed: 0,
+            interactive_generation: false,
+            fixed_seed: false            
         }
     }
 }

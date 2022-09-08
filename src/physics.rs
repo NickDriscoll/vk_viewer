@@ -64,8 +64,8 @@ impl PhysicsEngine {
         );
     }
 
-    pub fn make_terrain_collider(&mut self, verts: &[f32], width: usize) -> ColliderHandle {
-        let mut i_copy = ozy::prims::plane_index_buffer(width, width);
+    pub fn make_terrain_collider(&mut self, verts: &[f32], width: usize, height: usize) -> ColliderHandle {
+        let mut i_copy = ozy::prims::plane_index_buffer(width, height);
 
         let mut vs = Vec::with_capacity(verts.len() / 15 * 3);
         for i in (0..verts.len()).step_by(15) {

@@ -129,7 +129,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         queue_family_index_count: 1,
-        p_queue_family_indices: &vk.graphics_queue_family_index,
+        p_queue_family_indices: &vk.queue_family_index,
         initial_layout: vk::ImageLayout::UNDEFINED,
         ..Default::default()
     };
@@ -266,7 +266,7 @@ impl GPUImage {
                 usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 1,
-                p_queue_family_indices: &vk.graphics_queue_family_index,
+                p_queue_family_indices: &vk.queue_family_index,
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 ..Default::default()
             };
@@ -399,7 +399,7 @@ impl GPUImage {
                 p_command_buffers: &vk.graphics_command_buffer,
                 ..Default::default()
             };
-            let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
+            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
             vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
             vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
             vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
@@ -472,7 +472,7 @@ impl GPUImage {
             usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 1,
-            p_queue_family_indices: &vk.graphics_queue_family_index,
+            p_queue_family_indices: &vk.queue_family_index,
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
@@ -536,7 +536,7 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, o
         p_command_buffers: &vk.graphics_command_buffer,
         ..Default::default()
     };
-    let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
+    let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
     vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     staging_buffer.free(vk);
@@ -628,7 +628,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
         p_command_buffers: &vk.graphics_command_buffer,
         ..Default::default()
     };
-    let queue = vk.device.get_device_queue(vk.graphics_queue_family_index, 0);
+    let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
     vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     staging_buffer.free(vk);
@@ -656,7 +656,8 @@ pub struct VulkanAPI {
     pub surface: vk::SurfaceKHR,
     pub ext_surface: ash::extensions::khr::Surface,
     pub ext_swapchain: ash::extensions::khr::Swapchain,
-    pub graphics_queue_family_index: u32,
+    pub queue_family_index: u32,
+    pub command_pool: vk::CommandPool,
     pub graphics_command_buffer: vk::CommandBuffer,
     pub graphics_command_buffer_fence: vk::Fence
 }
@@ -711,7 +712,7 @@ impl VulkanAPI {
         //Create the Vulkan device
         let vk_physical_device;
         let vk_physical_device_properties;
-        let mut graphics_queue_family_index = 0;
+        let mut queue_family_index = 0;
         let buffer_device_address;
         let vk_device = unsafe {
             let phys_devices = vk_instance.enumerate_physical_devices();
@@ -762,20 +763,20 @@ impl VulkanAPI {
             let qfps = vk_instance.get_physical_device_queue_family_properties(vk_physical_device);
             for qfp in qfps {
                 if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                    graphics_queue_family_index = i;
+                    queue_family_index = i;
                     break;
                 }
                 i += 1;
             }
 
             let queue_create_info = vk::DeviceQueueCreateInfo {
-                queue_family_index: graphics_queue_family_index,
+                queue_family_index,
                 queue_count: 1,
                 p_queue_priorities: [1.0].as_ptr(),
                 ..Default::default()
             };
             
-            if !vk_ext_surface.get_physical_device_surface_support(vk_physical_device, graphics_queue_family_index, vk_surface).unwrap() {
+            if !vk_ext_surface.get_physical_device_surface_support(vk_physical_device, queue_family_index, vk_surface).unwrap() {
                 crash_with_error_dialog("Swapchain present is unavailable on the selected device queue.\nThe application will now exit.");
             }
 
@@ -804,19 +805,22 @@ impl VulkanAPI {
             buffer_device_address
         }).unwrap();
 
-        //Create command buffer
-        let graphics_command_buffer = unsafe {
+        let command_pool = unsafe {
             let pool_create_info = vk::CommandPoolCreateInfo {
-                queue_family_index: graphics_queue_family_index,
+                queue_family_index,
                 flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
                 ..Default::default()
             };
     
-            let command_pool = vk_device.create_command_pool(&pool_create_info, MEMORY_ALLOCATOR).unwrap();
+            vk_device.create_command_pool(&pool_create_info, MEMORY_ALLOCATOR).unwrap()
+        };
+
+        //Create command buffer
+        let graphics_command_buffer = unsafe {
     
             let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
                 command_pool,
-                command_buffer_count: 256,
+                command_buffer_count: 1,
                 level: vk::CommandBufferLevel::PRIMARY,
                 ..Default::default()
             };
@@ -840,7 +844,8 @@ impl VulkanAPI {
             surface: vk_surface,
             ext_surface: vk_ext_surface,
             ext_swapchain: vk_ext_swapchain,
-            graphics_queue_family_index,
+            queue_family_index,
+            command_pool,
             graphics_command_buffer,
             graphics_command_buffer_fence
         }
@@ -966,7 +971,7 @@ impl Swapchain {
                 image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
                 image_sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 1,
-                p_queue_family_indices: [vk.graphics_queue_family_index].as_ptr(),
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
                 pre_transform: surf_capabilities.current_transform,
                 composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
                 present_mode,
@@ -1015,7 +1020,7 @@ impl Swapchain {
 
             let create_info = vk::ImageCreateInfo {
                 queue_family_index_count: 1,
-                p_queue_family_indices: [vk.graphics_queue_family_index].as_ptr(),
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
                 flags: vk::ImageCreateFlags::empty(),
                 image_type: vk::ImageType::TYPE_2D,
                 format: vk_depth_format,
