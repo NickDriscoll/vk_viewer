@@ -15,7 +15,7 @@ pub struct DevGui {
 }
 
 impl DevGui {
-    pub const FRAMES_IN_FLIGHT: usize = 2;
+    pub const FRAMES_IN_FLIGHT: usize = Renderer::FRAMES_IN_FLIGHT + 1;
     pub const FLOATS_PER_VERTEX: usize = 8;
 
     pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
@@ -48,9 +48,10 @@ impl DevGui {
         }
     }
 
-    pub fn do_terrain_window(&mut self, imgui_ui: &Ui, terrain: &mut TerrainSpec) {
+    pub fn do_terrain_window(&mut self, imgui_ui: &Ui, terrain: &mut TerrainSpec) -> bool {
+        let mut regen_terrain = false;
         if self.do_gui && self.do_terrain_window {
-            if let Some(token) = imgui::Window::new("Terrain generator").begin(&imgui_ui) { 
+            if let Some(token) = imgui::Window::new("Terrain generator").begin(&imgui_ui) {
                 let mut parameters_changed = false;
 
                 imgui_ui.text("Global terrain variables:");
@@ -64,23 +65,16 @@ impl DevGui {
                 imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
                 imgui_ui.checkbox("Use fixed seed", &mut terrain.fixed_seed);
                 imgui_ui.checkbox("Interactive mode", &mut terrain.interactive_generation);
-                // if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) || terrain.interactive_generation && parameters_changed {
-                //     regenerate_terrain(
-                //         &mut vk,
-                //         &mut renderer,
-                //         &mut physics_engine,
-                //         &mut terrain_collider_handle,
-                //         terrain_model_idx,
-                //         &mut terrain,
-                //         terrain_generation_scale
-                //     );
-                // }
+                let regen_button = imgui_ui.button_with_size("Regenerate", [0.0, 32.0]);
 
                 if imgui_ui.button_with_size("Close", [0.0, 32.0]) { self.do_terrain_window = false; }
 
                 token.end();
+
+                regen_terrain = (terrain.interactive_generation && parameters_changed) || regen_button;
             }
         }
+        regen_terrain
     }
 
     //This is where we upload the Dear Imgui geometry for the current frame
@@ -90,13 +84,13 @@ impl DevGui {
         let mut offsets = Vec::with_capacity(16);
         let imgui_draw_data = imgui_ui.render();
 
-        let last_frame = &self.frames[self.current_frame.overflowing_sub(1).0 % Self::FRAMES_IN_FLIGHT];
+        let most_recent_dead_frame = &self.frames[self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT];
 
-        let enough_free_space_at_beginning = imgui_draw_data.total_vtx_count as u64 <= last_frame.start_offset;
+        let enough_free_space_at_beginning = imgui_draw_data.total_vtx_count as u64 <= most_recent_dead_frame.start_offset;
         let start_offset = if enough_free_space_at_beginning {
             0
         } else {
-            last_frame.end_offset
+            most_recent_dead_frame.end_offset
         };
         let mut current_offset = start_offset;
 
@@ -151,7 +145,7 @@ impl DevGui {
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanAPI, layout: vk::PipelineLayout) {
         //Destroy Dear ImGUI allocations from last frame
         {
-            let last_frame = self.current_frame.overflowing_sub(1).0 % Self::FRAMES_IN_FLIGHT;
+            let last_frame = self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT;
             let geo_count = self.frames[last_frame].index_buffers.len();
             for geo in self.frames[last_frame].index_buffers.drain(0..geo_count) {
                 geo.free(vk);
@@ -159,7 +153,7 @@ impl DevGui {
         }
 
         //Record Dear ImGUI drawing commands
-        vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+        vk.device.cmd_bind_pipeline(vk.general_command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
         let gui_frame = &self.frames[self.current_frame];
         for i in 0..gui_frame.draw_cmd_lists.len() {
             let cmd_list = &gui_frame.draw_cmd_lists[i];
@@ -185,16 +179,16 @@ impl DevGui {
                                 extent
                             }
                         };
-                        vk.device.cmd_set_scissor(vk.graphics_command_buffer, 0, &[scissor_rect]);
+                        vk.device.cmd_set_scissor(vk.general_command_buffer, 0, &[scissor_rect]);
 
                         let tex_id = cmd_params.texture_id.id() as u32;
                         let pcs = [
                             tex_id.to_le_bytes(),
                             (gui_frame.offsets[i] as u32).to_le_bytes()
                         ].concat();
-                        vk.device.cmd_push_constants(vk.graphics_command_buffer, layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, &pcs);
-                        vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, i_buffer, 0, vk::IndexType::UINT32);
-                        vk.device.cmd_draw_indexed(vk.graphics_command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
+                        vk.device.cmd_push_constants(vk.general_command_buffer, layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, &pcs);
+                        vk.device.cmd_bind_index_buffer(vk.general_command_buffer, i_buffer, 0, vk::IndexType::UINT32);
+                        vk.device.cmd_draw_indexed(vk.general_command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
                     }
                     DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
                     DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }

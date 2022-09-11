@@ -1,3 +1,5 @@
+static const float PI = 3.14159265359;
+
 static const uint SHADOW_CASCADE_COUNT = 6;
 static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = (SHADOW_CASCADE_COUNT + 1) / 5 + 1;
 

@@ -683,7 +683,7 @@ fn main() {
         //Handle needing to resize the window
         unsafe {
             if input_output.resize_window {
-                vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+                vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
                 for framebuffer in vk_swapchain.swapchain_framebuffers {
@@ -714,37 +714,17 @@ fn main() {
 
         //Update
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
-        if dev_gui.do_gui && dev_gui.do_terrain_window {
-            if let Some(token) = imgui::Window::new("Terrain generator").begin(&imgui_ui) { 
-                let mut parameters_changed = false;
 
-                imgui_ui.text("Global terrain variables:");
-                parameters_changed |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut terrain.amplitude);
-                parameters_changed |= imgui::Slider::new("Exponent", 1.0, 5.0).build(&imgui_ui, &mut terrain.exponent);
-                parameters_changed |= imgui::Slider::new("Octaves", 1, 16).build(&imgui_ui, &mut terrain.octaves);
-                parameters_changed |= imgui::Slider::new("Lacunarity", 0.0, 5.0).build(&imgui_ui, &mut terrain.lacunarity);
-                parameters_changed |= imgui::Slider::new("Gain", 0.0, 2.0).build(&imgui_ui, &mut terrain.gain);
-                imgui_ui.separator();
-
-                imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
-                imgui_ui.checkbox("Use fixed seed", &mut terrain.fixed_seed);
-                imgui_ui.checkbox("Interactive mode", &mut terrain.interactive_generation);
-                if imgui_ui.button_with_size("Regenerate", [0.0, 32.0]) || terrain.interactive_generation && parameters_changed {
-                    regenerate_terrain(
-                        &mut vk,
-                        &mut renderer,
-                        &mut physics_engine,
-                        &mut terrain_collider_handle,
-                        terrain_model_idx,
-                        &mut terrain,
-                        terrain_generation_scale
-                    );
-                }
-
-                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { dev_gui.do_terrain_window = false; }
-
-                token.end();
-            }
+        if dev_gui.do_terrain_window(&imgui_ui, &mut terrain) {
+            regenerate_terrain(
+                &mut vk,
+                &mut renderer,
+                &mut physics_engine,
+                &mut terrain_collider_handle,
+                terrain_model_idx,
+                &mut terrain,
+                terrain_generation_scale
+            );
         }
 
         if dev_gui.do_gui && dev_gui.do_sun_shadowmap {
@@ -840,6 +820,7 @@ fn main() {
             renderer.queue_drawcall(*idx, &matrices);
         }
 
+        //Compute this frame's view matrix
         let view_from_world = if do_freecam {
             //Camera orientation based on user input
             camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
@@ -947,11 +928,6 @@ fn main() {
         dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, imgui_ui);
 
         //Pre-render phase
-
-        //We need to wait until it's safe to write GPU data
-        unsafe {
-            vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-        }
         
         //Does all work that needs to happen before the render pass
         renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
@@ -962,10 +938,10 @@ fn main() {
             let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(vk_swapchain.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
 
             //Put command buffer in recording state
-            vk.device.begin_command_buffer(vk.graphics_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+            vk.device.begin_command_buffer(vk.general_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             //Once-per-frame bindless descriptor setup
-            vk.device.cmd_bind_descriptor_sets(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[renderer.bindless_descriptor_set], &[]);
+            vk.device.cmd_bind_descriptor_sets(vk.general_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[renderer.bindless_descriptor_set], &[0]);
 
             //Shadow rendering
             if let Some(sun) = &renderer.main_sun {
@@ -979,7 +955,7 @@ fn main() {
                         }
                     }
                 };
-                vk.device.cmd_set_scissor(vk.graphics_command_buffer, 0, &[render_area]);
+                vk.device.cmd_set_scissor(vk.general_command_buffer, 0, &[render_area]);
                 let clear_values = [vkutil::DEPTH_STENCIL_CLEAR];
                 let rp_begin_info = vk::RenderPassBeginInfo {
                     render_pass: shadow_pass,
@@ -990,8 +966,8 @@ fn main() {
                     ..Default::default()
                 };
 
-                vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-                vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
+                vk.device.cmd_begin_render_pass(vk.general_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+                vk.device.cmd_bind_pipeline(vk.general_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
                 for i in 0..CascadedShadowMap::CASCADE_COUNT {
                     let viewport = vk::Viewport {
                         x: (i as u32 * sun_shadow_map.resolution()) as f32,
@@ -1001,7 +977,7 @@ fn main() {
                         min_depth: 0.0,
                         max_depth: 1.0
                     };
-                    vk.device.cmd_set_viewport(vk.graphics_command_buffer, 0, &[viewport]);
+                    vk.device.cmd_set_viewport(vk.general_command_buffer, 0, &[viewport]);
 
                     for drawcall in renderer.drawlist_iter() {
                         if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
@@ -1013,13 +989,13 @@ fn main() {
                                 model.uv_offset.to_le_bytes(),
                                 (i as u32).to_le_bytes()
                             ].concat();
-                            vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                            vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                            vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                            vk.device.cmd_push_constants(vk.general_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                            vk.device.cmd_bind_index_buffer(vk.general_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                            vk.device.cmd_draw_indexed(vk.general_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                         }
                     }
                 }
-                vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
+                vk.device.cmd_end_render_pass(vk.general_command_buffer);
             }
             
             //Set the viewport for this frame
@@ -1031,7 +1007,7 @@ fn main() {
                 min_depth: 0.0,
                 max_depth: 1.0
             };
-            vk.device.cmd_set_viewport(vk.graphics_command_buffer, 0, &[viewport]);
+            vk.device.cmd_set_viewport(vk.general_command_buffer, 0, &[viewport]);
 
             //Set scissor rect to be same as render area
             let vk_render_area = {
@@ -1047,7 +1023,7 @@ fn main() {
                     height: window_size.y
                 }
             };
-            vk.device.cmd_set_scissor(vk.graphics_command_buffer, 0, &[scissor_area]);
+            vk.device.cmd_set_scissor(vk.general_command_buffer, 0, &[scissor_area]);
 
             let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
             let rp_begin_info = vk::RenderPassBeginInfo {
@@ -1058,13 +1034,13 @@ fn main() {
                 p_clear_values: vk_clear_values.as_ptr(),
                 ..Default::default()
             };
-            vk.device.cmd_begin_render_pass(vk.graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            vk.device.cmd_begin_render_pass(vk.general_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
             for drawcall in renderer.drawlist_iter() {
                 if drawcall.pipeline != last_bound_pipeline {
-                    vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
+                    vk.device.cmd_bind_pipeline(vk.general_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
                     last_bound_pipeline = drawcall.pipeline;
                 }
                 if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
@@ -1075,22 +1051,22 @@ fn main() {
                         model.normal_offset.to_le_bytes(),
                         model.uv_offset.to_le_bytes(),
                     ].concat();
-                    vk.device.cmd_push_constants(vk.graphics_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                    vk.device.cmd_bind_index_buffer(vk.graphics_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                    vk.device.cmd_draw_indexed(vk.graphics_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                    vk.device.cmd_push_constants(vk.general_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                    vk.device.cmd_bind_index_buffer(vk.general_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                    vk.device.cmd_draw_indexed(vk.general_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }
 
             //Record atmosphere rendering commands
-            vk.device.cmd_bind_pipeline(vk.graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
-            vk.device.cmd_draw(vk.graphics_command_buffer, 36, 1, 0, 0);
+            vk.device.cmd_bind_pipeline(vk.general_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
+            vk.device.cmd_draw(vk.general_command_buffer, 36, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands
             dev_gui.record_draw_commands(&mut vk, pipeline_layout);
 
-            vk.device.cmd_end_render_pass(vk.graphics_command_buffer);
+            vk.device.cmd_end_render_pass(vk.general_command_buffer);
 
-            vk.device.end_command_buffer(vk.graphics_command_buffer).unwrap();
+            vk.device.end_command_buffer(vk.general_command_buffer).unwrap();
 
             let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: 1,
@@ -1099,13 +1075,13 @@ fn main() {
                 signal_semaphore_count: 1,
                 p_signal_semaphores: &vk_rendercomplete_semaphore,
                 command_buffer_count: 1,
-                p_command_buffers: &vk.graphics_command_buffer,
+                p_command_buffers: &vk.general_command_buffer,
                 ..Default::default()
             };
 
             let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-            vk.device.reset_fences(&[vk.graphics_command_buffer_fence]).unwrap();
-            vk.device.queue_submit(queue, &[submit_info], vk.graphics_command_buffer_fence).unwrap();
+            vk.device.reset_fences(&[vk.general_command_buffer_fence]).unwrap();
+            vk.device.queue_submit(queue, &[submit_info], vk.general_command_buffer_fence).unwrap();
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
@@ -1123,6 +1099,6 @@ fn main() {
 
     //Cleanup
     unsafe {
-        vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+        vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     }
 }

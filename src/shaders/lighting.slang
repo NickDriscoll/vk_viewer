@@ -1,7 +1,5 @@
 import structs;
 
-static const float PI = 3.14159265359;
-
 // Everything is from https://learnopengl.com/PBR/Theory
 
 float3 fresnel_schlick(float3 base_reflectivity, float3 halfway, float3 view)

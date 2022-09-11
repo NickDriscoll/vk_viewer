@@ -355,9 +355,11 @@ pub struct SunLight {
     pub shadow_map: CascadedShadowMap
 }
 
-pub struct FrameData {
+#[derive(Clone, Copy)]
+pub struct CommandBufferData {
     pub command_buffer: vk::CommandBuffer,
-    pub fence: vk::Fence
+    pub fence: vk::Fence,
+    pub semaphore: vk::Semaphore
 }
 
 pub struct Renderer {
@@ -395,11 +397,15 @@ pub struct Renderer {
 
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
-    pub samplers_descriptor_index: u32
+    pub samplers_descriptor_index: u32,
+    command_buffers: Vec<CommandBufferData>,
+    current_command_buffer: usize
 }
 
 impl Renderer {
     pub const FRAMES_IN_FLIGHT: usize = 2;
+
+    pub fn current_command_buffer_index(&self) -> usize { self.current_command_buffer }
 
     pub fn get_instance_data(&self) -> &Vec<InstanceData> {
         &self.instance_data
@@ -410,7 +416,7 @@ impl Renderer {
         let mut global_textures = FreeList::with_capacity(1024);
 
         //Allocate buffer for frame-constant uniforms
-        let uniform_buffer_size = size_of::<FrameUniforms>() as vk::DeviceSize;
+        let uniform_buffer_size = 2 * size_of::<FrameUniforms>() as vk::DeviceSize;
         let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
         let uniform_buffer = GPUBuffer::allocate(
             vk,
@@ -507,9 +513,10 @@ impl Renderer {
                 length: u64
             }
 
+            //Bindless descriptor set specification
             let buffer_descriptor_descs = [
                 BufferDescriptorDesc {
-                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
                     stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                     count: 1,
                     buffer: uniform_buffer.backing_buffer(),
@@ -713,7 +720,33 @@ impl Renderer {
         };
 
         //Data for each in-flight frame
-        
+        let command_buffers = {
+            let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
+                command_pool: vk.command_pool,
+                command_buffer_count: Self::FRAMES_IN_FLIGHT as u32,
+                level: vk::CommandBufferLevel::PRIMARY,
+                ..Default::default()
+            };
+            let command_buffers = unsafe { vk.device.allocate_command_buffers(&command_buffer_alloc_info).unwrap() };
+            
+            let mut c_buffer_datas = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
+            for i in 0..Self::FRAMES_IN_FLIGHT {
+                let create_info = vk::FenceCreateInfo {
+                    flags: vk::FenceCreateFlags::SIGNALED,
+                    ..Default::default()
+                };
+                let fence = unsafe { vk.device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap() };
+                let semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
+
+                let data = CommandBufferData {
+                    command_buffer: command_buffers[i],
+                    fence,
+                    semaphore
+                };
+                c_buffer_datas.push(data);
+            }
+            c_buffer_datas
+        };
 
         Renderer {
             default_diffuse_idx: default_color_idx,
@@ -744,8 +777,18 @@ impl Renderer {
             instance_buffer,
             material_buffer,
             samplers_descriptor_index,
-            main_sun: None
+            main_sun: None,
+            command_buffers,
+            current_command_buffer: 0
         }
+    }
+
+    pub unsafe fn next_command_buffer(&mut self, vk: &mut VulkanAPI) -> CommandBufferData {
+        let cb = self.command_buffers[self.current_command_buffer];
+        vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap();
+        self.current_command_buffer += 1;
+        self.current_command_buffer %= Self::FRAMES_IN_FLIGHT;
+        cb
     }
 
     pub fn register_model(&mut self, data: Primitive) -> usize {
@@ -808,7 +851,7 @@ impl Renderer {
     pub fn prepare_frame(&mut self, vk: &mut VulkanAPI, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) {
         //We need to wait until it's safe to write GPU data
         unsafe {
-            vk.device.wait_for_fences(&[vk.graphics_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+            vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
         }
 
         //Update bindless texture sampler descriptors
