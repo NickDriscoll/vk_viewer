@@ -142,7 +142,7 @@ impl DevGui {
         };
     }
 
-    pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanAPI, layout: vk::PipelineLayout) {
+    pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
         //Destroy Dear ImGUI allocations from last frame
         {
             let last_frame = self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT;
@@ -153,7 +153,7 @@ impl DevGui {
         }
 
         //Record Dear ImGUI drawing commands
-        vk.device.cmd_bind_pipeline(vk.general_command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+        vk.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
         let gui_frame = &self.frames[self.current_frame];
         for i in 0..gui_frame.draw_cmd_lists.len() {
             let cmd_list = &gui_frame.draw_cmd_lists[i];
@@ -179,16 +179,16 @@ impl DevGui {
                                 extent
                             }
                         };
-                        vk.device.cmd_set_scissor(vk.general_command_buffer, 0, &[scissor_rect]);
+                        vk.device.cmd_set_scissor(command_buffer, 0, &[scissor_rect]);
 
                         let tex_id = cmd_params.texture_id.id() as u32;
                         let pcs = [
                             tex_id.to_le_bytes(),
                             (gui_frame.offsets[i] as u32).to_le_bytes()
                         ].concat();
-                        vk.device.cmd_push_constants(vk.general_command_buffer, layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, &pcs);
-                        vk.device.cmd_bind_index_buffer(vk.general_command_buffer, i_buffer, 0, vk::IndexType::UINT32);
-                        vk.device.cmd_draw_indexed(vk.general_command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
+                        vk.device.cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, &pcs);
+                        vk.device.cmd_bind_index_buffer(command_buffer, i_buffer, 0, vk::IndexType::UINT32);
+                        vk.device.cmd_draw_indexed(command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
                     }
                     DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
                     DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
