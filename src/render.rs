@@ -356,7 +356,7 @@ pub struct SunLight {
 }
 
 #[derive(Clone, Copy)]
-pub struct CommandBufferData {
+pub struct InFlightFrameData {
     pub command_buffer: vk::CommandBuffer,
     pub fence: vk::Fence,
     pub semaphore: vk::Semaphore
@@ -398,14 +398,14 @@ pub struct Renderer {
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
     pub samplers_descriptor_index: u32,
-    command_buffers: Vec<CommandBufferData>,
-    current_command_buffer: usize
+    frames_in_flight: Vec<InFlightFrameData>,
+    in_flight_frame: usize
 }
 
 impl Renderer {
     pub const FRAMES_IN_FLIGHT: usize = 2;
 
-    pub fn current_command_buffer_index(&self) -> usize { self.current_command_buffer }
+    pub fn current_in_flight_frame(&self) -> usize { self.in_flight_frame }
 
     pub fn get_instance_data(&self) -> &Vec<InstanceData> {
         &self.instance_data
@@ -521,7 +521,7 @@ impl Renderer {
                     count: 1,
                     buffer: uniform_buffer.backing_buffer(),
                     offset: 0,
-                    length: uniform_buffer.length()
+                    length: size_of::<FrameUniforms>() as u64
                 },
                 BufferDescriptorDesc {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
@@ -738,7 +738,7 @@ impl Renderer {
                 let fence = unsafe { vk.device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap() };
                 let semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
 
-                let data = CommandBufferData {
+                let data = InFlightFrameData {
                     command_buffer: command_buffers[i],
                     fence,
                     semaphore
@@ -778,16 +778,16 @@ impl Renderer {
             material_buffer,
             samplers_descriptor_index,
             main_sun: None,
-            command_buffers,
-            current_command_buffer: 0
+            frames_in_flight: command_buffers,
+            in_flight_frame: 0
         }
     }
 
-    pub unsafe fn next_command_buffer(&mut self, vk: &mut VulkanAPI) -> CommandBufferData {
-        let cb = self.command_buffers[self.current_command_buffer];
+    pub unsafe fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {
+        let cb = self.frames_in_flight[self.in_flight_frame];
         vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap();
-        self.current_command_buffer += 1;
-        self.current_command_buffer %= Self::FRAMES_IN_FLIGHT;
+        self.in_flight_frame += 1;
+        self.in_flight_frame %= Self::FRAMES_IN_FLIGHT;
         cb
     }
 
@@ -937,8 +937,11 @@ impl Renderer {
 
             uniforms.time = elapsed_time;
 
+            let dynamic_offset = (self.in_flight_frame * size_of::<FrameUniforms>()) as u64;
+            let dynamic_offset = size_to_alignment!(dynamic_offset, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
+
             let uniform_bytes = struct_to_bytes(&self.uniform_data);
-            self.uniform_buffer.upload_buffer(vk, uniform_bytes);
+            self.uniform_buffer.upload_subbuffer(vk, uniform_bytes, dynamic_offset);
         };
 
         //Update model matrix storage buffer

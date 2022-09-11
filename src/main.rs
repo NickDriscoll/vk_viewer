@@ -751,6 +751,12 @@ fn main() {
 
         if let Some(_) = imgui_window_token {
             if let Some(mb) = imgui_ui.begin_menu_bar() {
+                if let Some(mt) = imgui_ui.begin_menu("File") {
+                    if imgui::MenuItem::new("New").build(&imgui_ui) {}
+                    if imgui::MenuItem::new("Load").build(&imgui_ui) {}
+                    if imgui::MenuItem::new("Save").build(&imgui_ui) {}
+                    mt.end();
+                }
                 if let Some(mt) = imgui_ui.begin_menu("Environment") {
                     if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) {
                         dev_gui.do_terrain_window = true;
@@ -937,11 +943,21 @@ fn main() {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
             let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(vk_swapchain.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
 
+            let frame_info = renderer.next_frame(&mut vk);
+
             //Put command buffer in recording state
             vk.device.begin_command_buffer(vk.general_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             //Once-per-frame bindless descriptor setup
-            vk.device.cmd_bind_descriptor_sets(vk.general_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[renderer.bindless_descriptor_set], &[0]);
+            let dynamic_uniform_offset = (renderer.current_in_flight_frame() * size_of::<render::FrameUniforms>()) as u64;
+            vk.device.cmd_bind_descriptor_sets(
+                vk.general_command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout,
+                0,
+                &[renderer.bindless_descriptor_set],
+                &[size_to_alignment!(dynamic_uniform_offset, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment) as u32]
+            );
 
             //Shadow rendering
             if let Some(sun) = &renderer.main_sun {

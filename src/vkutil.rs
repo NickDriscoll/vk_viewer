@@ -40,6 +40,7 @@ pub const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping
 };
 
 //Macro to fit a given desired size to a given alignment without worrying about the specific integer type
+#[macro_export]
 macro_rules! size_to_alignment {
     ($in_size:ident, $alignment:expr) => {
         {
