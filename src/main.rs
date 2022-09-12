@@ -714,6 +714,7 @@ fn main() {
         //Update
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
 
+        //Terrain generation window
         if dev_gui.do_terrain_window(&imgui_ui, &mut terrain) {
             regenerate_terrain(
                 &mut vk,
@@ -736,6 +737,18 @@ fn main() {
                 imgui::Image::new(
                     TextureId::new(idx as usize),
                     [(res * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, res as f32 / 6.0]
+                ).build(&imgui_ui);
+
+                win_token.end();
+            }
+        }
+
+        if dev_gui.do_gui && dev_gui.do_sun_shadowmap {
+            let win = imgui::Window::new("Default texture");
+            if let Some(win_token) = win.begin(&imgui_ui) {
+                imgui::Image::new(
+                    TextureId::new(renderer.default_texture_idx as usize),
+                    [800.0, 800.0]
                 ).build(&imgui_ui);
 
                 win_token.end();
@@ -1114,6 +1127,6 @@ fn main() {
 
     //Cleanup
     unsafe {
-        vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+        renderer.cleanup(&mut vk);
     }
 }

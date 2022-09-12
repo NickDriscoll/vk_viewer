@@ -70,7 +70,7 @@ pub struct Primitive {
     pub material_idx: u32
 }
 
-//TL;DR use cofactor instead of transpose(inverse(world_from_model)) to compute normal matrix
+//TL;DR: use cofactor instead of transpose(inverse(world_from_model)) to compute normal matrix
 //https://github.com/graphitemaster/normals_revisited
 fn cofactor(src: &[f32], dst: &mut [f32]) {
     fn minor(m: &[f32], r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: usize) -> f32 {
@@ -307,7 +307,7 @@ impl CascadedShadowMap {
             let y3 = z1 * f32::tan(fovy);
     
             //The extreme vertices of the sub-frustum
-            let shadow_space_points = [
+            let shadow_view_space_points = [
                 shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
                 shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
                 shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
@@ -318,12 +318,12 @@ impl CascadedShadowMap {
                 shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
             ];
     
-            //Determine the boundaries of the orthographic projection
+            //Determine the view-space boundaries of the orthographic projection
             let mut min_x = f32::INFINITY;
             let mut min_y = f32::INFINITY;
             let mut max_x = f32::NEG_INFINITY;
             let mut max_y = f32::NEG_INFINITY;
-            for point in shadow_space_points.iter() {
+            for point in shadow_view_space_points.iter() {
                 if max_x < point.x { max_x = point.x; }
                 if min_x > point.x { min_x = point.x; }
                 if max_y < point.y { max_y = point.y; }
@@ -361,7 +361,6 @@ pub struct InFlightFrameData {
     pub fence: vk::Fence,
     pub semaphore: vk::Semaphore
 }
-
 pub struct Renderer {
     pub default_diffuse_idx: u32,
     pub default_normal_idx: u32,
@@ -409,6 +408,15 @@ impl Renderer {
 
     pub fn get_instance_data(&self) -> &Vec<InstanceData> {
         &self.instance_data
+    }
+
+    pub unsafe fn cleanup(&mut self, vk: &mut VulkanAPI) {
+        let mut fences = [vk::Fence::default(); Self::FRAMES_IN_FLIGHT];
+        for i in 0..self.frames_in_flight.len() {
+            fences[i] = self.frames_in_flight[i].fence;
+        }
+
+        vk.device.wait_for_fences(&fences, true, vk::DeviceSize::MAX).unwrap();
     }
 
     pub fn init(vk: &mut VulkanAPI) -> Self {
@@ -849,11 +857,6 @@ impl Renderer {
     }
 
     pub fn prepare_frame(&mut self, vk: &mut VulkanAPI, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) {
-        //We need to wait until it's safe to write GPU data
-        unsafe {
-            vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-        }
-
         //Update bindless texture sampler descriptors
         if self.global_textures.updated {
             self.global_textures.updated = false;
