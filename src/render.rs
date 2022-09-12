@@ -425,7 +425,7 @@ impl Renderer {
 
         //Allocate buffer for frame-constant uniforms
         let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
-        let uniform_buffer_size = 2 * size_to_alignment!(size_of::<FrameUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
+        let uniform_buffer_size = Self::FRAMES_IN_FLIGHT as u64 * size_to_alignment!(size_of::<FrameUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
         let uniform_buffer = GPUBuffer::allocate(
             vk,
             uniform_buffer_size,
@@ -940,9 +940,8 @@ impl Renderer {
 
             uniforms.time = elapsed_time;
 
-            let dynamic_offset = (self.in_flight_frame * size_of::<FrameUniforms>()) as u64;
-            let dynamic_offset = size_to_alignment!(dynamic_offset, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
-
+            let dynamic_offset = (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64;
+            
             let uniform_bytes = struct_to_bytes(&self.uniform_data);
             self.uniform_buffer.upload_subbuffer(vk, uniform_bytes, dynamic_offset);
         };

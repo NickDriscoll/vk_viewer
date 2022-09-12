@@ -743,25 +743,13 @@ fn main() {
             }
         }
 
-        if dev_gui.do_gui && dev_gui.do_sun_shadowmap {
-            let win = imgui::Window::new("Default texture");
-            if let Some(win_token) = win.begin(&imgui_ui) {
-                imgui::Image::new(
-                    TextureId::new(renderer.default_texture_idx as usize),
-                    [800.0, 800.0]
-                ).build(&imgui_ui);
-
-                win_token.end();
-            }
-        }
-
         let imgui_window_token = if dev_gui.do_gui {
             imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
         } else {
             None
         };
 
-        if let Some(_) = imgui_window_token {
+        if let Some(t) = imgui_window_token {
             if let Some(mb) = imgui_ui.begin_menu_bar() {
                 if let Some(mt) = imgui_ui.begin_menu("File") {
                     if imgui::MenuItem::new("New").build(&imgui_ui) {}
@@ -800,6 +788,35 @@ fn main() {
             imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
             imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
             imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
+
+            if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
+            imgui_ui.checkbox("Freecam", &mut do_freecam);
+            imgui_ui.checkbox("Shadow map", &mut dev_gui.do_sun_shadowmap);
+
+            imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
+            
+            if imgui_ui.button_with_size("Totoro's be gone", [0.0, 32.0]) {
+                for i in 1..totoro_list.len() {
+                    totoro_list.delete(i);
+                }
+            }
+            if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
+                if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
+                    let data = gltfutil::gltf_meshdata(&path);                    
+                    let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
+                    let model_matrix = glm::translation(&camera.position);
+                    let s = StaticProp {
+                        model_indices,
+                        model_matrix
+                    };
+                    static_props.insert(s);
+                }
+            }
+            if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
+                break 'running;
+            }
+
+            t.end();
         }
 
         //Step the physics engine
@@ -911,51 +928,19 @@ fn main() {
             }
         }
 
-        if let Some(t) = imgui_window_token {
-            if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
-            imgui_ui.checkbox("Freecam", &mut do_freecam);
-            imgui_ui.checkbox("Shadow map", &mut dev_gui.do_sun_shadowmap);
-
-            imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
-            
-            if imgui_ui.button_with_size("Totoro's be gone", [0.0, 32.0]) {
-                for i in 1..totoro_list.len() {
-                    totoro_list.delete(i);
-                }
-            }
-            if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
-                if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                    let data = gltfutil::gltf_meshdata(&path);                    
-                    let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
-                    let model_matrix = glm::translation(&camera.position);
-                    let s = StaticProp {
-                        model_indices,
-                        model_matrix
-                    };
-                    static_props.insert(s);
-                }
-            }
-            if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
-                break 'running;
-            }
-
-            t.end();
-        }
-
         //Resolve the current Dear Imgui frame
         dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, imgui_ui);
-
-        //Pre-render phase
-        
-        //Does all work that needs to happen before the render pass
-        renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
 
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
             let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(vk_swapchain.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
-
+            
+            //Pre-render phase
             let frame_info = renderer.next_frame(&mut vk);
+
+            //Does all work that needs to happen before the render pass
+            renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
 
             //Put command buffer in recording state
             vk.device.begin_command_buffer(frame_info.command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
@@ -968,7 +953,7 @@ fn main() {
                 pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
-                &[size_to_alignment!(dynamic_uniform_offset, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment) as u32]
+                &[dynamic_uniform_offset as u32]
             );
 
             //Shadow rendering
@@ -1123,6 +1108,7 @@ fn main() {
                 println!("{}", e);
             }
         }
+        //std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
     //Cleanup
