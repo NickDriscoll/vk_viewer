@@ -948,7 +948,7 @@ fn main() {
             vk.device.begin_command_buffer(frame_info.command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             //Once-per-frame bindless descriptor setup
-            let dynamic_uniform_offset = (renderer.current_in_flight_frame() * size_of::<render::FrameUniforms>()) as u64;
+            let dynamic_uniform_offset = (renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment));
             vk.device.cmd_bind_descriptor_sets(
                 frame_info.command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,

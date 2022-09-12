@@ -416,8 +416,8 @@ impl Renderer {
         let mut global_textures = FreeList::with_capacity(1024);
 
         //Allocate buffer for frame-constant uniforms
-        let uniform_buffer_size = 2 * size_of::<FrameUniforms>() as vk::DeviceSize;
         let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
+        let uniform_buffer_size = 2 * size_to_alignment!(size_of::<FrameUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
         let uniform_buffer = GPUBuffer::allocate(
             vk,
             uniform_buffer_size,
