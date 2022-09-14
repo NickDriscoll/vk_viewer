@@ -286,30 +286,9 @@ fn main() {
 
     //Initialize the Vulkan API
     let mut vk = vkutil::VulkanAPI::init(&window);
-    
-    //Initialize the renderer
-    let mut renderer = Renderer::init(&mut vk);
 
     //Initialize the physics engine
     let mut physics_engine = PhysicsEngine::new();
-
-    //Create and upload Dear IMGUI font atlas
-    match imgui_context.fonts() {
-        FontAtlasRefMut::Owned(atlas) => unsafe {
-            let atlas_texture = atlas.build_alpha8_texture();
-            let atlas_format = vk::Format::R8_UNORM;
-            let descriptor_info = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_texture.width, atlas_texture.height, atlas_texture.data);
-            let index = renderer.global_textures.insert(descriptor_info);
-            renderer.default_texture_idx = index as u32;
-            
-            atlas.clear_tex_data();  //Free atlas memory CPU-side
-            atlas.tex_id = imgui::TextureId::new(index);    //Giving Dear Imgui a reference to the font atlas GPU texture
-            index as u32
-        }
-        FontAtlasRefMut::Shared(_) => {
-            panic!("Not dealing with this case.");
-        }
-    };
 
     //Search for an SRGB swapchain format    
     let surf_formats = unsafe { vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap() };
@@ -410,8 +389,26 @@ fn main() {
         vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
 
-    //Create the main swapchain for window present
-    let mut vk_swapchain = vkutil::Swapchain::init(&mut vk, main_forward_pass);
+    //Initialize the renderer
+    let mut renderer = Renderer::init(&mut vk, main_forward_pass);
+
+    //Create and upload Dear IMGUI font atlas
+    match imgui_context.fonts() {
+        FontAtlasRefMut::Owned(atlas) => unsafe {
+            let atlas_texture = atlas.build_alpha8_texture();
+            let atlas_format = vk::Format::R8_UNORM;
+            let descriptor_info = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_texture.width, atlas_texture.height, atlas_texture.data);
+            let index = renderer.global_textures.insert(descriptor_info);
+            renderer.default_texture_idx = index as u32;
+            
+            atlas.clear_tex_data();  //Free atlas memory CPU-side
+            atlas.tex_id = imgui::TextureId::new(index);    //Giving Dear Imgui a reference to the font atlas GPU texture
+            index as u32
+        }
+        FontAtlasRefMut::Shared(_) => {
+            panic!("Not dealing with this case.");
+        }
+    };
 
     let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let pipeline_layout = unsafe {
@@ -682,22 +679,22 @@ fn main() {
         //Handle needing to resize the window
         unsafe {
             if input_output.resize_window {
-                vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+                vk.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
-                for framebuffer in vk_swapchain.swapchain_framebuffers {
+                for framebuffer in renderer.swapchain.swapchain_framebuffers {
                     vk.device.destroy_framebuffer(framebuffer, vkutil::MEMORY_ALLOCATOR);
                 }
-                for view in vk_swapchain.swapchain_image_views {
+                for view in renderer.swapchain.swapchain_image_views {
                     vk.device.destroy_image_view(view, vkutil::MEMORY_ALLOCATOR);
                 }
-                vk.device.destroy_image_view(vk_swapchain.depth_image_view, vkutil::MEMORY_ALLOCATOR);
-                vk.ext_swapchain.destroy_swapchain(vk_swapchain.swapchain, vkutil::MEMORY_ALLOCATOR);
+                vk.device.destroy_image_view(renderer.swapchain.depth_image_view, vkutil::MEMORY_ALLOCATOR);
+                vk.ext_swapchain.destroy_swapchain(renderer.swapchain.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                vk_swapchain = vkutil::Swapchain::init(&mut vk, main_forward_pass);
+                renderer.swapchain = vkutil::Swapchain::init(&mut vk, main_forward_pass);
 
-                window_size = glm::vec2(vk_swapchain.extent.width, vk_swapchain.extent.height);
+                window_size = glm::vec2(renderer.swapchain.extent.width, renderer.swapchain.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
                 imgui_io.display_size[1] = window_size.y as f32;
             }
@@ -934,7 +931,7 @@ fn main() {
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(vk_swapchain.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(renderer.swapchain.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
             
             //Pre-render phase
             let frame_info = renderer.next_frame(&mut vk);
@@ -1015,8 +1012,8 @@ fn main() {
             let viewport = vk::Viewport {
                 x: 0.0,
                 y: 0.0,
-                width: (vk_swapchain.extent.width) as f32,
-                height: (vk_swapchain.extent.height) as f32,
+                width: (renderer.swapchain.extent.width) as f32,
+                height: (renderer.swapchain.extent.height) as f32,
                 min_depth: 0.0,
                 max_depth: 1.0
             };
@@ -1026,7 +1023,7 @@ fn main() {
             let vk_render_area = {
                 vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: vk_swapchain.extent
+                    extent: renderer.swapchain.extent
                 }
             };
             let scissor_area = vk::Rect2D {
@@ -1041,7 +1038,7 @@ fn main() {
             let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: main_forward_pass,
-                framebuffer: vk_swapchain.swapchain_framebuffers[current_framebuffer_index],
+                framebuffer: renderer.swapchain.swapchain_framebuffers[current_framebuffer_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
@@ -1098,7 +1095,7 @@ fn main() {
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
-                p_swapchains: &vk_swapchain.swapchain,
+                p_swapchains: &renderer.swapchain.swapchain,
                 p_image_indices: &(current_framebuffer_index as u32),
                 wait_semaphore_count: 1,
                 p_wait_semaphores: &frame_info.semaphore,

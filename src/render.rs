@@ -2,7 +2,7 @@ use core::slice::Iter;
 use std::convert::TryInto;
 use ash::vk::DescriptorImageInfo;
 
-use crate::*;
+use crate::{*, vkutil::Swapchain};
 
 //1:1 with shader struct
 #[derive(Clone, Debug)]
@@ -373,6 +373,7 @@ pub struct Renderer {
     primitives: OptionVec<Primitive>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
+    pub swapchain: Swapchain,
     pub main_sun: Option<SunLight>,
     pub uniform_data: FrameUniforms,
 
@@ -406,20 +407,23 @@ impl Renderer {
 
     pub fn current_in_flight_frame(&self) -> usize { self.in_flight_frame }
 
+    pub fn in_flight_fences(&self) -> [vk::Fence; Self::FRAMES_IN_FLIGHT] {
+        let mut fences = [vk::Fence::default(); Self::FRAMES_IN_FLIGHT];
+        for i in 0..self.frames_in_flight.len() {
+            fences[i] = self.frames_in_flight[i].fence;
+        }
+        fences
+    }
+
     pub fn get_instance_data(&self) -> &Vec<InstanceData> {
         &self.instance_data
     }
 
     pub unsafe fn cleanup(&mut self, vk: &mut VulkanAPI) {
-        let mut fences = [vk::Fence::default(); Self::FRAMES_IN_FLIGHT];
-        for i in 0..self.frames_in_flight.len() {
-            fences[i] = self.frames_in_flight[i].fence;
-        }
-
-        vk.device.wait_for_fences(&fences, true, vk::DeviceSize::MAX).unwrap();
+        vk.device.wait_for_fences(&self.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
     }
 
-    pub fn init(vk: &mut VulkanAPI) -> Self {
+    pub fn init(vk: &mut VulkanAPI, swapchain_render_pass: vk::RenderPass) -> Self {
         //Maintain free list for texture allocation
         let mut global_textures = FreeList::with_capacity(1024);
 
@@ -756,6 +760,9 @@ impl Renderer {
             c_buffer_datas
         };
 
+        //Create the main swapchain for window present
+        let swapchain = vkutil::Swapchain::init(vk, swapchain_render_pass);
+
         Renderer {
             default_diffuse_idx: default_color_idx,
             default_normal_idx,
@@ -766,6 +773,7 @@ impl Renderer {
             primitives: OptionVec::new(),
             drawlist: Vec::new(),
             instance_data: Vec::new(),
+            swapchain,
             uniform_data: uniforms,
             global_textures,
             default_texture_idx: 0,

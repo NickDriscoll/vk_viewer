@@ -9,7 +9,6 @@ release_name = "%s-%s" % (name, datetime.now().strftime("%m-%d-%Y_%H-%M-%S"))
 staging_dir = name
 asset_dirs = ["data", "redist"]
 
-
 if os.path.exists(staging_dir):
 	shutil.rmtree(staging_dir)
 
