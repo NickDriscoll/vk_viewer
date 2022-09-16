@@ -1,9 +1,7 @@
 import structs;
-import bindings.global_textures;
 import routines;
-
-// Bindings
-ConstantBuffer<FrameUniforms> uniforms;
+import bindings.frame_uniforms;
+import bindings.global_textures;
 
 static const float3 SKYBOX_NONINDEXED_POSITIONS[] = {
     // Front

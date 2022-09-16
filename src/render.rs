@@ -1,8 +1,8 @@
 use core::slice::Iter;
-use std::convert::TryInto;
+use std::{convert::TryInto, ffi::c_void};
 use ash::vk::DescriptorImageInfo;
 
-use crate::{*, vkutil::Swapchain};
+use crate::*;
 
 //1:1 with shader struct
 #[derive(Clone, Debug)]
@@ -19,6 +19,7 @@ pub struct MaterialData {
     pad2: u32,
 }
 
+#[derive(Debug)]
 pub struct Material {
     pub pipeline: vk::Pipeline,
     pub base_color: [f32; 4],
@@ -70,33 +71,7 @@ pub struct Primitive {
     pub material_idx: u32
 }
 
-//TL;DR: use cofactor instead of transpose(inverse(world_from_model)) to compute normal matrix
-//https://github.com/graphitemaster/normals_revisited
-fn cofactor(src: &[f32], dst: &mut [f32]) {
-    fn minor(m: &[f32], r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: usize) -> f32 {
-        return m[4*r0+c0] * (m[4*r1+c1] * m[4*r2+c2] - m[4*r2+c1] * m[4*r1+c2]) -
-               m[4*r0+c1] * (m[4*r1+c0] * m[4*r2+c2] - m[4*r2+c0] * m[4*r1+c2]) +
-               m[4*r0+c2] * (m[4*r1+c0] * m[4*r2+c1] - m[4*r2+c0] * m[4*r1+c1]);
-    }
-
-    dst[ 0] =  minor(src, 1, 2, 3, 1, 2, 3);
-    dst[ 1] = -minor(src, 1, 2, 3, 0, 2, 3);
-    dst[ 2] =  minor(src, 1, 2, 3, 0, 1, 3);
-    dst[ 3] = -minor(src, 1, 2, 3, 0, 1, 2);
-    dst[ 4] = -minor(src, 0, 2, 3, 1, 2, 3);
-    dst[ 5] =  minor(src, 0, 2, 3, 0, 2, 3);
-    dst[ 6] = -minor(src, 0, 2, 3, 0, 1, 3);
-    dst[ 7] =  minor(src, 0, 2, 3, 0, 1, 2);
-    dst[ 8] =  minor(src, 0, 1, 3, 1, 2, 3);
-    dst[ 9] = -minor(src, 0, 1, 3, 0, 2, 3);
-    dst[10] =  minor(src, 0, 1, 3, 0, 1, 3);
-    dst[11] = -minor(src, 0, 1, 3, 0, 1, 2);
-    dst[12] = -minor(src, 0, 1, 2, 1, 2, 3);
-    dst[13] =  minor(src, 0, 1, 2, 0, 2, 3);
-    dst[14] = -minor(src, 0, 1, 2, 0, 1, 3);
-    dst[15] =  minor(src, 0, 1, 2, 0, 1, 2);
-}
-
+#[repr(C)]
 pub struct InstanceData {
     pub world_from_model: glm::TMat4<f32>,
     pub normal_matrix: glm::TMat4<f32>
@@ -104,8 +79,33 @@ pub struct InstanceData {
 
 impl InstanceData {
     pub fn new(world_from_model: glm::TMat4<f32>) -> Self {
-        //TL;DR use cofactor instead of transpose(inverse(world_from_model)) for normal matrix
+        //TL;DR: use cofactor instead of transpose(inverse(world_from_model)) to compute normal matrix
         //https://github.com/graphitemaster/normals_revisited
+        fn cofactor(src: &[f32], dst: &mut [f32]) {
+            fn minor(m: &[f32], r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: usize) -> f32 {
+                return m[4*r0+c0] * (m[4*r1+c1] * m[4*r2+c2] - m[4*r2+c1] * m[4*r1+c2]) -
+                       m[4*r0+c1] * (m[4*r1+c0] * m[4*r2+c2] - m[4*r2+c0] * m[4*r1+c2]) +
+                       m[4*r0+c2] * (m[4*r1+c0] * m[4*r2+c1] - m[4*r2+c0] * m[4*r1+c1]);
+            }
+        
+            dst[ 0] =  minor(src, 1, 2, 3, 1, 2, 3);
+            dst[ 1] = -minor(src, 1, 2, 3, 0, 2, 3);
+            dst[ 2] =  minor(src, 1, 2, 3, 0, 1, 3);
+            dst[ 3] = -minor(src, 1, 2, 3, 0, 1, 2);
+            dst[ 4] = -minor(src, 0, 2, 3, 1, 2, 3);
+            dst[ 5] =  minor(src, 0, 2, 3, 0, 2, 3);
+            dst[ 6] = -minor(src, 0, 2, 3, 0, 1, 3);
+            dst[ 7] =  minor(src, 0, 2, 3, 0, 1, 2);
+            dst[ 8] =  minor(src, 0, 1, 3, 1, 2, 3);
+            dst[ 9] = -minor(src, 0, 1, 3, 0, 2, 3);
+            dst[10] =  minor(src, 0, 1, 3, 0, 1, 3);
+            dst[11] = -minor(src, 0, 1, 3, 0, 1, 2);
+            dst[12] = -minor(src, 0, 1, 2, 1, 2, 3);
+            dst[13] =  minor(src, 0, 1, 2, 0, 2, 3);
+            dst[14] = -minor(src, 0, 1, 2, 0, 1, 3);
+            dst[15] =  minor(src, 0, 1, 2, 0, 1, 2);
+        }
+        
         let mut normal_matrix: glm::TMat4<f32> = glm::identity();
         cofactor(world_from_model.as_slice(), normal_matrix.as_mut_slice());
 
@@ -355,12 +355,191 @@ pub struct SunLight {
     pub shadow_map: CascadedShadowMap
 }
 
+pub struct Swapchain {
+    pub swapchain: vk::SwapchainKHR,
+    pub extent: vk::Extent2D,
+    pub color_format: vk::Format,
+    pub depth_format: vk::Format,
+    pub depth_image: vk::Image,
+    pub depth_image_view: vk::ImageView,
+    pub swapchain_image_views: Vec<vk::ImageView>,
+    pub swapchain_framebuffers: Vec<vk::Framebuffer>
+}
+
+impl Swapchain {
+    pub fn init(vk: &mut VulkanAPI, render_pass: vk::RenderPass) -> Self {
+        //Create the main swapchain for window present
+        let vk_swapchain_image_format;
+        let vk_swapchain_extent;
+        let vk_swapchain = unsafe {
+            let present_modes = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap();
+            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
+            let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
+            
+            //Search for an SRGB swapchain format
+            let mut surf_format = vk::SurfaceFormatKHR::default();
+            for sformat in surf_formats.iter() {
+                if sformat.format == vk::Format::B8G8R8A8_SRGB {
+                    surf_format = *sformat;
+                    break;
+                }
+            }
+
+            let present_mode = present_modes[0];
+            //let present_mode = vk::PresentModeKHR::MAILBOX;
+
+            vk_swapchain_image_format = surf_format.format;
+            vk_swapchain_extent = vk::Extent2D {
+                width: surf_capabilities.current_extent.width,
+                height: surf_capabilities.current_extent.height
+            };
+            let create_info = vk::SwapchainCreateInfoKHR {
+                surface: vk.surface,
+                min_image_count: surf_capabilities.min_image_count,
+                image_format: vk_swapchain_image_format,
+                image_color_space: surf_format.color_space,
+                image_extent: surf_capabilities.current_extent,
+                image_array_layers: 1,
+                image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                image_sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                pre_transform: surf_capabilities.current_transform,
+                composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+                present_mode,
+                ..Default::default()
+            };
+
+            let sc = vk.ext_swapchain.create_swapchain(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            sc
+        };
+        
+        let vk_swapchain_image_views = unsafe {
+            let vk_swapchain_images = vk.ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
+
+            let mut image_views = Vec::with_capacity(vk_swapchain_images.len());
+            for i in 0..vk_swapchain_images.len() {
+                let image_subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                };
+                let view_info = vk::ImageViewCreateInfo {
+                    image: vk_swapchain_images[i],
+                    format: vk_swapchain_image_format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: image_subresource_range,
+                    ..Default::default()
+                };
+
+                image_views.push(vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap());
+            }
+
+            image_views
+        };
+
+        let vk_depth_format = vk::Format::D32_SFLOAT;
+        let vk_depth_image = unsafe {
+            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
+            let extent = vk::Extent3D {
+                width: surf_capabilities.current_extent.width,
+                height: surf_capabilities.current_extent.height,
+                depth: 1
+            };
+
+            let create_info = vk::ImageCreateInfo {
+                queue_family_index_count: 1,
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                flags: vk::ImageCreateFlags::empty(),
+                image_type: vk::ImageType::TYPE_2D,
+                format: vk_depth_format,
+                extent,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+
+            let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            vkutil::allocate_image_memory(vk, depth_image);
+            depth_image
+        };
+
+        let vk_depth_image_view = unsafe {
+            let image_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let view_info = vk::ImageViewCreateInfo {
+                image: vk_depth_image,
+                format: vk_depth_format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                subresource_range: image_subresource_range,
+                ..Default::default()
+            };
+
+            vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        };
+
+        //Create framebuffers
+        let vk_swapchain_framebuffers = unsafe {
+            let mut attachments = [vk::ImageView::default(), vk_depth_image_view];
+            let fb_info = vk::FramebufferCreateInfo {
+                render_pass,
+                attachment_count: attachments.len() as u32,
+                p_attachments: attachments.as_ptr(),
+                width: vk_swapchain_extent.width,
+                height: vk_swapchain_extent.height,
+                layers: 1,
+                ..Default::default()
+            };
+    
+            let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
+            for view in vk_swapchain_image_views.iter() {
+                attachments[0] = view.clone();
+                fbs.push(vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap())
+            }
+    
+            fbs
+        };
+
+        Swapchain {
+            swapchain: vk_swapchain,
+            extent: vk_swapchain_extent,
+            color_format: vk_swapchain_image_format,
+            depth_format: vk_depth_format,
+            depth_image: vk_depth_image,
+            swapchain_image_views: vk_swapchain_image_views,
+            depth_image_view: vk_depth_image_view,
+            swapchain_framebuffers: vk_swapchain_framebuffers
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct InFlightFrameData {
     pub command_buffer: vk::CommandBuffer,
     pub fence: vk::Fence,
     pub semaphore: vk::Semaphore
 }
+
+pub struct FrameBuffer {
+    pub framebuffer_object: vk::Framebuffer,
+    pub color_buffer: vk::Image,
+    pub color_buffer_view: vk::ImageView,
+    pub depth_buffer: vk::Image,
+    pub depth_buffer_view: vk::ImageView
+}
+
 pub struct Renderer {
     pub default_diffuse_idx: u32,
     pub default_normal_idx: u32,
@@ -373,7 +552,10 @@ pub struct Renderer {
     primitives: OptionVec<Primitive>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
+
     pub swapchain: Swapchain,
+    pub primary_framebuffer: FrameBuffer,
+    
     pub main_sun: Option<SunLight>,
     pub uniform_data: FrameUniforms,
 
@@ -389,6 +571,7 @@ pub struct Renderer {
     pub imgui_buffer: GPUBuffer,
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
+    pub current_instance_offset: u64,
     pub material_buffer: GPUBuffer,
 
     pub global_textures: FreeList<DescriptorImageInfo>,
@@ -423,7 +606,7 @@ impl Renderer {
         vk.device.wait_for_fences(&self.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
     }
 
-    pub fn init(vk: &mut VulkanAPI, swapchain_render_pass: vk::RenderPass) -> Self {
+    pub fn init(vk: &mut VulkanAPI, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
         //Maintain free list for texture allocation
         let mut global_textures = FreeList::with_capacity(1024);
 
@@ -441,8 +624,8 @@ impl Renderer {
         let storage_buffer_alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
         
         //Allocate buffer for instance data
-        let global_transform_slots = 1024 * 4;
-        let buffer_size = (size_of::<render::InstanceData>() * global_transform_slots) as vk::DeviceSize;
+        let max_instances = 1024 * 4;
+        let buffer_size = (size_of::<render::InstanceData>() * max_instances * Self::FRAMES_IN_FLIGHT) as vk::DeviceSize;
         let instance_buffer = GPUBuffer::allocate(
             vk,
             buffer_size,
@@ -533,15 +716,15 @@ impl Renderer {
                     count: 1,
                     buffer: uniform_buffer.backing_buffer(),
                     offset: 0,
-                    length: size_of::<FrameUniforms>() as u64
+                    length: size_of::<FrameUniforms>() as vk::DeviceSize
                 },
                 BufferDescriptorDesc {
-                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
                     buffer: instance_buffer.backing_buffer(),
                     offset: 0,
-                    length: instance_buffer.length()
+                    length: (size_of::<InstanceData>() * max_instances) as vk::DeviceSize
                 },
                 BufferDescriptorDesc {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
@@ -624,7 +807,7 @@ impl Renderer {
             bindings.push(binding);
             let pool_size = vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 1
+                descriptor_count: global_textures.size() as u32
             };
             pool_sizes.push(pool_size);
 
@@ -632,14 +815,25 @@ impl Renderer {
 
             let total_set_count = 1;
             let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
+                flags: vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND,    //Allows descriptor sets to be updated even after they're bound
                 max_sets: total_set_count,
                 pool_size_count: pool_sizes.len() as u32,
                 p_pool_sizes: pool_sizes.as_ptr(),
                 ..Default::default()
             };
             let descriptor_pool = vk.device.create_descriptor_pool(&descriptor_pool_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+            let mut flag_list = vec![vk::DescriptorBindingFlags::default(); bindings.len()];
+            flag_list[samplers_descriptor_index as usize] = 
+                vk::DescriptorBindingFlags::PARTIALLY_BOUND;
             
+            let binding_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT {
+                binding_count: flag_list.len() as u32,
+                p_binding_flags: flag_list.as_ptr(),
+                ..Default::default()
+            };
             let descriptor_layout = vk::DescriptorSetLayoutCreateInfo {
+                p_next: &binding_info as *const _ as *const c_void,
                 binding_count: bindings.len() as u32,
                 p_bindings: bindings.as_ptr(),
                 ..Default::default()
@@ -761,7 +955,125 @@ impl Renderer {
         };
 
         //Create the main swapchain for window present
-        let swapchain = vkutil::Swapchain::init(vk, swapchain_render_pass);
+        let swapchain = Swapchain::init(vk, swapchain_render_pass);
+        
+        let surf_capabilities = unsafe { vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap() };
+        let primary_framebuffer_extent = vk::Extent3D {
+            width: surf_capabilities.current_extent.width,
+            height: surf_capabilities.current_extent.height,
+            depth: 1
+        };
+
+        //Create color buffer
+        let primary_framebuffer = {
+            let hdr_color_format = vk::Format::R32G32B32A32_SFLOAT;
+            let primary_color_buffer = unsafe {
+                let create_info = vk::ImageCreateInfo {
+                    queue_family_index_count: 1,
+                    p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                    flags: vk::ImageCreateFlags::empty(),
+                    image_type: vk::ImageType::TYPE_2D,
+                    format: hdr_color_format,
+                    extent: primary_framebuffer_extent,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    ..Default::default()
+                };
+
+                let image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+                vkutil::allocate_image_memory(vk, image);
+                image
+            };
+
+            let color_buffer_view = unsafe {
+                let image_subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                };
+                let view_info = vk::ImageViewCreateInfo {
+                    image: primary_color_buffer,
+                    format: hdr_color_format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: image_subresource_range,
+                    ..Default::default()
+                };
+
+                vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+            };
+
+            //Create main depth buffer
+            let vk_depth_format = vk::Format::D32_SFLOAT;
+            let depth_buffer_image = unsafe {
+                let create_info = vk::ImageCreateInfo {
+                    queue_family_index_count: 1,
+                    p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                    flags: vk::ImageCreateFlags::empty(),
+                    image_type: vk::ImageType::TYPE_2D,
+                    format: vk_depth_format,
+                    extent: primary_framebuffer_extent,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    ..Default::default()
+                };
+
+                let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+                vkutil::allocate_image_memory(vk, depth_image);
+                depth_image
+            };
+
+            let depth_buffer_view = unsafe {
+                let image_subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::DEPTH,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                };
+                let view_info = vk::ImageViewCreateInfo {
+                    image: depth_buffer_image,
+                    format: vk_depth_format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: image_subresource_range,
+                    ..Default::default()
+                };
+
+                vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+            };
+            
+            //Create framebuffer
+            let framebuffer_object = unsafe {
+                let attachments = [color_buffer_view, depth_buffer_view];
+                let fb_info = vk::FramebufferCreateInfo {
+                    render_pass: hdr_render_pass,
+                    attachment_count: attachments.len() as u32,
+                    p_attachments: attachments.as_ptr(),
+                    width: primary_framebuffer_extent.width,
+                    height: primary_framebuffer_extent.height,
+                    layers: 1,
+                    ..Default::default()
+                };
+                vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+            };
+
+            FrameBuffer {
+                framebuffer_object,
+                color_buffer: primary_color_buffer,
+                color_buffer_view,
+                depth_buffer: depth_buffer_image,
+                depth_buffer_view
+            }
+        };
 
         Renderer {
             default_diffuse_idx: default_color_idx,
@@ -774,6 +1086,7 @@ impl Renderer {
             drawlist: Vec::new(),
             instance_data: Vec::new(),
             swapchain,
+            primary_framebuffer,
             uniform_data: uniforms,
             global_textures,
             default_texture_idx: 0,
@@ -791,6 +1104,7 @@ impl Renderer {
             imgui_buffer,
             uniform_buffer,
             instance_buffer,
+            current_instance_offset: 0,
             material_buffer,
             samplers_descriptor_index,
             main_sun: None,
@@ -814,7 +1128,7 @@ impl Renderer {
     fn upload_vertex_attribute(vk: &mut VulkanAPI, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
         let old_offset = *offset;
         let new_offset = old_offset + data.len() as u64;
-        buffer.upload_subbuffer(vk, data, old_offset);
+        buffer.upload_subbuffer_elements(vk, data, old_offset);
         *offset = new_offset;
         old_offset.try_into().unwrap()
     }
@@ -951,11 +1265,16 @@ impl Renderer {
             let dynamic_offset = (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64;
             
             let uniform_bytes = struct_to_bytes(&self.uniform_data);
-            self.uniform_buffer.upload_subbuffer(vk, uniform_bytes, dynamic_offset);
+            self.uniform_buffer.upload_subbuffer_elements(vk, uniform_bytes, dynamic_offset);
         };
 
-        //Update model matrix storage buffer
-        self.instance_buffer.upload_buffer(vk, &self.instance_data);
+        //Update instance data storage buffer
+        unsafe {
+            self.instance_buffer.upload_buffer(vk, &self.instance_data);
+            //self.instance_buffer.upload_subbuffer_bytes(vk, slice_to_bytes(&self.instance_data), 0);
+            //self.current_instance_offset += (self.instance_data.len() * size_of::<InstanceData>()) as u64;
+            //self.current_instance_offset = size_to_alignment!(self.current_instance_offset, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
+        }
     }
 
     pub fn queue_drawcall(&mut self, model_idx: usize, transforms: &[glm::TMat4<f32>]) {

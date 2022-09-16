@@ -14,8 +14,7 @@ pub const MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
 
 pub const COLOR_CLEAR: vk::ClearValue = {
     let color = vk::ClearColorValue {
-        float32: [0.0, 0.0, 0.0, 1.0]
-        //float32: [0.26, 0.4, 0.46, 1.0]
+        float32: [0.0, 0.0, 0.0, 1.0]           //float32: [0.26, 0.4, 0.46, 1.0]
     };
     vk::ClearValue {
         color
@@ -51,6 +50,20 @@ macro_rules! size_to_alignment {
             final_size
         }
     };
+}
+
+pub struct UninterleavedVertices {
+    pub positions: Vec<f32>,
+    pub tangents: Vec<f32>,
+    pub normals: Vec<f32>,
+    pub uvs: Vec<f32>,
+}
+
+pub struct VertexFetchOffsets {
+    pub position_offset: u32,
+    pub tangent_offset: u32,
+    pub normal_offset: u32,
+    pub uv_offset: u32,
 }
 
 pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
@@ -757,8 +770,10 @@ impl VulkanAPI {
                 tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
             buffer_device_address = buffer_address_features.buffer_device_address != 0;
-            println!("{:#?}", physical_device_features);
-            println!("{:#?}", indexing_features);
+            
+            if indexing_features.descriptor_binding_partially_bound == 0 || indexing_features.runtime_descriptor_array == 0 {
+                crash_with_error_dialog("Your GPU lacks the specific features required to do bindless rendering. Sorry.");
+            }
 
             let mut i = 0;
             let qfps = vk_instance.get_physical_device_queue_family_properties(vk_physical_device);
@@ -900,11 +915,17 @@ impl GPUBuffer {
     }
 
     pub fn upload_buffer<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T]) {
-        self.upload_subbuffer(vk, in_buffer, 0);
+        self.upload_subbuffer_elements(vk, in_buffer, 0);
     }
 
-    pub fn upload_subbuffer<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T], offset: u64) {
-        let end_in_bytes = (in_buffer.len() + offset as usize) * size_of::<T>();
+    pub fn upload_subbuffer_elements<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T], offset: u64) {
+        let byte_buffer = unsafe { slice_to_bytes(in_buffer) };
+        let byte_offset = offset * size_of::<T>() as u64;
+        self.upload_subbuffer_bytes(vk, byte_buffer, byte_offset as u64);
+    }
+
+    pub fn upload_subbuffer_bytes(&self, vk: &mut VulkanAPI, in_buffer: &[u8], offset: u64) {
+        let end_in_bytes = in_buffer.len() + offset as usize;
         if end_in_bytes as u64 > self.length {
             crash_with_error_dialog("OVERRAN BUFFER AAAAA");
         }
@@ -912,184 +933,14 @@ impl GPUBuffer {
         unsafe {
             match self.allocation.mapped_ptr() {
                 Some(p) => {
-                    let dst_ptr = p.as_ptr() as *mut T;
+                    let dst_ptr = p.as_ptr() as *mut u8;
                     let dst_ptr = dst_ptr.offset(offset as isize);
-                    ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut T, in_buffer.len());
+                    ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut u8, in_buffer.len());
                 }
                 None => {
                     upload_GPU_buffer(vk, self.buffer, offset, in_buffer);
                 }
             }
-        }
-    }
-}
-
-pub struct Swapchain {
-    pub swapchain: vk::SwapchainKHR,
-    pub extent: vk::Extent2D,
-    pub color_format: vk::Format,
-    pub depth_format: vk::Format,
-    pub depth_image: vk::Image,
-    pub depth_image_view: vk::ImageView,
-    pub swapchain_image_views: Vec<vk::ImageView>,
-    pub swapchain_framebuffers: Vec<vk::Framebuffer>
-}
-
-impl Swapchain {
-    pub fn init(vk: &mut VulkanAPI, render_pass: vk::RenderPass) -> Self {
-        //Create the main swapchain for window present
-        let vk_swapchain_image_format;
-        let vk_swapchain_extent;
-        let vk_swapchain = unsafe {
-            let present_modes = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap();
-            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
-            let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
-            
-            //Search for an SRGB swapchain format
-            let mut surf_format = vk::SurfaceFormatKHR::default();
-            for sformat in surf_formats.iter() {
-                if sformat.format == vk::Format::B8G8R8A8_SRGB {
-                    surf_format = *sformat;
-                    break;
-                }
-            }
-
-            let present_mode = present_modes[0];
-            //let present_mode = vk::PresentModeKHR::MAILBOX;
-
-            vk_swapchain_image_format = surf_format.format;
-            vk_swapchain_extent = vk::Extent2D {
-                width: surf_capabilities.current_extent.width,
-                height: surf_capabilities.current_extent.height
-            };
-            let create_info = vk::SwapchainCreateInfoKHR {
-                surface: vk.surface,
-                min_image_count: surf_capabilities.min_image_count,
-                image_format: vk_swapchain_image_format,
-                image_color_space: surf_format.color_space,
-                image_extent: surf_capabilities.current_extent,
-                image_array_layers: 1,
-                image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                image_sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 1,
-                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-                pre_transform: surf_capabilities.current_transform,
-                composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
-                present_mode,
-                ..Default::default()
-            };
-
-            let sc = vk.ext_swapchain.create_swapchain(&create_info, MEMORY_ALLOCATOR).unwrap();
-            sc
-        };
-        
-        let vk_swapchain_image_views = unsafe {
-            let vk_swapchain_images = vk.ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
-
-            let mut image_views = Vec::with_capacity(vk_swapchain_images.len());
-            for i in 0..vk_swapchain_images.len() {
-                let image_subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1
-                };
-                let view_info = vk::ImageViewCreateInfo {
-                    image: vk_swapchain_images[i],
-                    format: vk_swapchain_image_format,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    components: COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: image_subresource_range,
-                    ..Default::default()
-                };
-
-                image_views.push(vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap());
-            }
-
-            image_views
-        };
-
-        let vk_depth_format = vk::Format::D32_SFLOAT;
-        let vk_depth_image = unsafe {
-            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
-            let extent = vk::Extent3D {
-                width: surf_capabilities.current_extent.width,
-                height: surf_capabilities.current_extent.height,
-                depth: 1
-            };
-
-            let create_info = vk::ImageCreateInfo {
-                queue_family_index_count: 1,
-                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-                flags: vk::ImageCreateFlags::empty(),
-                image_type: vk::ImageType::TYPE_2D,
-                format: vk_depth_format,
-                extent,
-                mip_levels: 1,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-
-            let depth_image = vk.device.create_image(&create_info, MEMORY_ALLOCATOR).unwrap();
-            allocate_image_memory(vk, depth_image);
-            depth_image
-        };
-
-        let vk_depth_image_view = unsafe {
-            let image_subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::DEPTH,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let view_info = vk::ImageViewCreateInfo {
-                image: vk_depth_image,
-                format: vk_depth_format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: COMPONENT_MAPPING_DEFAULT,
-                subresource_range: image_subresource_range,
-                ..Default::default()
-            };
-
-            vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap()
-        };
-
-        //Create framebuffers
-        let vk_swapchain_framebuffers = unsafe {
-            let mut attachments = [vk::ImageView::default(), vk_depth_image_view];
-            let fb_info = vk::FramebufferCreateInfo {
-                render_pass,
-                attachment_count: attachments.len() as u32,
-                p_attachments: attachments.as_ptr(),
-                width: vk_swapchain_extent.width,
-                height: vk_swapchain_extent.height,
-                layers: 1,
-                ..Default::default()
-            };
-    
-            let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
-            for view in vk_swapchain_image_views.iter() {
-                attachments[0] = view.clone();
-                fbs.push(vk.device.create_framebuffer(&fb_info, MEMORY_ALLOCATOR).unwrap())
-            }
-    
-            fbs
-        };
-
-        Swapchain {
-            swapchain: vk_swapchain,
-            extent: vk_swapchain_extent,
-            color_format: vk_swapchain_image_format,
-            depth_format: vk_depth_format,
-            depth_image: vk_depth_image,
-            swapchain_image_views: vk_swapchain_image_views,
-            depth_image_view: vk_depth_image_view,
-            swapchain_framebuffers: vk_swapchain_framebuffers
         }
     }
 }

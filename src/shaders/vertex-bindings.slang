@@ -1,8 +1,5 @@
 import structs;
 
-ConstantBuffer<FrameUniforms> uniforms;
-StructuredBuffer<InstanceData> instance_buffer;
-
 [[vk_binding(3, 0)]]
 StructuredBuffer<float4> vertex_positions;
 [[vk_binding(4, 0)]]

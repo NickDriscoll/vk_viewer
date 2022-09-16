@@ -1,4 +1,6 @@
 import structs;
+import bindings.frame_uniforms;
+import bindings.instance_buffer;
 import vertex_bindings;
 import bindings.global_textures;
 
@@ -31,7 +33,7 @@ ShadowVertexOutput vertex_main(ModelVertex vertex) {
 void fragment_main(ShadowVertexOutput input) {
     Material my_mat = material_buffer[material_idx];
 
-    // if (global_textures[my_mat.color_map_index].Sample(input.uv).a < 0.1) {
-    //     discard;
-    // }
+    if (global_textures[my_mat.color_map_index].Sample(input.uv).a < 0.1) {
+        discard;
+    }
 }

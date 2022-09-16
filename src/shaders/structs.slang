@@ -37,6 +37,18 @@ struct AtmosphereVertexOutput
     float3 view_direction;
 }
 
+struct ImguiVertex {
+    float2 position : POSITION;
+    float2 uv : UVS;
+    float4 color : COLOR;
+}
+
+struct ImguiVertexOutput {
+    float4 clip_out : SV_Position;
+    float2 uv;
+    float4 color;
+}
+
 //Variables that are constant for a given frame
 struct FrameUniforms {
     float4x4 clip_from_world;

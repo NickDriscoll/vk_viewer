@@ -1,4 +1,6 @@
 import structs;
+import bindings.frame_uniforms;
+import bindings.instance_buffer;
 import vertex_bindings;
 
 [[vk::push_constant]]

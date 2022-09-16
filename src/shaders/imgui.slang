@@ -1,28 +1,14 @@
 import structs;
+import bindings.frame_uniforms;
+import bindings.imgui_vertices;
 import bindings.global_textures;
 
-ConstantBuffer<FrameUniforms> uniforms;
-
-[[vk_binding(7, 0)]]
-StructuredBuffer<ImguiVertex> imgui_vertices;
 
 [[vk::push_constant]]
 cbuffer PushConstants
 {
     uint font_idx;
     uint imgui_vertex_offset;
-}
-
-struct ImguiVertex {
-    float2 position : POSITION;
-    float2 uv : UVS;
-    float4 color : COLOR;
-}
-
-struct ImguiVertexOutput {
-    float4 clip_out: SV_Position;
-    float2 uv;
-    float4 color;
 }
 
 [shader("vertex")]

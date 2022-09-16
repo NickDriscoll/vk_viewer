@@ -47,226 +47,12 @@ use crate::gltfutil::GLTFData;
 use crate::gui::DevGui;
 use crate::structs::StaticProp;
 
-struct UninterleavedVertices {
-    pub positions: Vec<f32>,
-    pub tangents: Vec<f32>,
-    pub normals: Vec<f32>,
-    pub uvs: Vec<f32>,
-}
-
-struct VertexFetchOffsets {
-    pub position_offset: u32,
-    pub tangent_offset: u32,
-    pub normal_offset: u32,
-    pub uv_offset: u32,
-}
-
-fn uninterleave_vertex_buffer(vertex_buffer: &[f32]) -> UninterleavedVertices {
-    let floats_per_vertex = 15;
-    let mut positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
-
-    for i in 0..(vertex_buffer.len() / floats_per_vertex) {
-        positions[4 * i] = vertex_buffer[floats_per_vertex * i];
-        positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
-        positions[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 2];
-        positions[4 * i + 3] = 1.0;
-
-        tangents[4 * i] = vertex_buffer[floats_per_vertex * i + 3];
-        tangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 4];
-        tangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 5];
-        tangents[4 * i + 3] = vertex_buffer[floats_per_vertex * i + 6];
-
-        normals[4 * i] = vertex_buffer[floats_per_vertex * i + 10];
-        normals[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 11];
-        normals[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 12];
-        normals[4 * i + 3] = 0.0;
-
-        uvs[2 * i] = vertex_buffer[floats_per_vertex * i + 13];
-        uvs[2 * i + 1] = vertex_buffer[floats_per_vertex * i + 14];
-    }
-
-    UninterleavedVertices {
-        positions,
-        tangents,
-        normals,
-        uvs
-    }
-}
-
-fn uninterleave_and_upload_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
-    let attributes = uninterleave_vertex_buffer(vertex_buffer);
-    
-    let position_offset = renderer.append_vertex_positions(vk, &attributes.positions);
-    let tangent_offset = renderer.append_vertex_tangents(vk, &attributes.tangents);
-    let normal_offset = renderer.append_vertex_normals(vk, &attributes.normals);
-    let uv_offset = renderer.append_vertex_uvs(vk, &attributes.uvs);
-
-    VertexFetchOffsets {
-        position_offset,
-        tangent_offset,
-        normal_offset,
-        uv_offset
-    }
-}
-
-fn upload_primitive_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, prim: &GLTFPrimitive) -> VertexFetchOffsets {
-    let position_offset = renderer.append_vertex_positions(vk, &prim.vertex_positions);
-    let tangent_offset = renderer.append_vertex_tangents(vk, &prim.vertex_tangents);
-    let normal_offset = renderer.append_vertex_normals(vk, &prim.vertex_normals);
-    let uv_offset = renderer.append_vertex_uvs(vk, &prim.vertex_uvs);
-
-    VertexFetchOffsets {
-        position_offset,
-        tangent_offset,
-        normal_offset,
-        uv_offset
-    }
-}
-
-fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32], offset: u64) {
-    let attributes = uninterleave_vertex_buffer(vertex_buffer);
-    
-    renderer.replace_vertex_positions(vk, &attributes.positions, offset);
-    renderer.replace_vertex_tangents(vk, &attributes.tangents, offset);
-    renderer.replace_vertex_normals(vk, &attributes.normals, offset);
-    renderer.replace_vertex_uvs(vk, &attributes.uvs, offset);
-}
-
-fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData, pipeline: vk::Pipeline) -> Vec<usize> {
-    let mut indices = vec![];
-    let mut tex_id_map = HashMap::new();
-    for prim in &data.primitives {
-        let color_idx = if let Some(idx) = prim.material.color_index {
-            match tex_id_map.get(&idx) {
-                Some(id) => { *id }
-                None => {
-                    let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
-                    let image_info = vk::DescriptorImageInfo {
-                        sampler: renderer.material_sampler,
-                        image_view: image.vk_view,
-                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                    };
-                    let global_tex_id = renderer.global_textures.insert(image_info) as u32;
-                    tex_id_map.insert(idx, global_tex_id);
-                    global_tex_id
-                }
-            }
-        } else {
-            renderer.default_diffuse_idx
-        };
-
-        let normal_idx = match prim.material.normal_index {
-            Some(idx) => {
-                match tex_id_map.get(&idx) {
-                    Some(id) => { *id }
-                    None => {
-                        let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
-                        let image_info = vk::DescriptorImageInfo {
-                            sampler: renderer.material_sampler,
-                            image_view: image.vk_view,
-                            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                        };
-                        let global_tex_id = renderer.global_textures.insert(image_info) as u32;
-                        tex_id_map.insert(idx, global_tex_id);
-                        global_tex_id
-                    }
-                }
-            }
-            None => { renderer.default_normal_idx }
-        };
-
-        let metal_roughness_idx = match prim.material.metallic_roughness_index {
-            Some(idx) => {
-                match tex_id_map.get(&idx) {
-                    Some(id) => { *id }
-                    None => {
-                        let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
-                        let image_info = vk::DescriptorImageInfo {
-                            sampler: renderer.material_sampler,
-                            image_view: image.vk_view,
-                            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                        };
-                        let global_tex_id = renderer.global_textures.insert(image_info) as u32;
-                        tex_id_map.insert(idx, global_tex_id);
-                        global_tex_id
-                    }
-                }
-
-            }
-            None => {
-                renderer.default_metal_roughness_idx
-            }
-        };
-
-        let emissive_idx = match prim.material.emissive_index {
-            Some(idx) => {
-                match tex_id_map.get(&idx) {
-                    Some(id) => { *id }
-                    None => {
-                        let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
-                        let image_info = vk::DescriptorImageInfo {
-                            sampler: renderer.material_sampler,
-                            image_view: image.vk_view,
-                            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                        };
-                        let global_tex_id = renderer.global_textures.insert(image_info) as u32;
-                        tex_id_map.insert(idx, global_tex_id);
-                        global_tex_id
-                    }
-                }
-
-            }
-            None => {
-                renderer.default_emissive_idx
-            }
-        };
-
-        let material = Material {
-            pipeline,
-            base_color: prim.material.base_color,
-            base_roughness: prim.material.base_roughness,
-            color_idx,
-            normal_idx,
-            metal_roughness_idx,
-            emissive_idx
-        };
-        let material_idx = renderer.global_materials.insert(material) as u32;
-
-        let offsets = upload_primitive_vertices(vk, renderer, &prim);
-
-        let index_buffer = vkutil::make_index_buffer(vk, &prim.indices);
-        let model_idx = renderer.register_model(Primitive {
-            shadow_type: ShadowType::OpaqueCaster,
-            index_buffer,
-            index_count: prim.indices.len().try_into().unwrap(),
-            position_offset: offsets.position_offset,
-            tangent_offset: offsets.tangent_offset,
-            normal_offset: offsets.normal_offset,
-            uv_offset: offsets.uv_offset,
-            material_idx
-        });
-        indices.push(model_idx);
-    }
-    indices
-}
-
-fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Option<PhysicsProp>) {
-    let handle = totoro.as_ref().unwrap().rigid_body_handle;
-    if let Some(body) = physics_engine.rigid_body_set.get_mut(handle) {
-        body.set_linvel(glm::zero(), true);
-        body.set_position(Isometry::from_parts(Translation::new(0.0, 0.0, 20.0), *body.rotation()), true);
-    }
-}
-
 //Entry point
 fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
     let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
-    let mut window_size = glm::vec2(1280, 1024);
+    let mut window_size = glm::vec2(1920, 1080);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
@@ -336,7 +122,60 @@ fn main() {
         vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
 
-    let main_forward_pass = unsafe {
+    let hdr_forward_pass = unsafe {
+        let color_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::R32G32B32A32_SFLOAT,
+            samples: vk::SampleCountFlags::TYPE_1,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::STORE,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+            ..Default::default()
+        };
+
+        let depth_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::D32_SFLOAT,
+            samples: vk::SampleCountFlags::TYPE_1,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::DONT_CARE,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            ..Default::default()
+        };
+
+        let color_attachment_reference = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        };
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        };
+
+        let subpass = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+            color_attachment_count: 1,
+            p_color_attachments: &color_attachment_reference,
+            p_depth_stencil_attachment: &depth_attachment_reference,
+            ..Default::default()
+        };
+
+        let attachments = [color_attachment_description, depth_attachment_description];
+        let renderpass_info = vk::RenderPassCreateInfo {
+            attachment_count: attachments.len() as u32,
+            p_attachments: attachments.as_ptr(),
+            subpass_count: 1,
+            p_subpasses: &subpass,
+            ..Default::default()
+        };
+        vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+    };
+
+    let swapchain_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
             format: vk_surface_format.format,
             samples: vk::SampleCountFlags::TYPE_1,
@@ -390,7 +229,7 @@ fn main() {
     };
 
     //Initialize the renderer
-    let mut renderer = Renderer::init(&mut vk, main_forward_pass);
+    let mut renderer = Renderer::init(&mut vk, swapchain_pass, hdr_forward_pass);
 
     //Create and upload Dear IMGUI font atlas
     match imgui_context.fonts() {
@@ -473,11 +312,11 @@ fn main() {
             vec![v, f]
         };
 
-        let main_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
+        let main_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, pipeline_layout)
                         .set_shader_stages(main_shader_stages).build_info();
-        let terrain_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
+        let terrain_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, pipeline_layout)
                             .set_shader_stages(terrain_shader_stages).build_info();
-        let atm_info = vkutil::GraphicsPipelineBuilder::init(main_forward_pass, pipeline_layout)
+        let atm_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
         let shadow_info = vkutil::GraphicsPipelineBuilder::init(shadow_pass, pipeline_layout)
                             .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
@@ -586,11 +425,10 @@ fn main() {
         let collider = ColliderBuilder::ball(2.1).restitution(2.5).build();
         let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
         let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
-        let prop = PhysicsProp {
+        totoro_list.insert(PhysicsProp {
             rigid_body_handle,
             collider_handle
-        };
-        totoro_list.insert(prop)
+        })
     };
 
     let mut static_props = DenseSlotMap::<_, StaticProp>::new();
@@ -614,7 +452,7 @@ fn main() {
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
-    let mut dev_gui = DevGui::new(&mut vk, main_forward_pass, pipeline_layout);
+    let mut dev_gui = DevGui::new(&mut vk, swapchain_pass, pipeline_layout);
 
     let mut input_system = input::InputSystem::init(&sdl_context);
 
@@ -638,7 +476,9 @@ fn main() {
         };
 
         //Handling of some input results before update
-        if input_output.gui_toggle { dev_gui.do_gui = !dev_gui.do_gui }
+        if input_output.gui_toggle {
+            dev_gui.do_gui = !dev_gui.do_gui
+        }
         if input_output.regen_terrain {
             regenerate_terrain(
                 &mut vk,
@@ -679,6 +519,7 @@ fn main() {
         //Handle needing to resize the window
         unsafe {
             if input_output.resize_window {
+                //Window resizing requires us to "flush the pipeline" as it were. wahh
                 vk.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
@@ -692,7 +533,7 @@ fn main() {
                 vk.ext_swapchain.destroy_swapchain(renderer.swapchain.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                renderer.swapchain = vkutil::Swapchain::init(&mut vk, main_forward_pass);
+                renderer.swapchain = render::Swapchain::init(&mut vk, swapchain_pass);
 
                 window_size = glm::vec2(renderer.swapchain.extent.width, renderer.swapchain.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
@@ -708,7 +549,8 @@ fn main() {
             }
         }
 
-        //Update
+        // --- Sim Update ---
+
         let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
 
         //Terrain generation window
@@ -725,7 +567,7 @@ fn main() {
         }
 
         if dev_gui.do_gui && dev_gui.do_sun_shadowmap {
-            let win = imgui::Window::new("Shadow atlas");
+            let win = imgui::Window::new("Shadow map visualizer");
             if let Some(win_token) = win.begin(&imgui_ui) {
                 let (idx, res) = match &renderer.main_sun {
                     Some(sun) => { (sun.shadow_map.texture_index(), sun.shadow_map.resolution()) }
@@ -736,84 +578,87 @@ fn main() {
                     [(res * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, res as f32 / 6.0]
                 ).build(&imgui_ui);
 
+                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { dev_gui.do_sun_shadowmap = false; }
+
                 win_token.end();
             }
         }
 
-        let imgui_window_token = if dev_gui.do_gui {
-            imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui)
-        } else {
-            None
-        };
+        dev_gui.do_material_list(&imgui_ui, &mut renderer);
 
-        if let Some(t) = imgui_window_token {
-            if let Some(mb) = imgui_ui.begin_menu_bar() {
-                if let Some(mt) = imgui_ui.begin_menu("File") {
-                    if imgui::MenuItem::new("New").build(&imgui_ui) {}
-                    if imgui::MenuItem::new("Load").build(&imgui_ui) {}
-                    if imgui::MenuItem::new("Save").build(&imgui_ui) {}
-                    mt.end();
-                }
-                if let Some(mt) = imgui_ui.begin_menu("Environment") {
-                    if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) {
-                        dev_gui.do_terrain_window = true;
+        if dev_gui.do_gui {
+            if let Some(t) = imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui) {
+                if let Some(mb) = imgui_ui.begin_menu_bar() {
+                    if let Some(mt) = imgui_ui.begin_menu("File") {
+                        if imgui::MenuItem::new("New").build(&imgui_ui) {}
+                        if imgui::MenuItem::new("Load").build(&imgui_ui) {}
+                        if imgui::MenuItem::new("Save").build(&imgui_ui) {}
+                        mt.end();
                     }
-                    mt.end();
+                    if let Some(mt) = imgui_ui.begin_menu("Debug") {
+                        if imgui::MenuItem::new("Active material list").build(&imgui_ui) { dev_gui.do_mat_list = true; }
+                        if imgui::MenuItem::new("Shadow map visualizer").build(&imgui_ui) { dev_gui.do_sun_shadowmap = true; }
+                        mt.end();
+                    }
+                    if let Some(mt) = imgui_ui.begin_menu("Environment") {
+                        if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) {
+                            dev_gui.do_terrain_window = true;
+                        }
+                        mt.end();
+                    }
+                    mb.end();
                 }
-                mb.end();
-            }
-
-            imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime, frame {})", input_output.framerate, 1000.0 / input_output.framerate, timer.frame_count));
-            
-            let (message, color) =  if input_system.controllers[0].is_some() {
-                ("Controller is connected.", [0.0, 1.0, 0.0, 1.0])
-            } else {
-                ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0])
-            };
-            let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
-            imgui_ui.text(message);
-            color_token.pop();
-
-            if let Some(sun) = &mut renderer.main_sun {
-                imgui::Slider::new("Sun pitch speed", -1.0, 1.0).build(&imgui_ui, &mut sun.pitch_speed);
-                imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.pitch);
-                imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
-                imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
-            }
-
-            imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
-            imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
-            imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
-            imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
-
-            if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
-            imgui_ui.checkbox("Freecam", &mut do_freecam);
-            imgui_ui.checkbox("Shadow map", &mut dev_gui.do_sun_shadowmap);
-
-            imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
-            
-            if imgui_ui.button_with_size("Totoro's be gone", [0.0, 32.0]) {
-                for i in 1..totoro_list.len() {
-                    totoro_list.delete(i);
+    
+                imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime, frame {})", input_output.framerate, 1000.0 / input_output.framerate, timer.frame_count));
+                
+                let (message, color) =  match input_system.controllers[0] {
+                    Some(_) => { ("Controller is connected.", [0.0, 1.0, 0.0, 1.0]) }
+                    None => { ("Controller is not connected.", [1.0, 0.0, 0.0, 1.0]) }
+                };
+                let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
+                imgui_ui.text(message);
+                color_token.pop();
+    
+                if let Some(sun) = &mut renderer.main_sun {
+                    imgui::Slider::new("Sun pitch speed", -1.0, 1.0).build(&imgui_ui, &mut sun.pitch_speed);
+                    imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.pitch);
+                    imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
+                    imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
                 }
-            }
-            if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
-                if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                    let data = gltfutil::gltf_meshdata(&path);                    
-                    let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
-                    let model_matrix = glm::translation(&camera.position);
-                    let s = StaticProp {
-                        model_indices,
-                        model_matrix
-                    };
-                    static_props.insert(s);
+    
+                imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
+                imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
+                imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
+                imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
+    
+                if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
+                imgui_ui.checkbox("Freecam", &mut do_freecam);
+    
+                imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
+                
+                if imgui_ui.button_with_size("Totoro's be gone", [0.0, 32.0]) {
+                    for i in 1..totoro_list.len() {
+                        totoro_list.delete(i);
+                    }
                 }
+                if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
+                    if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
+                        let data = gltfutil::gltf_meshdata(&path);                    
+                        let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
+                        let model_matrix = glm::translation(&camera.position);
+                        let s = StaticProp {
+                            model_indices,
+                            model_matrix
+                        };
+                        static_props.insert(s);
+                    }
+                }
+                if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
+                    break 'running;
+                }
+    
+                t.end();
             }
-            if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
-                break 'running;
-            }
-
-            t.end();
         }
 
         //Step the physics engine
@@ -950,7 +795,7 @@ fn main() {
                 pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
-                &[dynamic_uniform_offset as u32]
+                &[dynamic_uniform_offset as u32, renderer.current_instance_offset as u32]
             );
 
             //Shadow rendering
@@ -1036,8 +881,23 @@ fn main() {
             vk.device.cmd_set_scissor(frame_info.command_buffer, 0, &[scissor_area]);
 
             let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
+
+            //HDR render pass recording
+            if false {
+                let rp_begin_info = vk::RenderPassBeginInfo {
+                    render_pass: hdr_forward_pass,
+                    framebuffer: renderer.primary_framebuffer.framebuffer_object,
+                    render_area: vk_render_area,
+                    clear_value_count: vk_clear_values.len() as u32,
+                    p_clear_values: vk_clear_values.as_ptr(),
+                    ..Default::default()
+                };
+                vk.device.cmd_begin_render_pass(frame_info.command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            }
+
+
             let rp_begin_info = vk::RenderPassBeginInfo {
-                render_pass: main_forward_pass,
+                render_pass: swapchain_pass,
                 framebuffer: renderer.swapchain.swapchain_framebuffers[current_framebuffer_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,

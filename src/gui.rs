@@ -3,7 +3,9 @@ use imgui::{DrawCmd, Ui};
 use crate::render::Renderer;
 use crate::structs::TerrainSpec;
 use crate::vkutil::*;
+use crate::*;
 
+#[derive(Default)]
 pub struct DevGui {
     pub pipeline: vk::Pipeline,
     pub frames: Vec<DevGuiFrame>,
@@ -11,7 +13,8 @@ pub struct DevGui {
     pub do_gui: bool,
     pub do_terrain_window: bool,
     pub do_prop_window: bool,
-    pub do_sun_shadowmap: bool
+    pub do_sun_shadowmap: bool,
+    pub do_mat_list: bool
 }
 
 impl DevGui {
@@ -42,9 +45,22 @@ impl DevGui {
             frames,
             current_frame: 0,
             do_gui: true,
-            do_terrain_window: false,
-            do_prop_window: false,
-            do_sun_shadowmap: false
+            ..Default::default()
+        }
+    }
+
+    pub fn do_material_list(&mut self, imgui_ui: &Ui, renderer: &mut Renderer) {
+        if !self.do_mat_list { return; }
+        if let Some(token) = imgui::Window::new("Loaded materials").begin(imgui_ui) {
+            for i in 0..renderer.global_materials.len() {
+                if let Some(mat) = &renderer.global_materials[i] {
+                    imgui_ui.text(format!("{:#?}", mat));
+                    
+                    imgui_ui.separator();
+                }
+            }
+            if imgui_ui.button_with_size("Close", [0.0, 32.0]) { self.do_mat_list = false; }
+            token.end();
         }
     }
 
@@ -80,7 +96,7 @@ impl DevGui {
     //This is where we upload the Dear Imgui geometry for the current frame
     pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanAPI, renderer: &mut Renderer, imgui_ui: imgui::Ui) {
         let mut index_buffers = Vec::with_capacity(16);
-        let mut cmds = Vec::with_capacity(16);
+        let mut draw_cmd_lists = Vec::with_capacity(16);
         let mut offsets = Vec::with_capacity(16);
         let imgui_draw_data = imgui_ui.render();
 
@@ -129,7 +145,7 @@ impl DevGui {
 
                 let mut cmd_list = Vec::with_capacity(list.commands().count());
                 for command in list.commands() { cmd_list.push(command); }
-                cmds.push(cmd_list);
+                draw_cmd_lists.push(cmd_list);
             }
         }
 
@@ -138,12 +154,17 @@ impl DevGui {
             start_offset,
             end_offset: current_offset,
             index_buffers,
-            draw_cmd_lists: cmds
+            draw_cmd_lists
         };
     }
 
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
-        //Destroy Dear ImGUI allocations from last frame
+        //Early exit if the gui is deactivated
+        if !self.do_gui {
+            return;
+        }
+
+        //Destroy Dear ImGUI allocations from last dead frame
         {
             let last_frame = self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT;
             let geo_count = self.frames[last_frame].index_buffers.len();
@@ -166,17 +187,15 @@ impl DevGui {
                         let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
                         let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
                         let scissor_rect = {
-                            let offset = vk::Offset2D {
-                                x: cmd_params.clip_rect[0] as i32,
-                                y: cmd_params.clip_rect[1] as i32
-                            };
-                            let extent = vk::Extent2D {
-                                width: ext_x as u32,
-                                height: ext_y as u32
-                            };
                             vk::Rect2D {
-                                offset,
-                                extent
+                                offset: vk::Offset2D {
+                                    x: cmd_params.clip_rect[0] as i32,
+                                    y: cmd_params.clip_rect[1] as i32
+                                },
+                                extent: vk::Extent2D {
+                                    width: ext_x as u32,
+                                    height: ext_y as u32
+                                }
                             }
                         };
                         vk.device.cmd_set_scissor(command_buffer, 0, &[scissor_rect]);
