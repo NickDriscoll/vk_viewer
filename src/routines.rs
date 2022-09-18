@@ -8,8 +8,8 @@ pub fn struct_to_bytes<'a, T>(structure: &'a T) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(p, size) }
 }
 
-pub unsafe fn slice_to_bytes<'a, T>(in_array: &'a [T]) -> &'a [u8] {
-    core::slice::from_raw_parts(in_array.as_ptr() as *const u8, in_array.len() * size_of::<T>())
+pub fn slice_to_bytes<'a, T>(in_array: &'a [T]) -> &'a [u8] {
+    unsafe { core::slice::from_raw_parts(in_array.as_ptr() as *const u8, in_array.len() * size_of::<T>()) }
 }
 
 pub fn crash_with_error_dialog(message: &str) -> ! {

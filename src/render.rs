@@ -491,7 +491,7 @@ impl Swapchain {
         };
 
         //Create framebuffers
-        let vk_swapchain_framebuffers = unsafe {
+        let swapchain_framebuffers = unsafe {
             let mut attachments = [vk::ImageView::default(), vk_depth_image_view];
             let fb_info = vk::FramebufferCreateInfo {
                 render_pass,
@@ -520,24 +520,29 @@ impl Swapchain {
             depth_image: vk_depth_image,
             swapchain_image_views: vk_swapchain_image_views,
             depth_image_view: vk_depth_image_view,
-            swapchain_framebuffers: vk_swapchain_framebuffers
+            swapchain_framebuffers
         }
     }
 }
 
 #[derive(Clone, Copy)]
-pub struct InFlightFrameData {
-    pub command_buffer: vk::CommandBuffer,
-    pub fence: vk::Fence,
-    pub semaphore: vk::Semaphore
-}
-
 pub struct FrameBuffer {
     pub framebuffer_object: vk::Framebuffer,
     pub color_buffer: vk::Image,
     pub color_buffer_view: vk::ImageView,
     pub depth_buffer: vk::Image,
-    pub depth_buffer_view: vk::ImageView
+    pub depth_buffer_view: vk::ImageView,
+    pub texture_index: u32
+}
+
+#[derive(Clone, Copy)]
+pub struct InFlightFrameData {
+    pub main_command_buffer: vk::CommandBuffer,
+    pub swapchain_command_buffer: vk::CommandBuffer,
+    pub semaphore: vk::Semaphore,
+    pub fence: vk::Fence,
+    pub framebuffer: FrameBuffer,
+    pub instance_data_start_offset: u64
 }
 
 pub struct Renderer {
@@ -554,7 +559,6 @@ pub struct Renderer {
     instance_data: Vec<InstanceData>,
 
     pub swapchain: Swapchain,
-    pub primary_framebuffer: FrameBuffer,
     
     pub main_sun: Option<SunLight>,
     pub uniform_data: FrameUniforms,
@@ -571,7 +575,7 @@ pub struct Renderer {
     pub imgui_buffer: GPUBuffer,
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
-    pub current_instance_offset: u64,
+    pub instance_data_offset: u64,
     pub material_buffer: GPUBuffer,
 
     pub global_textures: FreeList<DescriptorImageInfo>,
@@ -925,35 +929,6 @@ impl Renderer {
             uniforms.sunview_idx = sunview_index;
         };
 
-        //Data for each in-flight frame
-        let command_buffers = {
-            let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
-                command_pool: vk.command_pool,
-                command_buffer_count: Self::FRAMES_IN_FLIGHT as u32,
-                level: vk::CommandBufferLevel::PRIMARY,
-                ..Default::default()
-            };
-            let command_buffers = unsafe { vk.device.allocate_command_buffers(&command_buffer_alloc_info).unwrap() };
-            
-            let mut c_buffer_datas = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
-            for i in 0..Self::FRAMES_IN_FLIGHT {
-                let create_info = vk::FenceCreateInfo {
-                    flags: vk::FenceCreateFlags::SIGNALED,
-                    ..Default::default()
-                };
-                let fence = unsafe { vk.device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap() };
-                let semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
-
-                let data = InFlightFrameData {
-                    command_buffer: command_buffers[i],
-                    fence,
-                    semaphore
-                };
-                c_buffer_datas.push(data);
-            }
-            c_buffer_datas
-        };
-
         //Create the main swapchain for window present
         let swapchain = Swapchain::init(vk, swapchain_render_pass);
         
@@ -964,115 +939,168 @@ impl Renderer {
             depth: 1
         };
 
-        //Create color buffer
-        let primary_framebuffer = {
+        //Create main depth buffer
+        let vk_depth_format = vk::Format::D32_SFLOAT;
+        let depth_buffer_image = unsafe {
+            let create_info = vk::ImageCreateInfo {
+                queue_family_index_count: 1,
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                flags: vk::ImageCreateFlags::empty(),
+                image_type: vk::ImageType::TYPE_2D,
+                format: vk_depth_format,
+                extent: primary_framebuffer_extent,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+
+            let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            vkutil::allocate_image_memory(vk, depth_image);
+            depth_image
+        };
+
+        let depth_buffer_view = unsafe {
+            let image_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let view_info = vk::ImageViewCreateInfo {
+                image: depth_buffer_image,
+                format: vk_depth_format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                subresource_range: image_subresource_range,
+                ..Default::default()
+            };
+
+            vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        };
+
+        //Initialize per-frame rendering state
+        let command_buffers = {
             let hdr_color_format = vk::Format::R32G32B32A32_SFLOAT;
-            let primary_color_buffer = unsafe {
-                let create_info = vk::ImageCreateInfo {
-                    queue_family_index_count: 1,
-                    p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-                    flags: vk::ImageCreateFlags::empty(),
-                    image_type: vk::ImageType::TYPE_2D,
-                    format: hdr_color_format,
-                    extent: primary_framebuffer_extent,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    samples: vk::SampleCountFlags::TYPE_1,
-                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+
+            let mut color_buffers = [vk::Image::default(); Self::FRAMES_IN_FLIGHT];
+            let mut color_buffer_views = [vk::ImageView::default(); Self::FRAMES_IN_FLIGHT];
+            let mut hdr_framebuffers = [vk::Framebuffer::default(); Self::FRAMES_IN_FLIGHT];
+            for i in 0..Self::FRAMES_IN_FLIGHT {
+                let primary_color_buffer = unsafe {
+                    let create_info = vk::ImageCreateInfo {
+                        queue_family_index_count: 1,
+                        p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                        flags: vk::ImageCreateFlags::empty(),
+                        image_type: vk::ImageType::TYPE_2D,
+                        format: hdr_color_format,
+                        extent: primary_framebuffer_extent,
+                        mip_levels: 1,
+                        array_layers: 1,
+                        samples: vk::SampleCountFlags::TYPE_1,
+                        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+                        sharing_mode: vk::SharingMode::EXCLUSIVE,
+                        ..Default::default()
+                    };
+
+                    let image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+                    vkutil::allocate_image_memory(vk, image);
+                    image
+                };
+                color_buffers[i] = primary_color_buffer;
+
+                let color_buffer_view = unsafe {
+                    let image_subresource_range = vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1
+                    };
+                    let view_info = vk::ImageViewCreateInfo {
+                        image: primary_color_buffer,
+                        format: hdr_color_format,
+                        view_type: vk::ImageViewType::TYPE_2D,
+                        components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                        subresource_range: image_subresource_range,
+                        ..Default::default()
+                    };
+    
+                    vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+                };
+                color_buffer_views[i] = color_buffer_view;
+            
+                //Create framebuffer
+                let framebuffer_object = unsafe {
+                    let attachments = [color_buffer_view, depth_buffer_view];
+                    let fb_info = vk::FramebufferCreateInfo {
+                        render_pass: hdr_render_pass,
+                        attachment_count: attachments.len() as u32,
+                        p_attachments: attachments.as_ptr(),
+                        width: primary_framebuffer_extent.width,
+                        height: primary_framebuffer_extent.height,
+                        layers: 1,
+                        ..Default::default()
+                    };
+                    vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+                };
+                hdr_framebuffers[i] = framebuffer_object;
+                
+            }
+
+            //Data for each in-flight frame
+            let command_buffers = {
+                let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
+                    command_pool: vk.command_pool,
+                    command_buffer_count: 2 * Self::FRAMES_IN_FLIGHT as u32,
+                    level: vk::CommandBufferLevel::PRIMARY,
                     ..Default::default()
                 };
+                let command_buffers = unsafe { vk.device.allocate_command_buffers(&command_buffer_alloc_info).unwrap() };
+                
+                let mut c_buffer_datas = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
+                for i in 0..Self::FRAMES_IN_FLIGHT {
+                    let create_info = vk::FenceCreateInfo {
+                        flags: vk::FenceCreateFlags::SIGNALED,
+                        ..Default::default()
+                    };
+                    let fence = unsafe { vk.device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap() };
+                    let semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
+                    let swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
 
-                let image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-                vkutil::allocate_image_memory(vk, image);
-                image
-            };
+                    let descriptor_info = vk::DescriptorImageInfo {
+                        sampler: material_sampler,
+                        image_view: color_buffer_views[i],
+                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                    };
+                    let texture_index = global_textures.insert(descriptor_info) as u32;
 
-            let color_buffer_view = unsafe {
-                let image_subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1
-                };
-                let view_info = vk::ImageViewCreateInfo {
-                    image: primary_color_buffer,
-                    format: hdr_color_format,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: image_subresource_range,
-                    ..Default::default()
-                };
-
-                vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-            };
-
-            //Create main depth buffer
-            let vk_depth_format = vk::Format::D32_SFLOAT;
-            let depth_buffer_image = unsafe {
-                let create_info = vk::ImageCreateInfo {
-                    queue_family_index_count: 1,
-                    p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-                    flags: vk::ImageCreateFlags::empty(),
-                    image_type: vk::ImageType::TYPE_2D,
-                    format: vk_depth_format,
-                    extent: primary_framebuffer_extent,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    samples: vk::SampleCountFlags::TYPE_1,
-                    usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                    sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    ..Default::default()
-                };
-
-                let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-                vkutil::allocate_image_memory(vk, depth_image);
-                depth_image
-            };
-
-            let depth_buffer_view = unsafe {
-                let image_subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::DEPTH,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1
-                };
-                let view_info = vk::ImageViewCreateInfo {
-                    image: depth_buffer_image,
-                    format: vk_depth_format,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: image_subresource_range,
-                    ..Default::default()
-                };
-
-                vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+                    let framebuffer = FrameBuffer {
+                        framebuffer_object: hdr_framebuffers[i],
+                        color_buffer: color_buffers[i],
+                        color_buffer_view: color_buffer_views[i],
+                        depth_buffer: depth_buffer_image,
+                        depth_buffer_view,
+                        texture_index
+                    };
+                    
+                    let data = InFlightFrameData {
+                        main_command_buffer: command_buffers[2 * i],
+                        semaphore,
+                        swapchain_command_buffer: command_buffers[2 * i + 1],
+                        fence,
+                        framebuffer,
+                        instance_data_start_offset: 0
+                    };
+                    c_buffer_datas.push(data);
+                }
+                c_buffer_datas
             };
             
-            //Create framebuffer
-            let framebuffer_object = unsafe {
-                let attachments = [color_buffer_view, depth_buffer_view];
-                let fb_info = vk::FramebufferCreateInfo {
-                    render_pass: hdr_render_pass,
-                    attachment_count: attachments.len() as u32,
-                    p_attachments: attachments.as_ptr(),
-                    width: primary_framebuffer_extent.width,
-                    height: primary_framebuffer_extent.height,
-                    layers: 1,
-                    ..Default::default()
-                };
-                vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-            };
-
-            FrameBuffer {
-                framebuffer_object,
-                color_buffer: primary_color_buffer,
-                color_buffer_view,
-                depth_buffer: depth_buffer_image,
-                depth_buffer_view
-            }
+            command_buffers
         };
 
         Renderer {
@@ -1086,7 +1114,6 @@ impl Renderer {
             drawlist: Vec::new(),
             instance_data: Vec::new(),
             swapchain,
-            primary_framebuffer,
             uniform_data: uniforms,
             global_textures,
             default_texture_idx: 0,
@@ -1104,7 +1131,7 @@ impl Renderer {
             imgui_buffer,
             uniform_buffer,
             instance_buffer,
-            current_instance_offset: 0,
+            instance_data_offset: 0,
             material_buffer,
             samplers_descriptor_index,
             main_sun: None,
@@ -1269,11 +1296,17 @@ impl Renderer {
         };
 
         //Update instance data storage buffer
-        unsafe {
-            self.instance_buffer.upload_buffer(vk, &self.instance_data);
-            //self.instance_buffer.upload_subbuffer_bytes(vk, slice_to_bytes(&self.instance_data), 0);
-            //self.current_instance_offset += (self.instance_data.len() * size_of::<InstanceData>()) as u64;
-            //self.current_instance_offset = size_to_alignment!(self.current_instance_offset, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
+        {
+            let instance_data_bytes = slice_to_bytes(&self.instance_data);
+            let start_of_first_live_data = &mut self.frames_in_flight[self.in_flight_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT].instance_data_start_offset;
+            if *start_of_first_live_data > instance_data_bytes.len() as u64 {
+                
+            }
+
+            *start_of_first_live_data = instance_data_bytes.len() as u64;
+            self.instance_buffer.upload_subbuffer_bytes(vk, instance_data_bytes, 0);
+            //self.instance_data_offset += instance_data_bytes.len() as u64;
+            //self.instance_data_offset = size_to_alignment!(self.instance_data_offset, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
         }
     }
 

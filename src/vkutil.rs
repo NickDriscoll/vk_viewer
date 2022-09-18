@@ -87,9 +87,13 @@ pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::Shader
 }
 
 pub unsafe fn allocate_image_memory(vk: &mut VulkanAPI, image: vk::Image) -> Allocation {
+    allocate_named_image_memory(vk, image, "")
+}
+
+pub unsafe fn allocate_named_image_memory(vk: &mut VulkanAPI, image: vk::Image, name: &str) -> Allocation {
     let requirements = vk.device.get_image_memory_requirements(image);
     let alloc = vk.allocator.allocate(&AllocationCreateDesc {
-        name: "",
+        name,
         requirements,
         location: MemoryLocation::GpuOnly,
         linear: false       //We want tiled memory for images
@@ -99,7 +103,7 @@ pub unsafe fn allocate_image_memory(vk: &mut VulkanAPI, image: vk::Image) -> All
     alloc
 }
 
-pub fn load_png_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
+pub fn load_png_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str) -> u32 {
     let vim = GPUImage::from_png_file(vk, path);
 
     let descriptor_info = vk::DescriptorImageInfo {

@@ -270,7 +270,7 @@ fn main() {
     let sun_shadow_map = CascadedShadowMap::new(
         &mut vk,
         &mut renderer,
-        2048,        
+        1024,
         &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0),
         shadow_pass
     );
@@ -286,7 +286,7 @@ fn main() {
     );
 
     //Create pipelines
-    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline] = unsafe {
+    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline, postfx_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
             let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
@@ -312,23 +312,33 @@ fn main() {
             vec![v, f]
         };
 
-        let main_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, pipeline_layout)
+        let postfx_shader_stages = {
+            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/postfx_vert.spv");
+            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/postfx_frag.spv");
+            vec![v, f]
+        };
+
+        let main_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, pipeline_layout)
                         .set_shader_stages(main_shader_stages).build_info();
-        let terrain_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, pipeline_layout)
+        let terrain_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, pipeline_layout)
                             .set_shader_stages(terrain_shader_stages).build_info();
-        let atm_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, pipeline_layout)
+        let atm_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
         let shadow_info = vkutil::GraphicsPipelineBuilder::init(shadow_pass, pipeline_layout)
                             .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
+        let postfx_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, pipeline_layout)
+                            .set_shader_stages(postfx_shader_stages).build_info();
+                            
     
-        let infos = [main_info, terrain_info, atm_info, shadow_info];
+        let infos = [main_info, terrain_info, atm_info, shadow_info, postfx_info];
         let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
 
         [
             pipelines[0],
             pipelines[1],
             pipelines[2],
-            pipelines[3]
+            pipelines[3],
+            pipelines[4]
         ]
     };
 
@@ -351,14 +361,13 @@ fn main() {
     let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices, terrain.vertex_width, terrain.vertex_height);
     
     //Loading terrain textures
-    let grass_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.png", ColorSpace::SRGB);
-    let grass_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.png", ColorSpace::LINEAR);
-    let grass_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/ao_roughness_metallic.png", ColorSpace::LINEAR);
-    let rock_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.png", ColorSpace::SRGB);
-    let rock_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.png", ColorSpace::LINEAR);
-    let rock_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/ao_roughness_metallic.png", ColorSpace::LINEAR);
+    let grass_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.png");
+    let grass_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.png");
+    let grass_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/ao_roughness_metallic.png");
+    let rock_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.png");
+    let rock_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.png");
+    let rock_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/ao_roughness_metallic.png");
     
-
     //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
     //let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
     //let grass_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/metallic_roughness.dds", ColorSpace::LINEAR);
@@ -446,7 +455,7 @@ fn main() {
     renderer.uniform_data.sun_luminance = [2.5, 2.5, 2.5, 0.0];
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
-    renderer.uniform_data.fog_density = 0.75;
+    renderer.uniform_data.fog_density = 2.8;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
@@ -785,17 +794,17 @@ fn main() {
             renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
 
             //Put command buffer in recording state
-            vk.device.begin_command_buffer(frame_info.command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+            vk.device.begin_command_buffer(frame_info.main_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
-            //Once-per-frame bindless descriptor setup
+            //Bindless descriptor setup for Shadow+HDR pass
             let dynamic_uniform_offset = (renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment));
             vk.device.cmd_bind_descriptor_sets(
-                frame_info.command_buffer,
+                frame_info.main_command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
-                &[dynamic_uniform_offset as u32, renderer.current_instance_offset as u32]
+                &[dynamic_uniform_offset as u32, renderer.instance_data_offset as u32]
             );
 
             //Shadow rendering
@@ -810,7 +819,7 @@ fn main() {
                         }
                     }
                 };
-                vk.device.cmd_set_scissor(frame_info.command_buffer, 0, &[render_area]);
+                vk.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[render_area]);
                 let clear_values = [vkutil::DEPTH_STENCIL_CLEAR];
                 let rp_begin_info = vk::RenderPassBeginInfo {
                     render_pass: shadow_pass,
@@ -821,8 +830,8 @@ fn main() {
                     ..Default::default()
                 };
 
-                vk.device.cmd_begin_render_pass(frame_info.command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-                vk.device.cmd_bind_pipeline(frame_info.command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
+                vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+                vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
                 for i in 0..CascadedShadowMap::CASCADE_COUNT {
                     let viewport = vk::Viewport {
                         x: (i as u32 * sun_shadow_map.resolution()) as f32,
@@ -832,7 +841,7 @@ fn main() {
                         min_depth: 0.0,
                         max_depth: 1.0
                     };
-                    vk.device.cmd_set_viewport(frame_info.command_buffer, 0, &[viewport]);
+                    vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
 
                     for drawcall in renderer.drawlist_iter() {
                         if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
@@ -844,13 +853,13 @@ fn main() {
                                 model.uv_offset.to_le_bytes(),
                                 (i as u32).to_le_bytes()
                             ].concat();
-                            vk.device.cmd_push_constants(frame_info.command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                            vk.device.cmd_bind_index_buffer(frame_info.command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                            vk.device.cmd_draw_indexed(frame_info.command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                            vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                            vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                            vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                         }
                     }
                 }
-                vk.device.cmd_end_render_pass(frame_info.command_buffer);
+                vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
             }
             
             //Set the viewport for this frame
@@ -862,7 +871,7 @@ fn main() {
                 min_depth: 0.0,
                 max_depth: 1.0
             };
-            vk.device.cmd_set_viewport(frame_info.command_buffer, 0, &[viewport]);
+            vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
 
             //Set scissor rect to be same as render area
             let vk_render_area = {
@@ -878,39 +887,26 @@ fn main() {
                     height: window_size.y
                 }
             };
-            vk.device.cmd_set_scissor(frame_info.command_buffer, 0, &[scissor_area]);
+            vk.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[scissor_area]);
 
             let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
 
             //HDR render pass recording
-            if false {
-                let rp_begin_info = vk::RenderPassBeginInfo {
-                    render_pass: hdr_forward_pass,
-                    framebuffer: renderer.primary_framebuffer.framebuffer_object,
-                    render_area: vk_render_area,
-                    clear_value_count: vk_clear_values.len() as u32,
-                    p_clear_values: vk_clear_values.as_ptr(),
-                    ..Default::default()
-                };
-                vk.device.cmd_begin_render_pass(frame_info.command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-            }
-
-
             let rp_begin_info = vk::RenderPassBeginInfo {
-                render_pass: swapchain_pass,
-                framebuffer: renderer.swapchain.swapchain_framebuffers[current_framebuffer_index],
+                render_pass: hdr_forward_pass,
+                framebuffer: frame_info.framebuffer.framebuffer_object,
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
                 ..Default::default()
             };
-            vk.device.cmd_begin_render_pass(frame_info.command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
             for drawcall in renderer.drawlist_iter() {
                 if drawcall.pipeline != last_bound_pipeline {
-                    vk.device.cmd_bind_pipeline(frame_info.command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
+                    vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
                     last_bound_pipeline = drawcall.pipeline;
                 }
                 if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
@@ -921,31 +917,76 @@ fn main() {
                         model.normal_offset.to_le_bytes(),
                         model.uv_offset.to_le_bytes(),
                     ].concat();
-                    vk.device.cmd_push_constants(frame_info.command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                    vk.device.cmd_bind_index_buffer(frame_info.command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                    vk.device.cmd_draw_indexed(frame_info.command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                    vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                    vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                    vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }
 
             //Record atmosphere rendering commands
-            vk.device.cmd_bind_pipeline(frame_info.command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
-            vk.device.cmd_draw(frame_info.command_buffer, 36, 1, 0, 0);
+            vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
+            vk.device.cmd_draw(frame_info.main_command_buffer, 36, 1, 0, 0);
+
+            vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
+            vk.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
+
+            //Submit Shadow+HDR passes
+            let submit_info = vk::SubmitInfo {
+                signal_semaphore_count: 1,
+                p_signal_semaphores: &frame_info.semaphore,
+                command_buffer_count: 1,
+                p_command_buffers: &frame_info.main_command_buffer,
+                ..Default::default()
+            };
+            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+            vk.device.queue_submit(queue, &[submit_info], vk::Fence::default()).unwrap();
+
+            //PostFX pass
+            vk.device.begin_command_buffer(frame_info.swapchain_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+
+            //Bindless descriptor setup for PostFX pass
+            vk.device.cmd_bind_descriptor_sets(
+                frame_info.swapchain_command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout,
+                0,
+                &[renderer.bindless_descriptor_set],
+                &[dynamic_uniform_offset as u32, renderer.instance_data_offset as u32]
+            );
+            
+            //Set the viewport/scissor for the PostFX pass
+            vk.device.cmd_set_viewport(frame_info.swapchain_command_buffer, 0, &[viewport]);
+            vk.device.cmd_set_scissor(frame_info.swapchain_command_buffer, 0, &[scissor_area]);
+
+            let rp_begin_info = vk::RenderPassBeginInfo {
+                render_pass: swapchain_pass,
+                framebuffer: renderer.swapchain.swapchain_framebuffers[current_framebuffer_index],
+                render_area: vk_render_area,
+                clear_value_count: vk_clear_values.len() as u32,
+                p_clear_values: vk_clear_values.as_ptr(),
+                ..Default::default()
+            };
+            vk.device.cmd_begin_render_pass(frame_info.swapchain_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+
+            vk.device.cmd_bind_pipeline(frame_info.swapchain_command_buffer, vk::PipelineBindPoint::GRAPHICS, postfx_pipeline);
+            vk.device.cmd_push_constants(frame_info.swapchain_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
+            vk.device.cmd_draw(frame_info.swapchain_command_buffer, 3, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands
-            dev_gui.record_draw_commands(&mut vk, frame_info.command_buffer, pipeline_layout);
+            dev_gui.record_draw_commands(&mut vk, frame_info.swapchain_command_buffer, pipeline_layout);
 
-            vk.device.cmd_end_render_pass(frame_info.command_buffer);
+            vk.device.cmd_end_render_pass(frame_info.swapchain_command_buffer);
 
-            vk.device.end_command_buffer(frame_info.command_buffer).unwrap();
+            vk.device.end_command_buffer(frame_info.swapchain_command_buffer).unwrap();
 
             let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: 1,
-                p_wait_semaphores: &vk_swapchain_semaphore,
+                p_wait_semaphores: &frame_info.semaphore,
                 p_wait_dst_stage_mask: &vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                 signal_semaphore_count: 1,
                 p_signal_semaphores: &frame_info.semaphore,
                 command_buffer_count: 1,
-                p_command_buffers: &frame_info.command_buffer,
+                p_command_buffers: &frame_info.swapchain_command_buffer,
                 ..Default::default()
             };
 
