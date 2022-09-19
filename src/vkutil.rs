@@ -1189,6 +1189,11 @@ impl<T> FreeList<T> {
         self.updated = true;
         self.list.insert(item)
     }
+
+    pub fn remove(&mut self, idx: usize) {
+        self.updated = true;
+        self.list.delete(idx);
+    }
 }
 
 impl<T> Index<usize> for FreeList<T> {

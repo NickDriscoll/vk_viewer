@@ -363,9 +363,6 @@ pub struct Swapchain {
     pub swapchain: vk::SwapchainKHR,
     pub extent: vk::Extent2D,
     pub color_format: vk::Format,
-    pub depth_format: vk::Format,
-    pub depth_image: vk::Image,
-    pub depth_image_view: vk::ImageView,
     pub swapchain_image_views: Vec<vk::ImageView>,
     pub swapchain_framebuffers: Vec<vk::Framebuffer>
 }
@@ -496,11 +493,11 @@ impl Swapchain {
 
         //Create framebuffers
         let swapchain_framebuffers = unsafe {
-            let mut attachments = [vk::ImageView::default(), vk_depth_image_view];
+            let mut attachment = vk::ImageView::default();
             let fb_info = vk::FramebufferCreateInfo {
                 render_pass,
-                attachment_count: attachments.len() as u32,
-                p_attachments: attachments.as_ptr(),
+                attachment_count: 1,
+                p_attachments: &attachment,
                 width: vk_swapchain_extent.width,
                 height: vk_swapchain_extent.height,
                 layers: 1,
@@ -509,7 +506,7 @@ impl Swapchain {
     
             let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
             for view in vk_swapchain_image_views.iter() {
-                attachments[0] = view.clone();
+                attachment = view.clone();
                 fbs.push(vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap())
             }
     
@@ -520,10 +517,7 @@ impl Swapchain {
             swapchain: vk_swapchain,
             extent: vk_swapchain_extent,
             color_format: vk_swapchain_image_format,
-            depth_format: vk_depth_format,
-            depth_image: vk_depth_image,
             swapchain_image_views: vk_swapchain_image_views,
-            depth_image_view: vk_depth_image_view,
             swapchain_framebuffers
         }
     }
@@ -996,7 +990,7 @@ impl Renderer {
         };
 
         //Initialize per-frame rendering state
-        let command_buffers = {
+        let in_flight_frame_data = {
             let hdr_color_format = vk::Format::R32G32B32A32_SFLOAT;
 
             let mut color_buffers = [vk::Image::default(); Self::FRAMES_IN_FLIGHT];
@@ -1082,7 +1076,6 @@ impl Renderer {
                     };
                     let fence = unsafe { vk.device.create_fence(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap() };
                     let semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
-                    let swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
 
                     let descriptor_info = vk::DescriptorImageInfo {
                         sampler: material_sampler,
@@ -1148,7 +1141,7 @@ impl Renderer {
             material_buffer,
             samplers_descriptor_index,
             main_sun: None,
-            frames_in_flight: command_buffers,
+            frames_in_flight: in_flight_frame_data,
             in_flight_frame: 0
         }
     }

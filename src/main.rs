@@ -188,36 +188,19 @@ fn main() {
             ..Default::default()
         };
 
-        let depth_attachment_description = vk::AttachmentDescription {
-            format: vk::Format::D32_SFLOAT,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::DONT_CARE,
-            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
-            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            ..Default::default()
-        };
-
         let color_attachment_reference = vk::AttachmentReference {
             attachment: 0,
             layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-        };
-        let depth_attachment_reference = vk::AttachmentReference {
-            attachment: 1,
-            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
         };
 
         let subpass = vk::SubpassDescription {
             pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
             color_attachment_count: 1,
             p_color_attachments: &color_attachment_reference,
-            p_depth_stencil_attachment: &depth_attachment_reference,
             ..Default::default()
         };
 
-        let attachments = [color_attachment_description, depth_attachment_description];
+        let attachments = [color_attachment_description];
         let renderpass_info = vk::RenderPassCreateInfo {
             attachment_count: attachments.len() as u32,
             p_attachments: attachments.as_ptr(),
@@ -538,7 +521,6 @@ fn main() {
                 for view in renderer.swapchain.swapchain_image_views {
                     vk.device.destroy_image_view(view, vkutil::MEMORY_ALLOCATOR);
                 }
-                vk.device.destroy_image_view(renderer.swapchain.depth_image_view, vkutil::MEMORY_ALLOCATOR);
                 vk.ext_swapchain.destroy_swapchain(renderer.swapchain.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
@@ -634,7 +616,7 @@ fn main() {
                 color_token.pop();
     
                 if let Some(sun) = &mut renderer.main_sun {
-                    imgui::Slider::new("Sun pitch speed", -1.0, 1.0).build(&imgui_ui, &mut sun.pitch_speed);
+                    imgui::Slider::new("Sun pitch speed", 0.0, 1.0).build(&imgui_ui, &mut sun.pitch_speed);
                     imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.pitch);
                     imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
                     imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
@@ -947,7 +929,7 @@ fn main() {
             //PostFX pass
             vk.device.begin_command_buffer(frame_info.swapchain_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
-            //Bindless descriptor setup for PostFX pass
+            //Bindless descriptor setup for the swapchain command buffer
             vk.device.cmd_bind_descriptor_sets(
                 frame_info.swapchain_command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -957,7 +939,7 @@ fn main() {
                 &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
             );
             
-            //Set the viewport/scissor for the PostFX pass
+            //Set the viewport/scissor for the swapchain command buffer
             vk.device.cmd_set_viewport(frame_info.swapchain_command_buffer, 0, &[viewport]);
             vk.device.cmd_set_scissor(frame_info.swapchain_command_buffer, 0, &[scissor_area]);
 

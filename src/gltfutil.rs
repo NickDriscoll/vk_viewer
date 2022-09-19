@@ -207,10 +207,12 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 None => { None }
             };
 
+            let mut metalrough_glb_index = -1;
             let metallic_roughness_index = match pbr_model.metallic_roughness_texture() {
                 Some(t) => {
                     let image = t.texture().source();
                     let idx = image.index();
+                    metalrough_glb_index = idx as i32;
                     let source = image.source();
 
                     if texture_bytes[idx].len() == 0 {
@@ -221,6 +223,13 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
                 }
                 None => { None }
             };
+
+            if let Some(occulusion_texture) = mat.occlusion_texture() {
+                let image = occulusion_texture.texture().source();
+                if metalrough_glb_index != image.index() as i32 {
+                    crash_with_error_dialog("Unimplemented case of ao not being packed with metallic_roughness.");
+                }
+            }
 
             let emissive_factor = mat.emissive_factor();
             let emissive_index = match mat.emissive_texture() {
