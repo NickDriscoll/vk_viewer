@@ -56,17 +56,13 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         input.clip_space_z
     );
     final_color = sun_shadowing.x * pbr_mettalic_roughness(params);
-
-    float3 ambient = float3(0.05) * params.albedo * sampled_ao;
-
-    // Tone-mapping step
-    final_color = final_color + ambient;
-    final_color = final_color / (final_color + float3(1.0));
-
     final_color += global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
 
     // Apply fog like GL_EXP2
     final_color = exp2_fog(uniforms, input.position, final_color, sun_color);
+        
+    float3 ambient = float3(0.05) * params.albedo * sampled_ao;
+    final_color = final_color + ambient;
     
     return float4(final_color, 1.0);
 }

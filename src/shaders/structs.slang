@@ -68,6 +68,10 @@ struct FrameUniforms {
     uint sunzenith_idx;
     uint viewzenith_idx;
     uint sunview_idx;
+    float exposure;
+    float _pad0;
+    float _pad1;
+    float _pad2;
     float4 sun_shadow_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS];
 }
 

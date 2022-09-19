@@ -131,7 +131,7 @@ fn main() {
             stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
             stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
             initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+            final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             ..Default::default()
         };
 
@@ -544,6 +544,11 @@ fn main() {
                 //Recreate swapchain and associated data
                 renderer.swapchain = render::Swapchain::init(&mut vk, swapchain_pass);
 
+                //Recreate internal rendering buffers
+                for framebuffer in renderer.framebuffers() {
+                    
+                }
+
                 window_size = glm::vec2(renderer.swapchain.extent.width, renderer.swapchain.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
                 imgui_io.display_size[1] = window_size.y as f32;
@@ -638,6 +643,7 @@ fn main() {
                 imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
                 imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
                 imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
+                imgui::Slider::new("Camera exposure", 0.0, 5.0).build(&imgui_ui, &mut renderer.uniform_data.exposure);
                 imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
     
                 if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }

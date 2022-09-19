@@ -137,6 +137,10 @@ pub struct FrameUniforms {
     pub sunzenith_idx: u32,
     pub viewzenith_idx: u32,
     pub sunview_idx: u32,
+    pub exposure: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
     pub sun_shadow_distances: [f32; CascadedShadowMap::CASCADE_COUNT + 1],
 }
 
@@ -525,7 +529,7 @@ impl Swapchain {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct FrameBuffer {
     pub framebuffer_object: vk::Framebuffer,
     pub color_buffer: vk::Image,
@@ -600,6 +604,14 @@ impl Renderer {
             fences[i] = self.frames_in_flight[i].fence;
         }
         fences
+    }
+
+    pub fn framebuffers(&self) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
+        let mut fs = [FrameBuffer::default(); Self::FRAMES_IN_FLIGHT];
+        for i in 0..self.frames_in_flight.len() {
+            fs[i] = self.frames_in_flight[i].framebuffer;
+        }
+        fs
     }
 
     pub fn get_instance_data(&self) -> &Vec<InstanceData> {
@@ -917,6 +929,7 @@ impl Renderer {
         let global_materials = FreeList::with_capacity(256);
 
         let mut uniforms = FrameUniforms::default();
+        uniforms.exposure = 1.0;
 
         //Load environment textures
         {
