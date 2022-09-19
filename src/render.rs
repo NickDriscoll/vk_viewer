@@ -546,7 +546,8 @@ pub struct InFlightFrameData {
     pub semaphore: vk::Semaphore,
     pub fence: vk::Fence,
     pub framebuffer: FrameBuffer,
-    pub instance_data_start_offset: u64
+    pub instance_data_start_offset: u64,
+    pub instance_data_size: u64
 }
 
 pub struct Renderer {
@@ -579,7 +580,6 @@ pub struct Renderer {
     pub imgui_buffer: GPUBuffer,
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
-    pub instance_data_offset: u64,
     pub material_buffer: GPUBuffer,
 
     pub global_textures: FreeList<DescriptorImageInfo>,
@@ -1106,7 +1106,8 @@ impl Renderer {
                         swapchain_command_buffer: command_buffers[2 * i + 1],
                         fence,
                         framebuffer,
-                        instance_data_start_offset: 0
+                        instance_data_start_offset: 0,
+                        instance_data_size: 0
                     };
                     c_buffer_datas.push(data);
                 }
@@ -1144,7 +1145,6 @@ impl Renderer {
             imgui_buffer,
             uniform_buffer,
             instance_buffer,
-            instance_data_offset: 0,
             material_buffer,
             samplers_descriptor_index,
             main_sun: None,
@@ -1153,9 +1153,9 @@ impl Renderer {
         }
     }
 
-    pub unsafe fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {
+    fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {
         let cb = self.frames_in_flight[self.in_flight_frame];
-        vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap();
+        unsafe { vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap(); }
         self.in_flight_frame += 1;
         self.in_flight_frame %= Self::FRAMES_IN_FLIGHT;
         cb
@@ -1218,7 +1218,10 @@ impl Renderer {
         &self.primitives[idx]
     }
 
-    pub fn prepare_frame(&mut self, vk: &mut VulkanAPI, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) {
+    pub fn prepare_frame(&mut self, vk: &mut VulkanAPI, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) -> InFlightFrameData {
+        //Wait for LRU frame to finish
+        let frame_info = self.next_frame(vk);
+
         //Update bindless texture sampler descriptors
         if self.global_textures.updated {
             self.global_textures.updated = false;
@@ -1311,16 +1314,20 @@ impl Renderer {
         //Update instance data storage buffer
         {
             let instance_data_bytes = slice_to_bytes(&self.instance_data);
-            let start_of_first_live_data = &mut self.frames_in_flight[self.in_flight_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT].instance_data_start_offset;
-            if *start_of_first_live_data > instance_data_bytes.len() as u64 {
-                
-            }
+            let last_frame_data = &mut self.frames_in_flight[self.in_flight_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT];
+            let start_of_first_live_data = last_frame_data.instance_data_start_offset;
+            let start_offset = if start_of_first_live_data > instance_data_bytes.len() as u64 {
+                0
+            } else {
+                last_frame_data.instance_data_start_offset + last_frame_data.instance_data_size
+            };
+            let start_offset = size_to_alignment!(start_offset, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
 
-            *start_of_first_live_data = instance_data_bytes.len() as u64;
-            self.instance_buffer.upload_subbuffer_bytes(vk, instance_data_bytes, 0);
-            //self.instance_data_offset += instance_data_bytes.len() as u64;
-            //self.instance_data_offset = size_to_alignment!(self.instance_data_offset, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
+            self.frames_in_flight[self.in_flight_frame].instance_data_start_offset = start_offset;
+            self.instance_buffer.upload_subbuffer_bytes(vk, instance_data_bytes, start_offset);
         }
+
+        frame_info
     }
 
     pub fn queue_drawcall(&mut self, model_idx: usize, transforms: &[glm::TMat4<f32>]) {

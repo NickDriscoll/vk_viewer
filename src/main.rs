@@ -793,24 +793,21 @@ fn main() {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
             let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(renderer.swapchain.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
             
-            //Pre-render phase
-            let frame_info = renderer.next_frame(&mut vk);
-
             //Does all work that needs to happen before the render pass
-            renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
+            let frame_info = renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
 
             //Put command buffer in recording state
             vk.device.begin_command_buffer(frame_info.main_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             //Bindless descriptor setup for Shadow+HDR pass
-            let dynamic_uniform_offset = (renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment));
+            let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
             vk.device.cmd_bind_descriptor_sets(
                 frame_info.main_command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
-                &[dynamic_uniform_offset as u32, renderer.instance_data_offset as u32]
+                &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
             );
 
             //Shadow rendering
@@ -957,7 +954,7 @@ fn main() {
                 pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
-                &[dynamic_uniform_offset as u32, renderer.instance_data_offset as u32]
+                &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
             );
             
             //Set the viewport/scissor for the PostFX pass
