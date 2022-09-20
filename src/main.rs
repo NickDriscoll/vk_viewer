@@ -527,9 +527,22 @@ fn main() {
                 renderer.swapchain = render::Swapchain::init(&mut vk, swapchain_pass);
 
                 //Recreate internal rendering buffers
-                for framebuffer in renderer.framebuffers() {
-                    
+                let fbs = renderer.framebuffers();
+                for framebuffer in &fbs {
+                    vk.device.destroy_framebuffer(framebuffer.framebuffer_object, vkutil::MEMORY_ALLOCATOR);
+                    vk.device.destroy_image_view(framebuffer.color_buffer_view, vkutil::MEMORY_ALLOCATOR);
+                    vk.device.destroy_image(framebuffer.color_buffer, vkutil::MEMORY_ALLOCATOR);
                 }
+                vk.device.destroy_image_view(fbs[0].depth_buffer_view, vkutil::MEMORY_ALLOCATOR);
+                vk.device.destroy_image(fbs[0].depth_buffer, vkutil::MEMORY_ALLOCATOR);
+
+                let extent = vk::Extent3D {
+                    width: renderer.swapchain.extent.width,
+                    height: renderer.swapchain.extent.height,
+                    depth: 1
+                };
+                renderer.resize_hdr_framebuffers(&mut vk, extent, hdr_forward_pass);
+                
 
                 window_size = glm::vec2(renderer.swapchain.extent.width, renderer.swapchain.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
