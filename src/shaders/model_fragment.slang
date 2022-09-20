@@ -1,8 +1,15 @@
 import structs;
 import lighting;
 import routines;
-import fragment_bindings;
+import bindings.frame_uniforms;
+import bindings.material_buffer;
 import bindings.global_textures;
+
+[[vk::push_constant]]
+cbuffer PushConstants
+{
+    uint material_idx;
+}
 
 [shader("fragment")]
 float4 fragment_main(MeshVertexOutput input) : SV_Target0
@@ -40,7 +47,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.geometry_normal = normal;
     params.view = view;
     params.light_direction = uniforms.sun_direction.xyz;
-    params.light_radiance = lerp(uniforms.sun_radiance.rgb * halo_color, uniforms.sun_radiance.rgb, sunzenith_dot);
+    params.light_radiance = uniforms.sun_intensity * lerp(uniforms.sun_radiance.rgb * halo_color, uniforms.sun_radiance.rgb, sunzenith_dot);
     params.roughness = roughness;
     params.metalness = sampled_metalness;
 
@@ -60,7 +67,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     // Apply fog like GL_EXP2
     final_color = exp2_fog(uniforms, input.position, final_color, sun_color);
 
-    float3 ambient = float3(0.05) * params.albedo * sampled_ao;
+    float3 ambient = float3(uniforms.ambient_factor) * params.albedo * sampled_ao;
     final_color = final_color + ambient;
     
     return float4(final_color, 1.0);

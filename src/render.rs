@@ -138,9 +138,9 @@ pub struct FrameUniforms {
     pub viewzenith_idx: u32,
     pub sunview_idx: u32,
     pub exposure: f32,
+    pub sun_intensity: f32,
+    pub ambient_factor: f32,
     pub _pad0: f32,
-    pub _pad1: f32,
-    pub _pad2: f32,
     pub sun_shadow_distances: [f32; CascadedShadowMap::CASCADE_COUNT + 1],
 }
 
@@ -237,15 +237,15 @@ impl CascadedShadowMap {
         };
 
         //Manually picking the cascade distances because math is hard
-        //The shadow cascade distances are negative bc they apply to view space
-        let near_distance = 1.0;
+        //The shadow cascade distances are negative bc they are in view space
+        let near_distance = 0.1;
         let mut view_distances = [0.0; Self::CASCADE_COUNT + 1];
         view_distances[0] = -(near_distance);
         view_distances[1] = -(near_distance + 10.0);
-        view_distances[2] = -(near_distance + 40.0);
-        view_distances[3] = -(near_distance + 100.0);
-        view_distances[4] = -(near_distance + 250.0);
-        view_distances[5] = -(near_distance + 500.0);
+        view_distances[2] = -(near_distance + 30.0);
+        view_distances[3] = -(near_distance + 90.0);
+        view_distances[4] = -(near_distance + 270.0);
+        view_distances[5] = -(near_distance + 550.0);
         view_distances[6] = -(near_distance + 1000.0);
 
         // let far_distance = 1000.0;
@@ -356,6 +356,7 @@ pub struct SunLight {
     pub yaw: f32,
     pub pitch_speed: f32,
     pub yaw_speed: f32,
+    pub intensity: f32,
     pub shadow_map: CascadedShadowMap
 }
 
@@ -1317,6 +1318,8 @@ impl Renderer {
                 );
 
                 uniforms.sun_shadow_distances = sunlight.shadow_map.clip_distances().clone();
+                
+                uniforms.sun_intensity = sunlight.intensity;
             }
             
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)

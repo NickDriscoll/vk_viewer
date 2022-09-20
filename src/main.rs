@@ -253,7 +253,7 @@ fn main() {
     let sun_shadow_map = CascadedShadowMap::new(
         &mut vk,
         &mut renderer,
-        1024,
+        2048,
         &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0),
         shadow_pass
     );
@@ -264,6 +264,7 @@ fn main() {
             yaw: 0.783,
             pitch_speed: 0.003,
             yaw_speed: 0.0,
+            intensity: 2.0,
             shadow_map: sun_shadow_map
         }
     );
@@ -435,7 +436,9 @@ fn main() {
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
-    renderer.uniform_data.sun_luminance = glm::vec4(1.0, 1.0, 1.0, 0.0) * 10.0;
+    renderer.uniform_data.sun_luminance = glm::vec4(1.0, 1.0, 1.0, 0.0);
+    renderer.uniform_data.sun_intensity = 2.0;
+    renderer.uniform_data.ambient_factor = 0.1;
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
     renderer.uniform_data.fog_density = 2.8;
@@ -623,7 +626,9 @@ fn main() {
                     imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.pitch);
                     imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
                     imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
+                    imgui::Slider::new("Sun intensity", 0.0, 20.0).build(&imgui_ui, &mut sun.intensity);
                 }
+                imgui::Slider::new("Ambient factor", 0.0, 20.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);
     
                 imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
                 imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);

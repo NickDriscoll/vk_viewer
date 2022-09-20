@@ -17,7 +17,7 @@ cbuffer PushConstants
 }
 
 [shader("vertex")]
-ShadowVertexOutput vertex_main(ModelVertex vertex) {
+ShadowVertexOutput vertex_main(ModelVertex vertex, uint view_id : SV_ViewID) {
     float4x4 model_matrix = instance_buffer[vertex.instance_id].world_from_model;
     float3 position = vertex_positions[vertex.id + position_buffer_offset].xyz;
     float3 world_position = mul(model_matrix, float4(position, 1.0)).xyz;
