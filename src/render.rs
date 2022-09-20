@@ -128,7 +128,7 @@ pub struct FrameUniforms {
     pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT],
     pub camera_position: glm::TVec4<f32>,
     pub sun_direction: glm::TVec4<f32>,
-    pub sun_luminance: [f32; 4],
+    pub sun_luminance: glm::TVec4<f32>,
     pub sun_shadowmap_idx: u32,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
@@ -1163,7 +1163,16 @@ impl Renderer {
         cb
     }
 
-    pub fn resize_hdr_framebuffers(&mut self, vk: &mut VulkanAPI, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
+    pub unsafe fn resize_hdr_framebuffers(&mut self, vk: &mut VulkanAPI, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
+        let fbs = self.framebuffers();
+        for framebuffer in &fbs {
+            vk.device.destroy_framebuffer(framebuffer.framebuffer_object, vkutil::MEMORY_ALLOCATOR);
+            vk.device.destroy_image_view(framebuffer.color_buffer_view, vkutil::MEMORY_ALLOCATOR);
+            vk.device.destroy_image(framebuffer.color_buffer, vkutil::MEMORY_ALLOCATOR);
+        }
+        vk.device.destroy_image_view(fbs[0].depth_buffer_view, vkutil::MEMORY_ALLOCATOR);
+        vk.device.destroy_image(fbs[0].depth_buffer, vkutil::MEMORY_ALLOCATOR);
+
         for i in 0..self.frames_in_flight.len() {
             self.global_textures.remove(self.frames_in_flight[i].framebuffer.texture_index as usize);
         }

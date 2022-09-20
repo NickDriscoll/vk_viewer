@@ -435,7 +435,7 @@ fn main() {
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
-    renderer.uniform_data.sun_luminance = [2.5, 2.5, 2.5, 0.0];
+    renderer.uniform_data.sun_luminance = glm::vec4(1.0, 1.0, 1.0, 0.0) * 10.0;
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
     renderer.uniform_data.fog_density = 2.8;
@@ -527,22 +527,12 @@ fn main() {
                 renderer.swapchain = render::Swapchain::init(&mut vk, swapchain_pass);
 
                 //Recreate internal rendering buffers
-                let fbs = renderer.framebuffers();
-                for framebuffer in &fbs {
-                    vk.device.destroy_framebuffer(framebuffer.framebuffer_object, vkutil::MEMORY_ALLOCATOR);
-                    vk.device.destroy_image_view(framebuffer.color_buffer_view, vkutil::MEMORY_ALLOCATOR);
-                    vk.device.destroy_image(framebuffer.color_buffer, vkutil::MEMORY_ALLOCATOR);
-                }
-                vk.device.destroy_image_view(fbs[0].depth_buffer_view, vkutil::MEMORY_ALLOCATOR);
-                vk.device.destroy_image(fbs[0].depth_buffer, vkutil::MEMORY_ALLOCATOR);
-
                 let extent = vk::Extent3D {
                     width: renderer.swapchain.extent.width,
                     height: renderer.swapchain.extent.height,
                     depth: 1
                 };
                 renderer.resize_hdr_framebuffers(&mut vk, extent, hdr_forward_pass);
-                
 
                 window_size = glm::vec2(renderer.swapchain.extent.width, renderer.swapchain.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
@@ -587,7 +577,7 @@ fn main() {
                     [(res * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, res as f32 / 6.0]
                 ).build(&imgui_ui);
 
-                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { dev_gui.do_sun_shadowmap = false; }
+                if DevGui::do_standard_button(&imgui_ui, "Close") { dev_gui.do_sun_shadowmap = false; }
 
                 win_token.end();
             }
@@ -646,12 +636,12 @@ fn main() {
     
                 imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
                 
-                if imgui_ui.button_with_size("Totoro's be gone", [0.0, 32.0]) {
+                if DevGui::do_standard_button(&imgui_ui, "Totoro's be gone") {
                     for i in 1..totoro_list.len() {
                         totoro_list.delete(i);
                     }
                 }
-                if imgui_ui.button_with_size("Load static prop", [0.0, 32.0]) {
+                if DevGui::do_standard_button(&imgui_ui, "Load static prop") {
                     if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
                         let data = gltfutil::gltf_meshdata(&path);                    
                         let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
@@ -663,7 +653,7 @@ fn main() {
                         static_props.insert(s);
                     }
                 }
-                if imgui_ui.button_with_size("Exit", [0.0, 32.0]) {
+                if DevGui::do_standard_button(&imgui_ui, "Exit") {
                     break 'running;
                 }
     

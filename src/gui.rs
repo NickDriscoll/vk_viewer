@@ -21,6 +21,10 @@ impl DevGui {
     pub const FRAMES_IN_FLIGHT: usize = Renderer::FRAMES_IN_FLIGHT + 1;
     pub const FLOATS_PER_VERTEX: usize = 8;
 
+    pub fn do_standard_button(ui: &Ui, label: &str) -> bool {
+        ui.button_with_size(label, [0.0, 32.0])
+    }
+
     pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
         let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
         for _ in 0..Self::FRAMES_IN_FLIGHT {
@@ -59,7 +63,7 @@ impl DevGui {
                     imgui_ui.separator();
                 }
             }
-            if imgui_ui.button_with_size("Close", [0.0, 32.0]) { self.do_mat_list = false; }
+            if DevGui::do_standard_button(&imgui_ui, "Close") { self.do_mat_list = false; }
             token.end();
         }
     }
@@ -81,9 +85,10 @@ impl DevGui {
                 imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
                 imgui_ui.checkbox("Use fixed seed", &mut terrain.fixed_seed);
                 imgui_ui.checkbox("Interactive mode", &mut terrain.interactive_generation);
-                let regen_button = imgui_ui.button_with_size("Regenerate", [0.0, 32.0]);
+                
+                let regen_button = DevGui::do_standard_button(&imgui_ui, "Regenerate");
 
-                if imgui_ui.button_with_size("Close", [0.0, 32.0]) { self.do_terrain_window = false; }
+                if DevGui::do_standard_button(&imgui_ui, "Close") { self.do_terrain_window = false; }
 
                 token.end();
 
