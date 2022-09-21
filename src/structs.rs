@@ -1,3 +1,5 @@
+use slotmap::new_key_type;
+
 use crate::*;
 
 pub struct Camera {
@@ -104,4 +106,10 @@ pub struct PhysicsProp {
 pub struct StaticProp {
     pub model_indices: Vec<usize>,
     pub model_matrix: glm::TMat4<f32>
+}
+
+new_key_type! { pub struct ModelMatrixKey; }
+pub struct SimulationSOA {
+    pub model_matrices: DenseSlotMap<ModelMatrixKey, glm::TMat4<f32>>,
+
 }

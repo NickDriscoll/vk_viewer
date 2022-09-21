@@ -264,7 +264,7 @@ fn main() {
             yaw: 0.783,
             pitch_speed: 0.003,
             yaw_speed: 0.0,
-            intensity: 2.0,
+            intensity: 2.5,
             shadow_map: sun_shadow_map
         }
     );
@@ -437,7 +437,6 @@ fn main() {
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
     renderer.uniform_data.sun_luminance = glm::vec4(1.0, 1.0, 1.0, 0.0);
-    renderer.uniform_data.sun_intensity = 2.0;
     renderer.uniform_data.ambient_factor = 0.1;
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
@@ -586,6 +585,7 @@ fn main() {
             }
         }
 
+        dev_gui.do_entity_window(&imgui_ui);
         dev_gui.do_material_list(&imgui_ui, &mut renderer);
 
         if dev_gui.do_gui {
@@ -603,9 +603,8 @@ fn main() {
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Environment") {
-                        if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) {
-                            dev_gui.do_terrain_window = true;
-                        }
+                        if imgui::MenuItem::new("Entity window").build(&imgui_ui) { dev_gui.do_entity_window = true; }
+                        if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) { dev_gui.do_terrain_window = true; }
                         mt.end();
                     }
                     mb.end();

@@ -1,5 +1,5 @@
 use ash::vk;
-use imgui::{DrawCmd, Ui};
+use imgui::{DrawCmd, Ui, TreeNodeId};
 use crate::render::Renderer;
 use crate::structs::TerrainSpec;
 use crate::vkutil::*;
@@ -14,6 +14,7 @@ pub struct DevGui {
     pub do_terrain_window: bool,
     pub do_prop_window: bool,
     pub do_sun_shadowmap: bool,
+    pub do_entity_window: bool,
     pub do_mat_list: bool
 }
 
@@ -53,6 +54,19 @@ impl DevGui {
         }
     }
 
+    pub fn do_entity_window(&mut self, ui: &Ui) {
+        if !self.do_entity_window { return; }
+        if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
+            if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str("Fucking test")).push(ui) {
+
+                token.pop();
+            }
+            ui.separator();
+            if DevGui::do_standard_button(ui, "Close") { self.do_entity_window = false; }
+            win_token.end();
+        }
+    }
+
     pub fn do_material_list(&mut self, imgui_ui: &Ui, renderer: &mut Renderer) {
         if !self.do_mat_list { return; }
         if let Some(token) = imgui::Window::new("Loaded materials").begin(imgui_ui) {
@@ -63,7 +77,7 @@ impl DevGui {
                     imgui_ui.separator();
                 }
             }
-            if DevGui::do_standard_button(&imgui_ui, "Close") { self.do_mat_list = false; }
+            if DevGui::do_standard_button(imgui_ui, "Close") { self.do_mat_list = false; }
             token.end();
         }
     }
@@ -165,9 +179,7 @@ impl DevGui {
 
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
         //Early exit if the gui is deactivated
-        if !self.do_gui {
-            return;
-        }
+        if !self.do_gui { return; }
 
         //Destroy Dear ImGUI allocations from last dead frame
         {

@@ -113,7 +113,6 @@ float simplex_noise(float2 P) {
     return 130.0 * dot(m, g);
 }
 
-
 //Modifies roughness based on normal variance
 float toksvigs_method(float3 sampled_normal, float roughness) {
     float averaged_normal_length = length(sampled_normal);
@@ -204,9 +203,9 @@ float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D 
 }
 
 float determine_shadowed(float3 f_shadow_pos, float3 normal, float3 light_direction, Sampler2D shadow_map, int cascade) {
-    //float bias = 0.00125;
-    //float bias = 0.0;
-    float bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.0005;
+    // float bias = 0.00125;
+    // float bias = 0.0;
+    float bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.00125;
     float2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x / SHADOW_CASCADE_COUNT;
     sample_uv.x += (float)cascade / (float)SHADOW_CASCADE_COUNT;
