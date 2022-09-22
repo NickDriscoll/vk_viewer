@@ -76,17 +76,6 @@ fn main() {
     //Initialize the physics engine
     let mut physics_engine = PhysicsEngine::new();
 
-    //Search for an SRGB swapchain format    
-    let surf_formats = unsafe { vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap() };
-    let mut vk_surface_format = vk::SurfaceFormatKHR::default();
-    for sformat in surf_formats.iter() {
-        if sformat.format == vk::Format::B8G8R8A8_SRGB {
-            vk_surface_format = *sformat;
-            break;
-        }
-    }
-    drop(surf_formats);
-
     let shadow_pass = unsafe {
         let depth_description = vk::AttachmentDescription {
             format: vk::Format::D32_SFLOAT,
@@ -177,7 +166,7 @@ fn main() {
 
     let swapchain_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
-            format: vk_surface_format.format,
+            format: vk::Format::B8G8R8A8_SRGB,
             samples: vk::SampleCountFlags::TYPE_1,
             load_op: vk::AttachmentLoadOp::CLEAR,
             store_op: vk::AttachmentStoreOp::STORE,
@@ -212,7 +201,7 @@ fn main() {
     };
 
     //Initialize the renderer
-    let mut renderer = Renderer::init(&mut vk, swapchain_pass, hdr_forward_pass);
+    let mut renderer = Renderer::init(&mut vk, &window, swapchain_pass, hdr_forward_pass);
 
     //Create and upload Dear IMGUI font atlas
     match imgui_context.fonts() {
@@ -517,26 +506,26 @@ fn main() {
                 vk.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
-                for framebuffer in renderer.swapchain.swapchain_framebuffers {
+                for framebuffer in renderer.window_manager.swapchain_framebuffers {
                     vk.device.destroy_framebuffer(framebuffer, vkutil::MEMORY_ALLOCATOR);
                 }
-                for view in renderer.swapchain.swapchain_image_views {
+                for view in renderer.window_manager.swapchain_image_views {
                     vk.device.destroy_image_view(view, vkutil::MEMORY_ALLOCATOR);
                 }
-                vk.ext_swapchain.destroy_swapchain(renderer.swapchain.swapchain, vkutil::MEMORY_ALLOCATOR);
+                vk.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain, vkutil::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                renderer.swapchain = render::Swapchain::init(&mut vk, swapchain_pass);
+                renderer.window_manager = render::WindowManager::init(&mut vk, &window, swapchain_pass);
 
                 //Recreate internal rendering buffers
                 let extent = vk::Extent3D {
-                    width: renderer.swapchain.extent.width,
-                    height: renderer.swapchain.extent.height,
+                    width: renderer.window_manager.extent.width,
+                    height: renderer.window_manager.extent.height,
                     depth: 1
                 };
                 renderer.resize_hdr_framebuffers(&mut vk, extent, hdr_forward_pass);
 
-                window_size = glm::vec2(renderer.swapchain.extent.width, renderer.swapchain.extent.height);
+                window_size = glm::vec2(renderer.window_manager.extent.width, renderer.window_manager.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
                 imgui_io.display_size[1] = window_size.y as f32;
             }
@@ -585,7 +574,7 @@ fn main() {
             }
         }
 
-        dev_gui.do_entity_window(&imgui_ui);
+        dev_gui.do_props_window(&imgui_ui, &static_props);
         dev_gui.do_material_list(&imgui_ui, &mut renderer);
 
         if dev_gui.do_gui {
@@ -603,7 +592,7 @@ fn main() {
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Environment") {
-                        if imgui::MenuItem::new("Entity window").build(&imgui_ui) { dev_gui.do_entity_window = true; }
+                        if imgui::MenuItem::new("Props window").build(&imgui_ui) { dev_gui.do_props_window = true; }
                         if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) { dev_gui.do_terrain_window = true; }
                         mt.end();
                     }
@@ -651,6 +640,7 @@ fn main() {
                         let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
                         let model_matrix = glm::translation(&camera.position);
                         let s = StaticProp {
+                            name: data.name,
                             model_indices,
                             model_matrix
                         };
@@ -780,7 +770,7 @@ fn main() {
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(renderer.swapchain.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
             
             //Does all work that needs to happen before the render pass
             let frame_info = renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
@@ -858,8 +848,8 @@ fn main() {
             let viewport = vk::Viewport {
                 x: 0.0,
                 y: 0.0,
-                width: (renderer.swapchain.extent.width) as f32,
-                height: (renderer.swapchain.extent.height) as f32,
+                width: (renderer.window_manager.extent.width) as f32,
+                height: (renderer.window_manager.extent.height) as f32,
                 min_depth: 0.0,
                 max_depth: 1.0
             };
@@ -869,7 +859,7 @@ fn main() {
             let vk_render_area = {
                 vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: renderer.swapchain.extent
+                    extent: renderer.window_manager.extent
                 }
             };
             let scissor_area = vk::Rect2D {
@@ -952,7 +942,7 @@ fn main() {
 
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: swapchain_pass,
-                framebuffer: renderer.swapchain.swapchain_framebuffers[current_framebuffer_index],
+                framebuffer: renderer.window_manager.swapchain_framebuffers[current_framebuffer_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
@@ -988,7 +978,7 @@ fn main() {
 
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
-                p_swapchains: &renderer.swapchain.swapchain,
+                p_swapchains: &renderer.window_manager.swapchain,
                 p_image_indices: &(current_framebuffer_index as u32),
                 wait_semaphore_count: 1,
                 p_wait_semaphores: &frame_info.semaphore,

@@ -671,7 +671,6 @@ pub struct VulkanAPI {
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub device: ash::Device,
     pub allocator: Allocator,
-    pub surface: vk::SurfaceKHR,
     pub ext_surface: ash::extensions::khr::Surface,
     pub ext_swapchain: ash::extensions::khr::Swapchain,
     pub queue_family_index: u32,
@@ -716,13 +715,6 @@ impl VulkanAPI {
             };
 
             unsafe { vk_entry.create_instance(&vk_create_info, MEMORY_ALLOCATOR).unwrap() }
-        };
-
-        //Use SDL to create the Vulkan surface
-        let vk_surface = {
-            use ash::vk::Handle;
-            let raw_surf = window.vulkan_create_surface(vk_instance.handle().as_raw() as usize).unwrap();
-            vk::SurfaceKHR::from_raw(raw_surf)
         };
 
         let vk_ext_surface = ash::extensions::khr::Surface::new(&vk_entry, &vk_instance);
@@ -795,10 +787,6 @@ impl VulkanAPI {
                 p_queue_priorities: [1.0].as_ptr(),
                 ..Default::default()
             };
-            
-            if !vk_ext_surface.get_physical_device_surface_support(vk_physical_device, queue_family_index, vk_surface).unwrap() {
-                crash_with_error_dialog("Swapchain present is unavailable on the selected device queue.\nThe application will now exit.");
-            }
 
             let extension_names = [ash::extensions::khr::Swapchain::name().as_ptr()];
             let create_info = vk::DeviceCreateInfo {
@@ -861,7 +849,6 @@ impl VulkanAPI {
             physical_device_properties: vk_physical_device_properties,
             device: vk_device,
             allocator,
-            surface: vk_surface,
             ext_surface: vk_ext_surface,
             ext_swapchain: vk_ext_swapchain,
             queue_family_index,

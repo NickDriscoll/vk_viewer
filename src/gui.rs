@@ -1,5 +1,6 @@
 use ash::vk;
 use imgui::{DrawCmd, Ui, TreeNodeId};
+use slotmap::DefaultKey;
 use crate::render::Renderer;
 use crate::structs::TerrainSpec;
 use crate::vkutil::*;
@@ -14,7 +15,7 @@ pub struct DevGui {
     pub do_terrain_window: bool,
     pub do_prop_window: bool,
     pub do_sun_shadowmap: bool,
-    pub do_entity_window: bool,
+    pub do_props_window: bool,
     pub do_mat_list: bool
 }
 
@@ -54,15 +55,23 @@ impl DevGui {
         }
     }
 
-    pub fn do_entity_window(&mut self, ui: &Ui) {
-        if !self.do_entity_window { return; }
+    pub fn do_props_window(&mut self, ui: &Ui, props: &DenseSlotMap<DefaultKey, StaticProp>) {
+        if !self.do_props_window { return; }
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
-            if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str("Fucking test")).push(ui) {
+            for prop in props.iter() {
+                let name = match &prop.1.name {
+                    Some(n) => { n }
+                    None => { "<unnamed prop>" }
+                };
 
-                token.pop();
+                if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(name)).push(ui) {
+
+                    token.pop();
+                }
             }
+
             ui.separator();
-            if DevGui::do_standard_button(ui, "Close") { self.do_entity_window = false; }
+            if DevGui::do_standard_button(ui, "Close") { self.do_props_window = false; }
             win_token.end();
         }
     }

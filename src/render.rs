@@ -360,7 +360,8 @@ pub struct SunLight {
     pub shadow_map: CascadedShadowMap
 }
 
-pub struct Swapchain {
+pub struct WindowManager {
+    pub surface: vk::SurfaceKHR,
     pub swapchain: vk::SwapchainKHR,
     pub extent: vk::Extent2D,
     pub color_format: vk::Format,
@@ -368,15 +369,29 @@ pub struct Swapchain {
     pub swapchain_framebuffers: Vec<vk::Framebuffer>
 }
 
-impl Swapchain {
-    pub fn init(vk: &mut VulkanAPI, render_pass: vk::RenderPass) -> Self {
+impl WindowManager {
+    pub fn init(vk: &mut VulkanAPI, window: &sdl2::video::Window, render_pass: vk::RenderPass) -> Self {
+        //Use SDL to create the Vulkan surface
+        let vk_surface = {
+            use ash::vk::Handle;
+            let raw_surf = window.vulkan_create_surface(vk.instance.handle().as_raw() as usize).unwrap();
+            vk::SurfaceKHR::from_raw(raw_surf)
+        };
+    
+        //Check that we can do swapchain present on this window
+        unsafe {
+            if !vk.ext_surface.get_physical_device_surface_support(vk.physical_device, vk.queue_family_index, vk_surface).unwrap() {
+                crash_with_error_dialog("Swapchain present is unavailable on the selected device queue.\nThe application will now exit.");
+            }
+        }
+
         //Create the main swapchain for window present
         let vk_swapchain_image_format;
         let vk_swapchain_extent;
         let vk_swapchain = unsafe {
-            let present_modes = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk.surface).unwrap();
-            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
-            let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk.surface).unwrap();
+            let present_modes = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk_surface).unwrap();
+            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk_surface).unwrap();
+            let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk_surface).unwrap();
             
             //Search for an SRGB swapchain format
             let mut surf_format = vk::SurfaceFormatKHR::default();
@@ -396,7 +411,7 @@ impl Swapchain {
                 height: surf_capabilities.current_extent.height
             };
             let create_info = vk::SwapchainCreateInfoKHR {
-                surface: vk.surface,
+                surface: vk_surface,
                 min_image_count: surf_capabilities.min_image_count,
                 image_format: vk_swapchain_image_format,
                 image_color_space: surf_format.color_space,
@@ -445,7 +460,7 @@ impl Swapchain {
 
         let vk_depth_format = vk::Format::D32_SFLOAT;
         let vk_depth_image = unsafe {
-            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap();
+            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk_surface).unwrap();
             let extent = vk::Extent3D {
                 width: surf_capabilities.current_extent.width,
                 height: surf_capabilities.current_extent.height,
@@ -514,7 +529,8 @@ impl Swapchain {
             fbs
         };
 
-        Swapchain {
+        WindowManager {
+            surface: vk_surface,
             swapchain: vk_swapchain,
             extent: vk_swapchain_extent,
             color_format: vk_swapchain_image_format,
@@ -558,7 +574,7 @@ pub struct Renderer {
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
 
-    pub swapchain: Swapchain,
+    pub window_manager: WindowManager,
     
     pub main_sun: Option<SunLight>,
     pub uniform_data: FrameUniforms,
@@ -749,7 +765,7 @@ impl Renderer {
     }
 
 
-    pub fn init(vk: &mut VulkanAPI, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
+    pub fn init(vk: &mut VulkanAPI, window: &sdl2::video::Window, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
         //Maintain free list for texture allocation
         let mut global_textures = FreeList::with_capacity(1024);
 
@@ -1070,9 +1086,9 @@ impl Renderer {
         };
 
         //Create the main swapchain for window present
-        let swapchain = Swapchain::init(vk, swapchain_render_pass);
+        let window_manager = WindowManager::init(vk, &window, swapchain_render_pass);
         
-        let surf_capabilities = unsafe { vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk.surface).unwrap() };
+        let surf_capabilities = unsafe { vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, window_manager.surface).unwrap() };
         let primary_framebuffer_extent = vk::Extent3D {
             width: surf_capabilities.current_extent.width,
             height: surf_capabilities.current_extent.height,
@@ -1130,7 +1146,7 @@ impl Renderer {
             primitives: OptionVec::new(),
             drawlist: Vec::new(),
             instance_data: Vec::new(),
-            swapchain,
+            window_manager,
             uniform_data: uniforms,
             global_textures,
             default_texture_idx: 0,

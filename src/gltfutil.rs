@@ -35,6 +35,7 @@ pub struct GLTFPrimitive {
 }
 
 pub struct GLTFData {
+    pub name: Option<String>,
     pub primitives: Vec<GLTFPrimitive>,
     pub texture_bytes: Vec<Vec<u8>> //Indices correspond to the image index in the JSON
 }
@@ -76,8 +77,15 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
     let glb = Gltf::open(path).unwrap();
     let mut primitives = vec![];
     let mut texture_bytes = vec![Vec::new(); glb.textures().count()];
+    let mut name = None;
 
     for mesh in glb.meshes() {
+        if let None = name {
+            if let Some(n) = mesh.name() {
+                name = Some(String::from(n));
+            }
+        }
+
         for prim in mesh.primitives() {
             //We always expect an index buffer to be present
             let acc = prim.indices().unwrap();
@@ -274,6 +282,7 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
     }
 
     GLTFData {
+        name,
         primitives,
         texture_bytes
     }
