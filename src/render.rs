@@ -176,7 +176,7 @@ impl CascadedShadowMap {
 
         let image = unsafe {
             let extent = vk::Extent3D {
-                width: resolution * Self::CASCADE_COUNT as u32,
+                width: resolution,
                 height: resolution,
                 depth: 1
             };
@@ -189,7 +189,7 @@ impl CascadedShadowMap {
                 format,
                 extent,
                 mip_levels: 1,
-                array_layers: 1,
+                array_layers: Self::CASCADE_COUNT as u32,
                 samples: vk::SampleCountFlags::TYPE_1,
                 usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
@@ -206,14 +206,14 @@ impl CascadedShadowMap {
             let view_info = vk::ImageViewCreateInfo {
                 image,
                 format,
-                view_type: vk::ImageViewType::TYPE_2D,
+                view_type: vk::ImageViewType::TYPE_2D_ARRAY,
                 components: vkutil::COMPONENT_MAPPING_DEFAULT,
                 subresource_range: vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::DEPTH,
                     base_mip_level: 0,
                     level_count: 1,
                     base_array_layer: 0,
-                    layer_count: 1
+                    layer_count: Self::CASCADE_COUNT as u32
                 },
                 ..Default::default()
             };
@@ -227,7 +227,7 @@ impl CascadedShadowMap {
                 render_pass,
                 attachment_count: attachments.len() as u32,
                 p_attachments: attachments.as_ptr(),
-                width: resolution * Self::CASCADE_COUNT as u32,
+                width: resolution,
                 height: resolution,
                 layers: 1,
                 ..Default::default()

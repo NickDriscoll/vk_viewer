@@ -111,9 +111,7 @@ pub fn load_png_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::D
         image_view: vim.vk_view,
         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
     };
-    let index = global_textures.insert(descriptor_info);
-
-    index as u32
+    global_textures.insert(descriptor_info) as u32
 }
 
 pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {

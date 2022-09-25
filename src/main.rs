@@ -29,7 +29,7 @@ use slotmap::DenseSlotMap;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::{File};
-use std::ffi::CStr;
+use std::ffi::{CStr, c_void};
 use std::mem::size_of;
 use std::ptr;
 use std::time::SystemTime;
@@ -100,8 +100,18 @@ fn main() {
             ..Default::default()
         };
 
+        //Multiview info
+        let multiview_info = vk::RenderPassMultiviewCreateInfo {
+            subpass_count: 1,
+            p_view_masks: [0b00111111].as_ptr(),
+            correlation_mask_count: 1,
+            p_correlation_masks: [0b00111111].as_ptr(),
+            ..Default::default()
+        };
+
         let attachments = [depth_description];
         let renderpass_info = vk::RenderPassCreateInfo {
+            p_next: &multiview_info as *const _ as *const c_void,
             attachment_count: attachments.len() as u32,
             p_attachments: attachments.as_ptr(),
             subpass_count: 1,
@@ -796,7 +806,7 @@ fn main() {
                     vk::Rect2D {
                         offset: vk::Offset2D { x: 0, y: 0 },
                         extent: vk::Extent2D {
-                            width: sun_shadow_map.resolution() * CascadedShadowMap::CASCADE_COUNT as u32,
+                            width: sun_shadow_map.resolution(),
                             height: sun_shadow_map.resolution() 
                         }
                     }
@@ -814,33 +824,59 @@ fn main() {
 
                 vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
                 vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
-                for i in 0..CascadedShadowMap::CASCADE_COUNT {
-                    let viewport = vk::Viewport {
-                        x: (i as u32 * sun_shadow_map.resolution()) as f32,
-                        y: 0.0,
-                        width: sun_shadow_map.resolution() as f32,
-                        height: sun_shadow_map.resolution() as f32,
-                        min_depth: 0.0,
-                        max_depth: 1.0
-                    };
-                    vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
 
-                    for drawcall in renderer.drawlist_iter() {
-                        if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
-                            if let ShadowType::NonCaster = model.shadow_type { continue; }
-
-                            let pcs = [
-                                model.material_idx.to_le_bytes(),
-                                model.position_offset.to_le_bytes(),
-                                model.uv_offset.to_le_bytes(),
-                                (i as u32).to_le_bytes()
-                            ].concat();
-                            vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                            vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                            vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
-                        }
+                let viewport = vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: sun_shadow_map.resolution() as f32,
+                    height: sun_shadow_map.resolution() as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0
+                };
+                vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
+                for drawcall in renderer.drawlist_iter() {
+                    if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
+                        if let ShadowType::NonCaster = model.shadow_type { continue; }
+    
+                        let pcs = [
+                            model.material_idx.to_le_bytes(),
+                            model.position_offset.to_le_bytes(),
+                            model.uv_offset.to_le_bytes()
+                        ].concat();
+                        vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                        vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                        vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                     }
                 }
+
+                // for i in 0..CascadedShadowMap::CASCADE_COUNT {
+                //     let viewport = vk::Viewport {
+                //         x: (i as u32 * sun_shadow_map.resolution()) as f32,
+                //         y: 0.0,
+                //         width: sun_shadow_map.resolution() as f32,
+                //         height: sun_shadow_map.resolution() as f32,
+                //         min_depth: 0.0,
+                //         max_depth: 1.0
+                //     };
+                //     vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
+
+                //     for drawcall in renderer.drawlist_iter() {
+                //         if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
+                //             if let ShadowType::NonCaster = model.shadow_type { continue; }
+
+                //             let pcs = [
+                //                 model.material_idx.to_le_bytes(),
+                //                 model.position_offset.to_le_bytes(),
+                //                 model.uv_offset.to_le_bytes(),
+                //                 (i as u32).to_le_bytes()
+                //             ].concat();
+                //             vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                //             vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                //             vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                //         }
+                //     }
+                // }
+
                 vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
             }
             
