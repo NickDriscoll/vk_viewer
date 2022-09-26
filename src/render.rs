@@ -983,8 +983,7 @@ impl Renderer {
             let descriptor_pool = vk.device.create_descriptor_pool(&descriptor_pool_info, vkutil::MEMORY_ALLOCATOR).unwrap();
 
             let mut flag_list = vec![vk::DescriptorBindingFlags::default(); bindings.len()];
-            flag_list[samplers_descriptor_index as usize] = 
-                vk::DescriptorBindingFlags::PARTIALLY_BOUND;
+            flag_list[samplers_descriptor_index as usize] = vk::DescriptorBindingFlags::PARTIALLY_BOUND;
             
             let binding_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT {
                 binding_count: flag_list.len() as u32,

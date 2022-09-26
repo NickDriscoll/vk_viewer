@@ -71,7 +71,7 @@ fn main() {
     }
 
     //Initialize the Vulkan API
-    let mut vk = vkutil::VulkanAPI::init(&window);
+    let mut vk = vkutil::VulkanAPI::init();
 
     //Initialize the physics engine
     let mut physics_engine = PhysicsEngine::new();
@@ -101,11 +101,12 @@ fn main() {
         };
 
         //Multiview info
+        let mask = (1 << CascadedShadowMap::CASCADE_COUNT) - 1;
         let multiview_info = vk::RenderPassMultiviewCreateInfo {
             subpass_count: 1,
-            p_view_masks: [0b00111111].as_ptr(),
+            p_view_masks: &mask,
             correlation_mask_count: 1,
-            p_correlation_masks: [0b00111111].as_ptr(),
+            p_correlation_masks: &mask,
             ..Default::default()
         };
 
@@ -231,10 +232,10 @@ fn main() {
         }
     };
 
-    let push_constant_shader_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
+    let push_constant_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let pipeline_layout = unsafe {
         let push_constant_range = vk::PushConstantRange {
-            stage_flags: push_constant_shader_stage_flags,
+            stage_flags: push_constant_stage_flags,
             offset: 0,
             size: 20
         };
@@ -794,14 +795,7 @@ fn main() {
 
             //Bindless descriptor setup for Shadow+HDR pass
             let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
-            vk.device.cmd_bind_descriptor_sets(
-                frame_info.main_command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline_layout,
-                0,
-                &[renderer.bindless_descriptor_set],
-                &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
-            );
+            
 
             //Shadow rendering
             if let Some(sun) = &renderer.main_sun {
@@ -827,6 +821,14 @@ fn main() {
                 };
 
                 vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+                vk.device.cmd_bind_descriptor_sets(
+                    frame_info.main_command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline_layout,
+                    0,
+                    &[renderer.bindless_descriptor_set],
+                    &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+                );
                 vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
 
                 let viewport = vk::Viewport {
@@ -847,7 +849,7 @@ fn main() {
                             model.position_offset.to_le_bytes(),
                             model.uv_offset.to_le_bytes()
                         ].concat();
-                        vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                        vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_stage_flags, 0, &pcs);
                         vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
                         vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                     }
@@ -923,6 +925,14 @@ fn main() {
                 ..Default::default()
             };
             vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            vk.device.cmd_bind_descriptor_sets(
+                frame_info.main_command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout,
+                0,
+                &[renderer.bindless_descriptor_set],
+                &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+            );
 
             //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
@@ -939,7 +949,7 @@ fn main() {
                         model.normal_offset.to_le_bytes(),
                         model.uv_offset.to_le_bytes(),
                     ].concat();
-                    vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
+                    vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_stage_flags, 0, &pcs);
                     vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
                     vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
@@ -991,7 +1001,7 @@ fn main() {
             vk.device.cmd_begin_render_pass(frame_info.swapchain_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             vk.device.cmd_bind_pipeline(frame_info.swapchain_command_buffer, vk::PipelineBindPoint::GRAPHICS, postfx_pipeline);
-            vk.device.cmd_push_constants(frame_info.swapchain_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
+            vk.device.cmd_push_constants(frame_info.swapchain_command_buffer, pipeline_layout, push_constant_stage_flags, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
             vk.device.cmd_draw(frame_info.swapchain_command_buffer, 3, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands

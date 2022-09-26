@@ -671,7 +671,7 @@ pub struct VulkanAPI {
 }
 
 impl VulkanAPI {
-    pub fn init(window: &Window) -> Self {
+    pub fn init() -> Self {
         let vk_entry = ash::Entry::linked();
         let vk_instance = {
             let app_info = vk::ApplicationInfo {
@@ -745,14 +745,21 @@ impl VulkanAPI {
             vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
             
             //Get physical device features
-            let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
+            let mut multiview_features = vk::PhysicalDeviceMultiviewFeatures::default();
             let mut buffer_address_features = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+            let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
             indexing_features.p_next = &mut buffer_address_features as *mut _ as *mut c_void;
+            buffer_address_features.p_next = &mut multiview_features as *mut _ as *mut c_void;
             let mut physical_device_features = vk::PhysicalDeviceFeatures2 {
                 p_next: &mut indexing_features as *mut _ as *mut c_void,
                 ..Default::default()
             };
             vk_instance.get_physical_device_features2(vk_physical_device, &mut physical_device_features);
+            
+            if multiview_features.multiview == vk::FALSE {
+                crash_with_error_dialog("Your GPU does not support multiview rendering.");
+            }
+
             if physical_device_features.features.texture_compression_bc == vk::FALSE {
                 tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
