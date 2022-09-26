@@ -43,7 +43,7 @@ use structs::{Camera, TerrainSpec, PhysicsProp};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
 
 use crate::routines::*;
-use crate::gltfutil::GLTFData;
+use crate::gltfutil::GLTFMeshData;
 use crate::gui::DevGui;
 use crate::structs::StaticProp;
 
@@ -331,7 +331,7 @@ fn main() {
     let terrain_vertices = terrain.generate_vertices(terrain_generation_scale);
     let terrain_indices = ozy::prims::plane_index_buffer(terrain.vertex_width, terrain.vertex_height);
 
-    let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices, terrain.vertex_width, terrain.vertex_height);
+    let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices.positions, terrain.vertex_width, terrain.vertex_height);
     
     //Loading terrain textures
     let grass_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.png");
@@ -372,8 +372,9 @@ fn main() {
     ) as u32;
     
     //Upload terrain geometry
+    //let terrain_model_idx = 0;
     let terrain_model_idx = {
-        let terrain_offsets = uninterleave_and_upload_vertices(&mut vk, &mut renderer, &terrain_vertices);
+        let terrain_offsets = upload_vertex_attributes(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = vkutil::make_index_buffer(&mut vk, &terrain_indices);
         renderer.register_model(Primitive {
@@ -390,6 +391,9 @@ fn main() {
 
     let mut totoro_lookat_dist = 7.5;
     let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
+
+    let test_scene_data = gltfutil::gltf_scenedata("./data/models/samus.glb");
+    println!("{:#?}", test_scene_data);
 
     //Load totoro as glb
     let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");

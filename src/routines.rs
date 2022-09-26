@@ -1,4 +1,5 @@
-use crate::vkutil::{UninterleavedVertices, VertexFetchOffsets};
+use ozy::structs::UninterleavedVertexArrays;
+use crate::vkutil::{VertexFetchOffsets};
 use crate::*;
 
 //Converts any data structure to a slice of bytes
@@ -21,7 +22,7 @@ pub fn crash_with_error_dialog_titled(title: &str, message: &str) -> ! {
     panic!("{}", message);
 }
 
- pub fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
+pub fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
     match res {
         Ok(t) => { t }
         Err(_) => {
@@ -34,7 +35,7 @@ pub fn unix_epoch_ms() -> u128 {
     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
 }
 
-pub fn compute_terrain_vertices(spec: &mut TerrainSpec, fixed_seed: bool, scale: f32) -> Vec<f32> {
+pub fn compute_terrain_vertices(spec: &mut TerrainSpec, fixed_seed: bool, scale: f32) -> UninterleavedVertexArrays {
     if !fixed_seed {
         spec.seed = unix_epoch_ms();
     }
@@ -53,56 +54,19 @@ pub fn regenerate_terrain(
     if let Some(ter) = renderer.get_model(terrain_model_idx) {
         let offset = ter.position_offset;
         let verts = compute_terrain_vertices(terrain, terrain.fixed_seed, terrain_generation_scale);
-        replace_uploaded_uninterleaved_vertices(vk, renderer, &verts, offset.into());
+        replace_uploaded_vertices(vk, renderer, &verts, offset.into());
 
         physics_engine.collider_set.remove(*terrain_collider_handle, &mut physics_engine.island_manager, &mut physics_engine.rigid_body_set, false);
 
-        *terrain_collider_handle = physics_engine.make_terrain_collider(&verts, terrain.vertex_width, terrain.vertex_height);
+        *terrain_collider_handle = physics_engine.make_terrain_collider(&verts.positions, terrain.vertex_width, terrain.vertex_height);
     }
 }
 
-pub fn uninterleave_vertex_buffer(vertex_buffer: &[f32]) -> UninterleavedVertices {
-    let floats_per_vertex = 15;
-    let mut positions = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut tangents = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut normals = vec![0.0; vertex_buffer.len() / floats_per_vertex * 4];
-    let mut uvs = vec![0.0; vertex_buffer.len() / floats_per_vertex * 2];
-
-    for i in 0..(vertex_buffer.len() / floats_per_vertex) {
-        positions[4 * i] = vertex_buffer[floats_per_vertex * i];
-        positions[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 1];
-        positions[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 2];
-        positions[4 * i + 3] = 1.0;
-
-        tangents[4 * i] = vertex_buffer[floats_per_vertex * i + 3];
-        tangents[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 4];
-        tangents[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 5];
-        tangents[4 * i + 3] = vertex_buffer[floats_per_vertex * i + 6];
-
-        normals[4 * i] = vertex_buffer[floats_per_vertex * i + 10];
-        normals[4 * i + 1] = vertex_buffer[floats_per_vertex * i + 11];
-        normals[4 * i + 2] = vertex_buffer[floats_per_vertex * i + 12];
-        normals[4 * i + 3] = 0.0;
-
-        uvs[2 * i] = vertex_buffer[floats_per_vertex * i + 13];
-        uvs[2 * i + 1] = vertex_buffer[floats_per_vertex * i + 14];
-    }
-
-    UninterleavedVertices {
-        positions,
-        tangents,
-        normals,
-        uvs
-    }
-}
-
-pub fn uninterleave_and_upload_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32]) -> VertexFetchOffsets {
-    let attributes = uninterleave_vertex_buffer(vertex_buffer);
-    
-    let position_offset = renderer.append_vertex_positions(vk, &attributes.positions);
-    let tangent_offset = renderer.append_vertex_tangents(vk, &attributes.tangents);
-    let normal_offset = renderer.append_vertex_normals(vk, &attributes.normals);
-    let uv_offset = renderer.append_vertex_uvs(vk, &attributes.uvs);
+pub fn upload_vertex_attributes(vk: &mut VulkanAPI, renderer: &mut Renderer, attribs: &UninterleavedVertexArrays) -> VertexFetchOffsets {
+    let position_offset = renderer.append_vertex_positions(vk, &attribs.positions);
+    let tangent_offset = renderer.append_vertex_tangents(vk, &attribs.tangents);
+    let normal_offset = renderer.append_vertex_normals(vk, &attribs.normals);
+    let uv_offset = renderer.append_vertex_uvs(vk, &attribs.uvs);
 
     VertexFetchOffsets {
         position_offset,
@@ -126,16 +90,14 @@ pub fn upload_primitive_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, pr
     }
 }
 
-pub fn replace_uploaded_uninterleaved_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, vertex_buffer: &[f32], offset: u64) {
-    let attributes = uninterleave_vertex_buffer(vertex_buffer);
-    
+pub fn replace_uploaded_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, attributes: &UninterleavedVertexArrays, offset: u64) {
     renderer.replace_vertex_positions(vk, &attributes.positions, offset);
     renderer.replace_vertex_tangents(vk, &attributes.tangents, offset);
     renderer.replace_vertex_normals(vk, &attributes.normals, offset);
     renderer.replace_vertex_uvs(vk, &attributes.uvs, offset);
 }
 
-pub fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFData, pipeline: vk::Pipeline) -> Vec<usize> {
+pub fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFMeshData, pipeline: vk::Pipeline) -> Vec<usize> {
     let mut indices = vec![];
     let mut tex_id_map = HashMap::new();
     for prim in &data.primitives {

@@ -52,13 +52,6 @@ macro_rules! size_to_alignment {
     };
 }
 
-pub struct UninterleavedVertices {
-    pub positions: Vec<f32>,
-    pub tangents: Vec<f32>,
-    pub normals: Vec<f32>,
-    pub uvs: Vec<f32>,
-}
-
 pub struct VertexFetchOffsets {
     pub position_offset: u32,
     pub tangent_offset: u32,

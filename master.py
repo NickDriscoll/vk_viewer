@@ -7,17 +7,21 @@ start_time = time.time()
 release_name = "%s-%s" % (name, datetime.now().strftime("%m-%d-%Y_%H-%M-%S"))
 
 staging_dir = name
-asset_dirs = ["data", "redist"]
+asset_dirs = ["data"]
 
 if os.path.exists(staging_dir):
 	shutil.rmtree(staging_dir)
 
 cargo_proc = subprocess.run(["cargo", "build", "--release"], check=True)
 
-os.mkdir(staging_dir)
+#os.mkdir(staging_dir)
+
+#Copy redist DLLs
+shutil.copytree("redist/", "%s/" % staging_dir)
 
 for d in asset_dirs:
 	shutil.copytree(d, "%s/%s" % (staging_dir, d))
+
 
 shutil.copy("target/release/%s.exe" % name, "%s/" % staging_dir)
 

@@ -46,17 +46,15 @@ fn main() {
     }
 
     //Copy SDL2 dlls to target directory
-    if let Err(e) = std::fs::copy("./redist/SDL2_mixer.dll", "./target/release/SDL2_mixer.dll") {
-        write!(build_log, "{}\n", e).unwrap();
+    let envs = ["debug", "release"];
+    let files = ["SDL2.dll", "SDL2_mixer.dll", "libmpg123-0.dll"];
+    for env in envs {
+        for file in files {
+            if let Err(e) = std::fs::copy(&format!("./redist/{}", file), &format!("./target/{}/{}", env, file)) {
+                write!(build_log, "{}\n", e).unwrap();
+            }
+        }
     }
-    if let Err(e) = std::fs::copy("./redist/libmpg123-0.dll", "./target/release/libmpg123-0.dll") {
-        write!(build_log, "{}\n", e).unwrap();            
-    }
-    if let Err(e) = std::fs::copy("./redist/SDL2_mixer.dll", "./target/debug/SDL2_mixer.dll") {
-        write!(build_log, "{}\n", e).unwrap();
-    }
-    if let Err(e) = std::fs::copy("./redist/libmpg123-0.dll", "./target/debug/libmpg123-0.dll") {
-        write!(build_log, "{}\n", e).unwrap();            
-    }
+
     write!(build_log, "Compilation finished.\n").unwrap();
 }

@@ -1,3 +1,4 @@
+use ozy::structs::UninterleavedVertexArrays;
 use slotmap::new_key_type;
 
 use crate::*;
@@ -43,7 +44,7 @@ pub struct TerrainSpec {
 }
 
 impl TerrainSpec {
-    pub fn generate_vertices(&self, scale: f32) -> Vec<f32> {
+    pub fn generate_vertices(&self, scale: f32) -> UninterleavedVertexArrays {
         use noise::Seedable;
     
         let simplex_generator = noise::OpenSimplex::new().set_seed(self.seed as u32);

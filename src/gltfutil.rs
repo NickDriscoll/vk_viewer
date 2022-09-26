@@ -25,6 +25,7 @@ pub struct GLTFMaterial {
     pub emissive_imagetype: GLTFImageType
 }
 
+#[derive(Debug)]
 pub struct GLTFPrimitive {
     pub vertex_positions: Vec<f32>,
     pub vertex_normals: Vec<f32>,
@@ -34,10 +35,17 @@ pub struct GLTFPrimitive {
     pub material: GLTFMaterial
 }
 
-pub struct GLTFData {
+#[derive(Debug)]
+pub struct GLTFMeshData {
     pub name: Option<String>,
     pub primitives: Vec<GLTFPrimitive>,
     pub texture_bytes: Vec<Vec<u8>> //Indices correspond to the image index in the JSON
+}
+
+#[derive(Debug)]
+pub struct GLTFSceneData {
+    pub name: Option<String>,
+    pub meshes: Vec<GLTFMeshData>
 }
 
 fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic) -> Option<Vec<f32>> {
@@ -54,7 +62,7 @@ fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic
 
     #[cfg(debug_assertions)]
     if byte_stride != 0 {
-        crash_with_error_dialog("You are trying to load a GLTF whose vertex attributes are not tightly packed, violating the assumptions of the loader");
+        crash_with_error_dialog("You are trying to load a glTF whose vertex attributes are not tightly packed, violating the assumptions of the loader");
     }
 
     unsafe {
@@ -73,7 +81,29 @@ fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic
     }
 }
 
-pub fn gltf_meshdata(path: &str) -> GLTFData {
+pub fn gltf_scenedata(path: &str) -> GLTFSceneData {
+    let glb = Gltf::open(path).unwrap();
+
+    //We only load glb's that have one scene
+    if glb.scenes().len() != 1 { crash_with_error_dialog("Invalid glTF: glTF must contain exactly one scene."); }
+    let scene = glb.scenes().next().unwrap();
+    let scene_name = match scene.name() {
+        Some(n) => { Some(String::from(n)) }
+        None => { None }
+    };
+
+    for scene_node in scene.nodes() {
+        if let Some(mesh) = scene_node.mesh() {
+            
+        }
+    }
+
+    GLTFSceneData {
+        name: scene_name
+    }
+}
+
+pub fn gltf_meshdata(path: &str) -> GLTFMeshData {
     let glb = Gltf::open(path).unwrap();
     let mut primitives = vec![];
     let mut texture_bytes = vec![Vec::new(); glb.textures().count()];
@@ -281,7 +311,7 @@ pub fn gltf_meshdata(path: &str) -> GLTFData {
         }
     }
 
-    GLTFData {
+    GLTFMeshData {
         name,
         primitives,
         texture_bytes

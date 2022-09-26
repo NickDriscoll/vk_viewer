@@ -1,5 +1,3 @@
-use std::{slice::from_raw_parts};
-
 use rapier3d::prelude::*;
 
 pub struct PhysicsEngine {
@@ -66,10 +64,10 @@ impl PhysicsEngine {
         );
     }
 
-    pub fn make_terrain_collider(&mut self, verts: &[f32], width: usize, height: usize) -> ColliderHandle {
-        let mut vs = Vec::with_capacity(verts.len() / 15 * 3);
-        for i in (0..verts.len()).step_by(15) {
-            vs.push(Point::new(verts[i], verts[i + 1], verts[i + 2]));
+    pub fn make_terrain_collider(&mut self, positions: &[f32], width: usize, height: usize) -> ColliderHandle {
+        let mut vs = Vec::with_capacity(positions.len() / 4 * 3);
+        for i in (0..positions.len()).step_by(4) {
+            vs.push(Point::new(positions[i], positions[i + 1], positions[i + 2]));
         }
 
         let mut i_copy = ozy::prims::plane_index_buffer(width, height);

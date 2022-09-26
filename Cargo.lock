@@ -388,28 +388,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glfw"
-version = "0.44.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "103c29fa9d30c5371187895a10948d4f54b4111450328b4e439133d88243c5e3"
-dependencies = [
- "bitflags",
- "glfw-sys",
- "objc",
- "raw-window-handle",
- "winapi",
-]
-
-[[package]]
-name = "glfw-sys"
-version = "3.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b0cbb12e2dfac494316e91f6bf7cf070ccd9c61501a02f4af14d71222c9f67f"
-dependencies = [
- "cmake",
-]
-
-[[package]]
 name = "gltf"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -696,15 +674,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "malloc_buf"
-version = "0.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "matrixmultiply"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -899,15 +868,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "objc"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "915b1b472bc21c53464d6c8461c9d3af805ba1ef837e1cac254428f4a77177b1"
-dependencies = [
- "malloc_buf",
-]
-
-[[package]]
 name = "object"
 version = "0.28.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -945,7 +905,6 @@ name = "ozy_engine"
 version = "0.1.0"
 dependencies = [
  "gl",
- "glfw",
  "glyph_brush",
  "image 0.24.2",
  "nalgebra-glm",
