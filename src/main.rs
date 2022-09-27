@@ -105,8 +105,8 @@ fn main() {
         let multiview_info = vk::RenderPassMultiviewCreateInfo {
             subpass_count: 1,
             p_view_masks: &mask,
-            correlation_mask_count: 1,
-            p_correlation_masks: &mask,
+            //correlation_mask_count: 1,
+            //p_correlation_masks: &mask,
             ..Default::default()
         };
 

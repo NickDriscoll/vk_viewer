@@ -25,8 +25,8 @@ pub fn crash_with_error_dialog_titled(title: &str, message: &str) -> ! {
 pub fn unwrap_result<T, E: Display>(res: Result<T, E>, msg: &str) -> T {
     match res {
         Ok(t) => { t }
-        Err(_) => {
-            crash_with_error_dialog(&format!("{}", msg));
+        Err(e) => {
+            crash_with_error_dialog(&format!("{}\n{}", msg, e));
         }
     }
 }

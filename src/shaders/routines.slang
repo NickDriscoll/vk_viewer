@@ -202,18 +202,22 @@ float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D 
     return final_color;
 }
 
-float determine_shadowed(float3 f_shadow_pos, float3 normal, float3 light_direction, Sampler2D shadow_map, int cascade) {
+float determine_shadowed(float3 f_shadow_pos, float3 normal, float3 light_direction, Sampler2DArray shadow_map, int cascade) {
     // float bias = 0.00125;
     // float bias = 0.0;
     float bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.00125;
-    float2 sample_uv = f_shadow_pos.xy;
-    sample_uv.x = sample_uv.x / SHADOW_CASCADE_COUNT;
-    sample_uv.x += (float)cascade / (float)SHADOW_CASCADE_COUNT;
+    float3 sample_uv = float3(f_shadow_pos.xy, (float)cascade);
+    
+    //float2 sample_uv = f_shadow_pos.xy;    
+    //sample_uv.x = sample_uv.x / SHADOW_CASCADE_COUNT;
+    //sample_uv.x += (float)cascade / (float)SHADOW_CASCADE_COUNT;
+
+    
     float sampled_depth = shadow_map.Sample(sample_uv).r;
     return sampled_depth + bias < f_shadow_pos.z ? 1.0 : 0.0;
 }
 
-float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2D shadow_map, int shadow_cascade, float3 normal, float3 light_direction) {
+float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2DArray shadow_map, int shadow_cascade, float3 normal, float3 light_direction) {
     //Compute how shadowed if we are potentially shadowed
     float shadow = 0.0;
     if (shadow_cascade > -1) {
@@ -222,8 +226,9 @@ float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2D shadow_map, 
             //Average the NxN block of shadow texels centered at this pixel
             int bound = 2;
             float2 texel_size;
+            float el;
             float l;
-            shadow_map.GetDimensions(0, texel_size.x, texel_size.y, l);
+            shadow_map.GetDimensions(0, texel_size.x, texel_size.y, el, l);
             texel_size = 1.0 / texel_size;
             for (int x = -bound; x <= bound; x++) {
                 for (int y = -bound; y <= bound; y++) {
@@ -242,7 +247,7 @@ float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2D shadow_map, 
 
 // Returns shadow factor in x and cascade index in y
 float2 compute_cascade_shadowing(
-    Sampler2D shadow_map,
+    Sampler2DArray shadow_map,
     float3 normal,
     float3 light_direction,
     float4 shadow_space_positions[SHADOW_CASCADE_COUNT],
