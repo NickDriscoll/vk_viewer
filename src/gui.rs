@@ -14,7 +14,6 @@ pub struct DevGui {
     pub do_gui: bool,
     pub do_terrain_window: bool,
     pub do_prop_window: bool,
-    pub do_sun_shadowmap: bool,
     pub do_props_window: bool,
     pub do_mat_list: bool
 }

@@ -571,24 +571,6 @@ fn main() {
             );
         }
 
-        if dev_gui.do_gui && dev_gui.do_sun_shadowmap {
-            let win = imgui::Window::new("Shadow map visualizer");
-            if let Some(win_token) = win.begin(&imgui_ui) {
-                let (idx, res) = match &renderer.main_sun {
-                    Some(sun) => { (sun.shadow_map.texture_index(), sun.shadow_map.resolution()) }
-                    None => { (renderer.default_texture_idx, 1) }
-                };
-                imgui::Image::new(
-                    TextureId::new(idx as usize),
-                    [(res * CascadedShadowMap::CASCADE_COUNT as u32) as f32 / 6.0, res as f32 / 6.0]
-                ).build(&imgui_ui);
-
-                if DevGui::do_standard_button(&imgui_ui, "Close") { dev_gui.do_sun_shadowmap = false; }
-
-                win_token.end();
-            }
-        }
-
         dev_gui.do_props_window(&imgui_ui, &static_props);
         dev_gui.do_material_list(&imgui_ui, &mut renderer);
 
@@ -603,7 +585,6 @@ fn main() {
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Debug") {
                         if imgui::MenuItem::new("Active material list").build(&imgui_ui) { dev_gui.do_mat_list = true; }
-                        if imgui::MenuItem::new("Shadow map visualizer").build(&imgui_ui) { dev_gui.do_sun_shadowmap = true; }
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Environment") {
@@ -854,34 +835,6 @@ fn main() {
                         vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                     }
                 }
-
-                // for i in 0..CascadedShadowMap::CASCADE_COUNT {
-                //     let viewport = vk::Viewport {
-                //         x: (i as u32 * sun_shadow_map.resolution()) as f32,
-                //         y: 0.0,
-                //         width: sun_shadow_map.resolution() as f32,
-                //         height: sun_shadow_map.resolution() as f32,
-                //         min_depth: 0.0,
-                //         max_depth: 1.0
-                //     };
-                //     vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
-
-                //     for drawcall in renderer.drawlist_iter() {
-                //         if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
-                //             if let ShadowType::NonCaster = model.shadow_type { continue; }
-
-                //             let pcs = [
-                //                 model.material_idx.to_le_bytes(),
-                //                 model.position_offset.to_le_bytes(),
-                //                 model.uv_offset.to_le_bytes(),
-                //                 (i as u32).to_le_bytes()
-                //             ].concat();
-                //             vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_shader_stage_flags, 0, &pcs);
-                //             vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                //             vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
-                //         }
-                //     }
-                // }
 
                 vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
             }
