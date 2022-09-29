@@ -105,8 +105,8 @@ fn main() {
         let multiview_info = vk::RenderPassMultiviewCreateInfo {
             subpass_count: 1,
             p_view_masks: &mask,
-            //correlation_mask_count: 1,
-            //p_correlation_masks: &mask,
+            correlation_mask_count: 1,
+            p_correlation_masks: &mask,
             ..Default::default()
         };
 
@@ -403,8 +403,8 @@ fn main() {
     let mut totoro_lookat_dist = 7.5;
     let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
-    let test_scene_data = gltfutil::gltf_scenedata("./data/models/samus.glb");
-    println!("{:#?}", test_scene_data);
+    //let test_scene_data = gltfutil::gltf_scenedata("./data/models/sponza2k.glb");
+    //println!("Meshes in file: {}", test_scene_data.meshes.len());
 
     //Load totoro as glb
     let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
@@ -571,7 +571,7 @@ fn main() {
             );
         }
 
-        dev_gui.do_props_window(&imgui_ui, &static_props);
+        dev_gui.do_props_window(&imgui_ui, &mut static_props);
         dev_gui.do_material_list(&imgui_ui, &mut renderer);
 
         if dev_gui.do_gui {
@@ -634,11 +634,10 @@ fn main() {
                     if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
                         let data = gltfutil::gltf_meshdata(&path);                    
                         let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
-                        let model_matrix = glm::translation(&camera.position);
                         let s = StaticProp {
                             name: data.name,
                             model_indices,
-                            model_matrix
+                            position: camera.position
                         };
                         static_props.insert(s);
                     }
@@ -736,9 +735,11 @@ fn main() {
         last_view_from_world = view_from_world;
         renderer.uniform_data.view_from_world = view_from_world;
 
+        //Push drawcalls for static props
         for (_, prop) in static_props.iter() {
             for idx in prop.model_indices.iter() {
-                renderer.queue_drawcall(*idx, &[prop.model_matrix]);
+                let mm = glm::translation(&prop.position);
+                renderer.queue_drawcall(*idx, &[mm]);
             }
         }
         
@@ -775,7 +776,7 @@ fn main() {
             vk.device.begin_command_buffer(frame_info.main_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             //Bindless descriptor setup for Shadow+HDR pass
-            let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
+            let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
             
 
             //Shadow rendering
@@ -991,7 +992,6 @@ fn main() {
                 println!("{}", e);
             }
         }
-        //std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
     //Cleanup

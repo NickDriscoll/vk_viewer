@@ -116,10 +116,10 @@ impl InstanceData {
     }
 }
 
-//Values that will be uniform to a particular view. Probably shouldn't be called "FrameUniforms"
+//Values that will be uniform over a particular simulation frame
 #[derive(Default)]
 #[repr(C)]
-pub struct FrameUniforms {
+pub struct EnvironmentUniforms {
     pub clip_from_world: glm::TMat4<f32>,
     pub clip_from_view: glm::TMat4<f32>,
     pub view_from_world: glm::TMat4<f32>,
@@ -577,7 +577,7 @@ pub struct Renderer {
     pub window_manager: WindowManager,
     
     pub main_sun: Option<SunLight>,
-    pub uniform_data: FrameUniforms,
+    pub uniform_data: EnvironmentUniforms,
 
     //Various GPU allocated buffers
     pub position_buffer: GPUBuffer,
@@ -771,7 +771,7 @@ impl Renderer {
 
         //Allocate buffer for frame-constant uniforms
         let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
-        let uniform_buffer_size = Self::FRAMES_IN_FLIGHT as u64 * size_to_alignment!(size_of::<FrameUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
+        let uniform_buffer_size = Self::FRAMES_IN_FLIGHT as u64 * size_to_alignment!(size_of::<EnvironmentUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
         let uniform_buffer = GPUBuffer::allocate(
             vk,
             uniform_buffer_size,
@@ -875,7 +875,7 @@ impl Renderer {
                     count: 1,
                     buffer: uniform_buffer.backing_buffer(),
                     offset: 0,
-                    length: size_of::<FrameUniforms>() as vk::DeviceSize
+                    length: size_of::<EnvironmentUniforms>() as vk::DeviceSize
                 },
                 BufferDescriptorDesc {
                     ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
@@ -1070,7 +1070,7 @@ impl Renderer {
         //Create free list for materials
         let global_materials = FreeList::with_capacity(256);
 
-        let mut uniforms = FrameUniforms::default();
+        let mut uniforms = EnvironmentUniforms::default();
         uniforms.exposure = 1.0;
 
         //Load environment textures
@@ -1344,7 +1344,7 @@ impl Renderer {
 
             uniforms.time = elapsed_time;
 
-            let dynamic_offset = (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::FrameUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64;
+            let dynamic_offset = (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64;
             
             let uniform_bytes = struct_to_bytes(&self.uniform_data);
             self.uniform_buffer.upload_subbuffer_elements(vk, uniform_bytes, dynamic_offset);

@@ -1,5 +1,5 @@
 static const uint SHADOW_CASCADE_COUNT = 6;
-static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = (SHADOW_CASCADE_COUNT + 1) / 5 + 1;
+static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = SHADOW_CASCADE_COUNT + 1;
 
 //Standard input to a vertex shader
 struct ModelVertex {

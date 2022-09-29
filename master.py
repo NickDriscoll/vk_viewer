@@ -12,7 +12,16 @@ asset_dirs = ["data"]
 if os.path.exists(staging_dir):
 	shutil.rmtree(staging_dir)
 
-cargo_proc = subprocess.run(["cargo", "build", "--release"], check=True)
+cargo_proc = subprocess.run([
+		"cargo",
+		"rustc",
+		"--release",
+		"--",
+		"--cfg",
+		"master"
+	],
+	check=True
+)
 
 #os.mkdir(staging_dir)
 
@@ -24,19 +33,13 @@ for d in asset_dirs:
 
 
 shutil.copy("target/release/%s.exe" % name, "%s/" % staging_dir)
+shutil.copy("run_from_cmd.bat", "%s/" % staging_dir)
 
 #Compress the build into a zip archive
-print("Compressing build...")
+print("Compressing build to %s.zip..." % release_name)
 shutil.make_archive(release_name, "zip", root_dir=staging_dir)
 
 print("Done compressing in %.4f seconds" % (time.time() - start_time))
-start_time = time.time()
 
 #Cleanup
-shutil.rmtree(staging_dir)
-
-archive_name = "%s.zip" % release_name
-scp_proc = subprocess.run(["scp", archive_name, "pi@192.168.1.39:/home/pi/dist/%s" % archive_name], check=True)
-
-
-print("Done uploading in %.4f seconds" % (time.time() - start_time))
+#shutil.rmtree(staging_dir)

@@ -54,17 +54,22 @@ impl DevGui {
         }
     }
 
-    pub fn do_props_window(&mut self, ui: &Ui, props: &DenseSlotMap<DefaultKey, StaticProp>) {
+    pub fn do_props_window(&mut self, ui: &Ui, props: &mut DenseSlotMap<DefaultKey, StaticProp>) {
         if !self.do_props_window { return; }
+
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
-            for prop in props.iter() {
-                let name = match &prop.1.name {
+            for prop in props.iter_mut() {
+                let prop = prop.1;
+                let name = match &prop.name {
                     Some(n) => { n }
                     None => { "<unnamed prop>" }
                 };
 
                 if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(name)).push(ui) {
-
+                    imgui::Drag::new("X").speed(0.1).build(ui, &mut prop.position.x);
+                    imgui::Drag::new("Y").speed(0.1).build(ui, &mut prop.position.y);
+                    imgui::Drag::new("Z").speed(0.1).build(ui, &mut prop.position.z);
+                    ui.separator();
                     token.pop();
                 }
             }

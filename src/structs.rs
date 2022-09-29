@@ -107,7 +107,8 @@ pub struct PhysicsProp {
 pub struct StaticProp {
     pub name: Option<String>,
     pub model_indices: Vec<usize>,
-    pub model_matrix: glm::TMat4<f32>
+    //pub model_matrix: glm::TMat4<f32>
+    pub position: glm::TVec3<f32>
 }
 
 new_key_type! { pub struct ModelMatrixKey; }

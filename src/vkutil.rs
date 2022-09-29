@@ -693,6 +693,10 @@ impl VulkanAPI {
                 platform_surface_extension
             ];
 
+            #[cfg(master)]
+            let layer_names = [];
+
+            #[cfg(not(master))]
             let layer_names = unsafe  {[
                 CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr()
             ]};

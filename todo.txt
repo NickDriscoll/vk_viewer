@@ -1,2 +1,4 @@
-Generate terrain with uninterleaved vertices to remove unecessary step
-Implement HDR->PostFX->Swapchain pipeline
+Generate terrain with compute shader
+Implement physically-based blur
+Implement scene graph
+Implement simple environment probe for indirect diffuse/specular light

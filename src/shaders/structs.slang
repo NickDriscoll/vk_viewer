@@ -1,7 +1,7 @@
 static const float PI = acos(-1);
 
 static const uint SHADOW_CASCADE_COUNT = 6;
-static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = (SHADOW_CASCADE_COUNT + 1) / 5 + 1;
+static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = SHADOW_CASCADE_COUNT + 1;
 
 struct InstanceData {
     float4x4 world_from_model;
