@@ -571,7 +571,16 @@ fn main() {
             );
         }
 
-        dev_gui.do_props_window(&imgui_ui, &mut static_props);
+        if let Some(mesh_data) = dev_gui.do_props_window(&imgui_ui, &mut static_props) {
+            let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &mesh_data, vk_3D_graphics_pipeline);
+            let s = StaticProp {
+                name: mesh_data.name,
+                model_indices,
+                position: camera.position
+            };
+            static_props.insert(s);
+        }
+
         dev_gui.do_material_list(&imgui_ui, &mut renderer);
 
         if dev_gui.do_gui {
@@ -581,6 +590,7 @@ fn main() {
                         if imgui::MenuItem::new("New").build(&imgui_ui) {}
                         if imgui::MenuItem::new("Load").build(&imgui_ui) {}
                         if imgui::MenuItem::new("Save").build(&imgui_ui) {}
+                        if imgui::MenuItem::new("Quit").build(&imgui_ui) { break 'running; }
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Debug") {
@@ -611,6 +621,17 @@ fn main() {
                     imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
                     imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
                     imgui::Slider::new("Sun intensity", 0.0, 20.0).build(&imgui_ui, &mut sun.intensity);
+
+                    let mut new_distances = sun.shadow_map.view_distances();
+                    let mut i = 0;
+                    let mut updated = false;
+                    for distance in &mut new_distances {
+                        updated |= imgui::Slider::new(format!("Cascade distance {}", i), -0.1, -1000.0).build(&imgui_ui, distance);
+                        i += 1;
+                    }
+                    if updated {
+                        sun.shadow_map.update_view_distances(&renderer.uniform_data.clip_from_view, new_distances);
+                    }
                 }
                 imgui::Slider::new("Ambient factor", 0.0, 20.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);
     
@@ -629,21 +650,6 @@ fn main() {
                     for i in 1..totoro_list.len() {
                         totoro_list.delete(i);
                     }
-                }
-                if DevGui::do_standard_button(&imgui_ui, "Load static prop") {
-                    if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                        let data = gltfutil::gltf_meshdata(&path);                    
-                        let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &data, vk_3D_graphics_pipeline);
-                        let s = StaticProp {
-                            name: data.name,
-                            model_indices,
-                            position: camera.position
-                        };
-                        static_props.insert(s);
-                    }
-                }
-                if DevGui::do_standard_button(&imgui_ui, "Exit") {
-                    break 'running;
                 }
     
                 t.end();

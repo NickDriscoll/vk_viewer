@@ -700,6 +700,7 @@ impl VulkanAPI {
             let layer_names = unsafe  {[
                 CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr()
             ]};
+            
             let vk_create_info = vk::InstanceCreateInfo {
                 p_application_info: &app_info,
                 enabled_extension_count: extension_names.len() as u32,

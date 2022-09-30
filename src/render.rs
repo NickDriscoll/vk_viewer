@@ -159,6 +159,16 @@ impl CascadedShadowMap {
     pub const CASCADE_COUNT: usize = 6;
 
     pub fn clip_distances(&self) -> [f32; Self::CASCADE_COUNT + 1] { self.clip_distances }
+    pub fn view_distances(&self) -> [f32; Self::CASCADE_COUNT + 1] { self.view_distances }
+
+    pub fn update_view_distances(&mut self, clipping_from_view: &glm::TMat4<f32>, view_distances: [f32; Self::CASCADE_COUNT + 1]) {
+        for i in 0..view_distances.len() {
+            let p = clipping_from_view * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
+            self.clip_distances[i] = p.z;
+        }
+        self.view_distances = view_distances;
+    }
+
     pub fn framebuffer(&self) -> vk::Framebuffer { self.framebuffer }
     pub fn image(&self) -> vk::Image { self.image }
     pub fn resolution(&self) -> u32 { self.resolution }
@@ -238,23 +248,14 @@ impl CascadedShadowMap {
 
         //Manually picking the cascade distances because math is hard
         //The shadow cascade distances are negative bc they are in view space
-        let near_distance = 0.1;
         let mut view_distances = [0.0; Self::CASCADE_COUNT + 1];
-        view_distances[0] = -(near_distance);
-        view_distances[1] = -(near_distance + 10.0);
-        view_distances[2] = -(near_distance + 30.0);
-        view_distances[3] = -(near_distance + 90.0);
-        view_distances[4] = -(near_distance + 270.0);
-        view_distances[5] = -(near_distance + 550.0);
-        view_distances[6] = -(near_distance + 1000.0);
-
-        // let far_distance = 1000.0;
-        // let ratio = f32::powf(far_distance / near_distance, 1.0 / Self::CASCADE_COUNT as f32);
-        // view_distances[0] = -(near_distance);
-        // for i in 1..(Self::CASCADE_COUNT + 1) {
-        //     view_distances[i] = ratio * view_distances[i - 1];
-        // }
-        // println!("{:#?}", view_distances);
+        view_distances[0] = -(Renderer::NEAR_CLIP_DISTANCE);
+        view_distances[1] = -(Renderer::NEAR_CLIP_DISTANCE + 10.0);
+        view_distances[2] = -(Renderer::NEAR_CLIP_DISTANCE + 30.0);
+        view_distances[3] = -(Renderer::NEAR_CLIP_DISTANCE + 73.0);
+        view_distances[4] = -(Renderer::NEAR_CLIP_DISTANCE + 123.0);
+        view_distances[5] = -(Renderer::NEAR_CLIP_DISTANCE + 222.0);
+        view_distances[6] = -(Renderer::NEAR_CLIP_DISTANCE + 500.0);
 
         //Compute the clip space distances
         let mut clip_distances = [0.0; Self::CASCADE_COUNT + 1];
@@ -458,55 +459,6 @@ impl WindowManager {
             image_views
         };
 
-        let vk_depth_format = vk::Format::D32_SFLOAT;
-        let vk_depth_image = unsafe {
-            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk_surface).unwrap();
-            let extent = vk::Extent3D {
-                width: surf_capabilities.current_extent.width,
-                height: surf_capabilities.current_extent.height,
-                depth: 1
-            };
-
-            let create_info = vk::ImageCreateInfo {
-                queue_family_index_count: 1,
-                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-                flags: vk::ImageCreateFlags::empty(),
-                image_type: vk::ImageType::TYPE_2D,
-                format: vk_depth_format,
-                extent,
-                mip_levels: 1,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-
-            let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            vkutil::allocate_image_memory(vk, depth_image);
-            depth_image
-        };
-
-        let vk_depth_image_view = unsafe {
-            let image_subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::DEPTH,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let view_info = vk::ImageViewCreateInfo {
-                image: vk_depth_image,
-                format: vk_depth_format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                subresource_range: image_subresource_range,
-                ..Default::default()
-            };
-
-            vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-        };
-
         //Create framebuffers
         let swapchain_framebuffers = unsafe {
             let mut attachment = vk::ImageView::default();
@@ -605,6 +557,8 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    pub const NEAR_CLIP_DISTANCE: f32 = 0.1;
+    pub const FAR_CLIP_DISTANCE: f32 = 1000.0;
     pub const FRAMES_IN_FLIGHT: usize = 2;
 
     pub fn current_in_flight_frame(&self) -> usize { self.in_flight_frame }
@@ -1307,9 +1261,13 @@ impl Renderer {
                 0.0, 0.0, 0.0, 1.0
             );
 
-            let near_distance = 0.1;
-            let far_distance = 1000.0;
-            let projection_matrix = glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, near_distance, far_distance);
+            let projection_matrix = glm::perspective_fov_rh_zo(
+                glm::half_pi::<f32>(),
+                window_size.x as f32,
+                window_size.y as f32,
+                Renderer::NEAR_CLIP_DISTANCE,
+                Renderer::FAR_CLIP_DISTANCE
+            );
             uniforms.clip_from_view = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
                 0.0, -1.0, 0.0, 0.0,
@@ -1332,7 +1290,7 @@ impl Renderer {
                     &uniforms.clip_from_view
                 );
 
-                uniforms.sun_shadow_distances = sunlight.shadow_map.clip_distances().clone();
+                uniforms.sun_shadow_distances = sunlight.shadow_map.clip_distances();
                 
                 uniforms.sun_intensity = sunlight.intensity;
             }

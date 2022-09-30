@@ -54,9 +54,10 @@ impl DevGui {
         }
     }
 
-    pub fn do_props_window(&mut self, ui: &Ui, props: &mut DenseSlotMap<DefaultKey, StaticProp>) {
-        if !self.do_props_window { return; }
+    pub fn do_props_window(&mut self, ui: &Ui, props: &mut DenseSlotMap<DefaultKey, StaticProp>) -> Option<GLTFMeshData> {
+        if !self.do_props_window { return None; }
 
+        let mut out = None;
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
             for prop in props.iter_mut() {
                 let prop = prop.1;
@@ -73,11 +74,19 @@ impl DevGui {
                     token.pop();
                 }
             }
-
             ui.separator();
+            
+            if Self::do_standard_button(ui, "Load static prop") {
+                if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
+                    out = Some(gltfutil::gltf_meshdata(&path));
+                }
+            }
+
             if DevGui::do_standard_button(ui, "Close") { self.do_props_window = false; }
             win_token.end();
         }
+
+        out
     }
 
     pub fn do_material_list(&mut self, imgui_ui: &Ui, renderer: &mut Renderer) {
