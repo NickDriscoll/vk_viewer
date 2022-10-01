@@ -621,20 +621,9 @@ fn main() {
                     imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
                     imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
                     imgui::Slider::new("Sun intensity", 0.0, 20.0).build(&imgui_ui, &mut sun.intensity);
-
-                    let mut new_distances = sun.shadow_map.view_distances();
-                    let mut i = 0;
-                    let mut updated = false;
-                    for distance in &mut new_distances {
-                        updated |= imgui::Slider::new(format!("Cascade distance {}", i), -0.1, -1000.0).build(&imgui_ui, distance);
-                        i += 1;
-                    }
-                    if updated {
-                        sun.shadow_map.update_view_distances(&renderer.uniform_data.clip_from_view, new_distances);
-                    }
                 }
-                imgui::Slider::new("Ambient factor", 0.0, 20.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);
-    
+                
+                imgui::Slider::new("Ambient factor", 0.0, 20.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);    
                 imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
                 imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
                 imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);

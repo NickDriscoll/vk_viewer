@@ -808,7 +808,7 @@ impl VulkanAPI {
         let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);
 
         //Initialize gpu_allocator
-        let allocator = Allocator::new(&AllocatorCreateDesc {
+        let mut allocator = Allocator::new(&AllocatorCreateDesc {
             instance: vk_instance.clone(),
             device: vk_device.clone(),
             physical_device: vk_physical_device,
@@ -913,7 +913,7 @@ impl GPUBuffer {
     }
 
     pub fn upload_subbuffer_elements<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T], offset: u64) {
-        let byte_buffer = unsafe { slice_to_bytes(in_buffer) };
+        let byte_buffer = slice_to_bytes(in_buffer);
         let byte_offset = offset * size_of::<T>() as u64;
         self.upload_subbuffer_bytes(vk, byte_buffer, byte_offset as u64);
     }

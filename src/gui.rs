@@ -22,9 +22,7 @@ impl DevGui {
     pub const FRAMES_IN_FLIGHT: usize = Renderer::FRAMES_IN_FLIGHT + 1;
     pub const FLOATS_PER_VERTEX: usize = 8;
 
-    pub fn do_standard_button(ui: &Ui, label: &str) -> bool {
-        ui.button_with_size(label, [0.0, 32.0])
-    }
+    pub fn do_standard_button(ui: &Ui, label: &str) -> bool { ui.button_with_size(label, [0.0, 32.0]) }
 
     pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
         let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
@@ -59,6 +57,7 @@ impl DevGui {
 
         let mut out = None;
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
+            let mut i = 0;
             for prop in props.iter_mut() {
                 let prop = prop.1;
                 let name = match &prop.name {
@@ -66,13 +65,15 @@ impl DevGui {
                     None => { "<unnamed prop>" }
                 };
 
-                if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(name)).push(ui) {
+                if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(name).push(ui) {
                     imgui::Drag::new("X").speed(0.1).build(ui, &mut prop.position.x);
                     imgui::Drag::new("Y").speed(0.1).build(ui, &mut prop.position.y);
                     imgui::Drag::new("Z").speed(0.1).build(ui, &mut prop.position.z);
                     ui.separator();
                     token.pop();
                 }
+
+                i += 1;
             }
             ui.separator();
             
@@ -135,11 +136,11 @@ impl DevGui {
     }
 
     //This is where we upload the Dear Imgui geometry for the current frame
-    pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanAPI, renderer: &mut Renderer, imgui_ui: imgui::Ui) {
+    pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanAPI, renderer: &mut Renderer, ui: imgui::Ui) {
         let mut index_buffers = Vec::with_capacity(16);
         let mut draw_cmd_lists = Vec::with_capacity(16);
         let mut offsets = Vec::with_capacity(16);
-        let imgui_draw_data = imgui_ui.render();
+        let imgui_draw_data = ui.render();
 
         let most_recent_dead_frame = &self.frames[self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT];
 
@@ -202,10 +203,10 @@ impl DevGui {
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
         //Early exit if the gui is deactivated
         if !self.do_gui { return; }
-
+        
         //Destroy Dear ImGUI allocations from last dead frame
         {
-            let last_frame = self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT;
+            let last_frame = (self.current_frame + 1) % Self::FRAMES_IN_FLIGHT;
             let geo_count = self.frames[last_frame].index_buffers.len();
             for geo in self.frames[last_frame].index_buffers.drain(0..geo_count) {
                 geo.free(vk);
@@ -253,6 +254,7 @@ impl DevGui {
                 }
             }
         }
+
         self.current_frame = (self.current_frame + 1) % Self::FRAMES_IN_FLIGHT;
     }
 }

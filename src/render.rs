@@ -371,11 +371,11 @@ pub struct WindowManager {
 }
 
 impl WindowManager {
-    pub fn init(vk: &mut VulkanAPI, window: &sdl2::video::Window, render_pass: vk::RenderPass) -> Self {
+    pub fn init(vk: &mut VulkanAPI, sdl_window: &sdl2::video::Window, render_pass: vk::RenderPass) -> Self {
         //Use SDL to create the Vulkan surface
         let vk_surface = {
             use ash::vk::Handle;
-            let raw_surf = window.vulkan_create_surface(vk.instance.handle().as_raw() as usize).unwrap();
+            let raw_surf = sdl_window.vulkan_create_surface(vk.instance.handle().as_raw() as usize).unwrap();
             vk::SurfaceKHR::from_raw(raw_surf)
         };
     
@@ -403,8 +403,8 @@ impl WindowManager {
                 }
             }
 
-            let present_mode = present_modes[0];
-            //let present_mode = vk::PresentModeKHR::MAILBOX;
+            //let present_mode = present_modes[0];
+            let present_mode = vk::PresentModeKHR::MAILBOX;
 
             vk_swapchain_image_format = surf_format.format;
             vk_swapchain_extent = vk::Extent2D {
