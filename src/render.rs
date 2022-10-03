@@ -403,8 +403,8 @@ impl WindowManager {
                 }
             }
 
-            //let present_mode = present_modes[0];
-            let present_mode = vk::PresentModeKHR::MAILBOX;
+            let present_mode = present_modes[0];
+            //let present_mode = vk::PresentModeKHR::MAILBOX;
 
             vk_swapchain_image_format = surf_format.format;
             vk_swapchain_extent = vk::Extent2D {
@@ -579,10 +579,6 @@ impl Renderer {
         fs
     }
 
-    pub fn get_instance_data(&self) -> &Vec<InstanceData> {
-        &self.instance_data
-    }
-
     pub unsafe fn cleanup(&mut self, vk: &mut VulkanAPI) {
         vk.device.wait_for_fences(&self.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
     }
@@ -721,7 +717,7 @@ impl Renderer {
 
     pub fn init(vk: &mut VulkanAPI, window: &sdl2::video::Window, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
         //Maintain free list for texture allocation
-        let mut global_textures = FreeList::with_capacity(1024);
+        let mut global_textures = FreeList::new(1024);
 
         //Allocate buffer for frame-constant uniforms
         let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
@@ -1022,7 +1018,7 @@ impl Renderer {
         let default_normal_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, vk::Format::R8G8B8A8_UNORM, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
         //Create free list for materials
-        let global_materials = FreeList::with_capacity(256);
+        let global_materials = FreeList::new(256);
 
         let mut uniforms = EnvironmentUniforms::default();
         uniforms.exposure = 1.0;
@@ -1052,7 +1048,6 @@ impl Renderer {
         
         //Initialize per-frame rendering state
         let in_flight_frame_data = {
-
             //Data for each in-flight frame
             let command_buffers = {
                 let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
@@ -1152,7 +1147,7 @@ impl Renderer {
         }
     }
 
-    pub fn register_model(&mut self, data: Primitive) -> usize {
+    pub fn register_primitive(&mut self, data: Primitive) -> usize {
         self.primitives.insert(data)
     }
 

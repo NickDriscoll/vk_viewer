@@ -69,6 +69,12 @@ impl DevGui {
                     imgui::Drag::new("X").speed(0.1).build(ui, &mut prop.position.x);
                     imgui::Drag::new("Y").speed(0.1).build(ui, &mut prop.position.y);
                     imgui::Drag::new("Z").speed(0.1).build(ui, &mut prop.position.z);
+                    imgui::Drag::new("Pitch").speed(0.05).build(ui, &mut prop.pitch);
+                    imgui::Drag::new("Yaw").speed(0.05).build(ui, &mut prop.yaw);
+                    imgui::Drag::new("Roll").speed(0.05).build(ui, &mut prop.roll);
+                    if Self::do_standard_button(ui, "Delete") {
+
+                    }
                     ui.separator();
                     token.pop();
                 }

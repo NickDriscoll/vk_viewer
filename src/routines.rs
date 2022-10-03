@@ -108,7 +108,7 @@ pub fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data:
                     let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
                     let image_info = vk::DescriptorImageInfo {
                         sampler: renderer.material_sampler,
-                        image_view: image.vk_view,
+                        image_view: image.view,
                         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
                     };
                     let global_tex_id = renderer.global_textures.insert(image_info) as u32;
@@ -128,7 +128,7 @@ pub fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data:
                         let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
                         let image_info = vk::DescriptorImageInfo {
                             sampler: renderer.material_sampler,
-                            image_view: image.vk_view,
+                            image_view: image.view,
                             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
                         };
                         let global_tex_id = renderer.global_textures.insert(image_info) as u32;
@@ -148,7 +148,7 @@ pub fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data:
                         let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
                         let image_info = vk::DescriptorImageInfo {
                             sampler: renderer.material_sampler,
-                            image_view: image.vk_view,
+                            image_view: image.view,
                             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
                         };
                         let global_tex_id = renderer.global_textures.insert(image_info) as u32;
@@ -171,7 +171,7 @@ pub fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data:
                         let image = GPUImage::from_png_bytes(vk, data.texture_bytes[idx].as_slice());
                         let image_info = vk::DescriptorImageInfo {
                             sampler: renderer.material_sampler,
-                            image_view: image.vk_view,
+                            image_view: image.view,
                             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
                         };
                         let global_tex_id = renderer.global_textures.insert(image_info) as u32;
@@ -200,7 +200,7 @@ pub fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data:
         let offsets = upload_primitive_vertices(vk, renderer, &prim);
 
         let index_buffer = vkutil::make_index_buffer(vk, &prim.indices);
-        let model_idx = renderer.register_model(Primitive {
+        let model_idx = renderer.register_primitive(Primitive {
             shadow_type: ShadowType::OpaqueCaster,
             index_buffer,
             index_count: prim.indices.len().try_into().unwrap(),

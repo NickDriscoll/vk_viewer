@@ -104,11 +104,14 @@ pub struct PhysicsProp {
     pub collider_handle: ColliderHandle
 }
 
+#[derive(Default)]
 pub struct StaticProp {
     pub name: Option<String>,
     pub model_indices: Vec<usize>,
-    //pub model_matrix: glm::TMat4<f32>
-    pub position: glm::TVec3<f32>
+    pub position: glm::TVec3<f32>,
+    pub pitch: f32,
+    pub yaw: f32,
+    pub roll: f32
 }
 
 new_key_type! { pub struct ModelMatrixKey; }

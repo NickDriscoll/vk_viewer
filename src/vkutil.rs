@@ -5,9 +5,7 @@ use gpu_allocator::vulkan::*;
 use gpu_allocator::MemoryLocation;
 use ozy::io::DDSHeader;
 use sdl2::libc::c_char;
-use sdl2::video::Window;
 use std::ptr;
-use routines::*;
 use crate::*;
 
 pub const MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
@@ -79,10 +77,7 @@ pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::Shader
     }
 }
 
-pub unsafe fn allocate_image_memory(vk: &mut VulkanAPI, image: vk::Image) -> Allocation {
-    allocate_named_image_memory(vk, image, "")
-}
-
+pub unsafe fn allocate_image_memory(vk: &mut VulkanAPI, image: vk::Image) -> Allocation { allocate_named_image_memory(vk, image, "") }
 pub unsafe fn allocate_named_image_memory(vk: &mut VulkanAPI, image: vk::Image, name: &str) -> Allocation {
     let requirements = vk.device.get_image_memory_requirements(image);
     let alloc = vk.allocator.allocate(&AllocationCreateDesc {
@@ -101,7 +96,7 @@ pub fn load_png_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::D
 
     let descriptor_info = vk::DescriptorImageInfo {
         sampler,
-        image_view: vim.vk_view,
+        image_view: vim.view,
         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
     };
     global_textures.insert(descriptor_info) as u32
@@ -113,7 +108,7 @@ pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::D
 
         let descriptor_info = vk::DescriptorImageInfo {
             sampler,
-            image_view: vim.vk_view,
+            image_view: vim.view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         };
         let index = global_textures.insert(descriptor_info);
@@ -146,8 +141,8 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
     let allocation = allocate_image_memory(vk, normal_image);
 
     let vim = GPUImage {
-        vk_image: normal_image,
-        vk_view: vk::ImageView::default(),
+        image: normal_image,
+        view: vk::ImageView::default(),
         width,
         height,
         mip_count: 1,
@@ -186,8 +181,8 @@ pub enum ColorSpace {
 }
 
 pub struct GPUImage {
-    pub vk_image: vk::Image,
-    pub vk_view: vk::ImageView,
+    pub image: vk::Image,
+    pub view: vk::ImageView,
     pub width: u32,
     pub height: u32,
     pub mip_count: u32,
@@ -202,7 +197,7 @@ impl GPUImage {
         Self::from_png_bytes(vk, &png_bytes)
     }
 
-    pub fn from_png_bytes(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Self {
+    pub fn from_png_bytes_deferred(vk: &mut VulkanAPI, png_bytes: &[u8]) -> DeferredImage {
         use png::BitDepth;
         use png::ColorType;
 
@@ -222,14 +217,12 @@ impl GPUImage {
         let width = info.width;
         let height = info.height;
         let pixel_count = (width * height / byte_size_divisor) as usize;
-        let format;
+        let format = match info.srgb {
+            Some(_) => { vk::Format::R8G8B8A8_SRGB }
+            None => { vk::Format::R8G8B8A8_UNORM }
+        };
         let bytes = match info.color_type {
             ColorType::Rgb => {
-                format = match info.srgb {
-                    Some(_) => { vk::Format::R8G8B8A8_SRGB }
-                    None => { vk::Format::R8G8B8A8_UNORM }
-                };
-
                 let mut raw_bytes = vec![0u8; 3 * pixel_count];
                 reader.next_frame(&mut raw_bytes).unwrap();
 
@@ -245,11 +238,6 @@ impl GPUImage {
                 bytes
             }
             ColorType::Rgba => {
-                format = match info.srgb {
-                    Some(_) => { vk::Format::R8G8B8A8_SRGB }
-                    None => { vk::Format::R8G8B8A8_UNORM }
-                };
-
                 let mut bytes = vec![0xFFu8; 4 * pixel_count];
                 reader.next_frame(&mut bytes).unwrap();
                 bytes
@@ -279,22 +267,118 @@ impl GPUImage {
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 ..Default::default()
             };
+            
+            upload_image_deferred(vk, &image_create_info, &bytes)
+        }
+    }
+
+    pub fn from_png_bytes(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Self {
+        use png::BitDepth;
+        use png::ColorType;
+
+        let decoder = png::Decoder::new(png_bytes);
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
+
+        //We're given a depth in bits, so we set up an integer divide
+        let byte_size_divisor = match info.bit_depth {
+            BitDepth::One => { 8 }
+            BitDepth::Two => { 4 }
+            BitDepth::Four => { 2 }
+            BitDepth::Eight => { 1 }
+            _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
+        };
+
+        let width = info.width;
+        let height = info.height;
+        let pixel_count = (width * height / byte_size_divisor) as usize;
+        let format = match info.srgb {
+            Some(_) => { vk::Format::R8G8B8A8_SRGB }
+            None => { vk::Format::R8G8B8A8_UNORM }
+        };
+        let bytes = match info.color_type {
+            ColorType::Rgb => {
+                let mut raw_bytes = vec![0u8; 3 * pixel_count];
+                reader.next_frame(&mut raw_bytes).unwrap();
+
+                //Convert to RGBA by adding an alpha of 1.0 to each pixel
+                let mut bytes = vec![0xFFu8; 4 * pixel_count];
+                for i in 0..pixel_count {
+                    let idx = 4 * i;
+                    let r_idx = 3 * i;
+                    bytes[idx] = raw_bytes[r_idx];
+                    bytes[idx + 1] = raw_bytes[r_idx + 1];
+                    bytes[idx + 2] = raw_bytes[r_idx + 2];
+                }
+                bytes
+            }
+            ColorType::Rgba => {
+                let mut bytes = vec![0xFFu8; 4 * pixel_count];
+                reader.next_frame(&mut bytes).unwrap();
+                bytes
+            }
+            t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
+        };
+                
+        //Create staging buffer and upload raw image data
+        let bytes_size = bytes.len() as vk::DeviceSize;
+        let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+        staging_buffer.upload_buffer(vk, &bytes);
+
+        unsafe {
+            let mip_levels =  (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
+
+            let image_create_info = vk::ImageCreateInfo {
+                image_type: vk::ImageType::TYPE_2D,
+                format,
+                extent: vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                },
+                mip_levels,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: &vk.queue_family_index,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                ..Default::default()
+            };
             let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
             let allocation = allocate_image_memory(vk, image);
 
+            vk.device.begin_command_buffer(vk.command_buffers[0], &vk::CommandBufferBeginInfo::default()).unwrap();
+            
+            let grass_view_info = vk::ImageViewCreateInfo {
+                image,
+                format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: COMPONENT_MAPPING_DEFAULT,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: mip_levels,
+                    base_array_layer: 0,
+                    layer_count: 1
+                },
+                ..Default::default()
+            };
+            let view = vk.device.create_image_view(&grass_view_info, MEMORY_ALLOCATOR).unwrap();
+
             let mut vim = GPUImage {
-                vk_image: image,
-                vk_view: vk::ImageView::default(),
+                image,
+                view,
                 width,
                 height,
                 mip_count: mip_levels,
                 allocation
             };
-            upload_image(vk, &vim, &bytes);
+            record_image_upload_commands(vk, vk.command_buffers[0], &vim, &staging_buffer);
 
             //Generate mipmaps
-            vk.device.begin_command_buffer(vk.general_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-
             let image_memory_barrier = vk::ImageMemoryBarrier {
                 src_access_mask: vk::AccessFlags::empty(),
                 dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
@@ -311,7 +395,7 @@ impl GPUImage {
                 ..Default::default()
             };
             vk.device.cmd_pipeline_barrier(
-                vk.general_command_buffer,
+                vk.command_buffers[0],
                 vk::PipelineStageFlags::TOP_OF_PIPE,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::DependencyFlags::empty(),
@@ -336,7 +420,7 @@ impl GPUImage {
                     ..Default::default()
                 };
                 vk.device.cmd_pipeline_barrier(
-                    vk.general_command_buffer,
+                    vk.command_buffers[0],
                     vk::PipelineStageFlags::TRANSFER,
                     vk::PipelineStageFlags::TRANSFER,
                     vk::DependencyFlags::empty(),
@@ -373,7 +457,7 @@ impl GPUImage {
                     }
                 ];
                 vk.device.cmd_blit_image(
-                    vk.general_command_buffer,
+                    vk.command_buffers[0],
                     image,
                     vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                     image,
@@ -399,39 +483,22 @@ impl GPUImage {
                 subresource_range,
                 ..Default::default()
             };
-            vk.device.cmd_pipeline_barrier(vk.general_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+            vk.device.cmd_pipeline_barrier(vk.command_buffers[0], vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
-            vk.device.end_command_buffer(vk.general_command_buffer).unwrap();
+            vk.device.end_command_buffer(vk.command_buffers[0]).unwrap();
     
             let submit_info = vk::SubmitInfo {
                 command_buffer_count: 1,
-                p_command_buffers: &vk.general_command_buffer,
+                p_command_buffers: &vk.command_buffers[0],
                 ..Default::default()
             };
             let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-            vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-            vk.device.reset_fences(&[vk.general_command_buffer_fence]).unwrap();
-            vk.device.queue_submit(queue, &[submit_info], vk.general_command_buffer_fence).unwrap();
-            vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-            
-            let sampler_subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: mip_levels,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let grass_view_info = vk::ImageViewCreateInfo {
-                image,
-                format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: COMPONENT_MAPPING_DEFAULT,
-                subresource_range: sampler_subresource_range,
-                ..Default::default()
-            };
-            let view = vk.device.create_image_view(&grass_view_info, MEMORY_ALLOCATOR).unwrap();
+            vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+            vk.device.reset_fences(&[vk.command_buffer_fence]).unwrap();
+            vk.device.queue_submit(queue, &[submit_info], vk.command_buffer_fence).unwrap();
+            vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
 
-            vim.vk_view = view;
+            vim.view = view;
             vim
         }
     }
@@ -489,8 +556,8 @@ impl GPUImage {
         let allocation = allocate_image_memory(vk, image);
 
         let mut vim = GPUImage {
-            vk_image: image,
-            vk_view: vk::ImageView::default(),
+            image,
+            view: vk::ImageView::default(),
             width,
             height,
             mip_count: mipmap_count,
@@ -515,7 +582,7 @@ impl GPUImage {
         };
         let view = vk.device.create_image_view(&grass_view_info, MEMORY_ALLOCATOR).unwrap();
 
-        vim.vk_view = view;
+        vim.view = view;
         vim
     }
 }
@@ -527,47 +594,87 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, o
     staging_buffer.upload_buffer(vk, &raw_data);
 
     //Wait on the fence before beginning command recording
-    vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    vk.device.reset_fences(&[vk.general_command_buffer_fence]).unwrap();
-    vk.device.begin_command_buffer(vk.general_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+    vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    vk.device.reset_fences(&[vk.command_buffer_fence]).unwrap();
+    vk.device.begin_command_buffer(vk.command_buffers[0], &vk::CommandBufferBeginInfo::default()).unwrap();
 
     let copy = vk::BufferCopy {
         src_offset: 0,
         dst_offset: offset * size_of::<T>() as u64,
         size: bytes_size
     };
-    vk.device.cmd_copy_buffer(vk.general_command_buffer, staging_buffer.backing_buffer(), dst_buffer, &[copy]);
+    vk.device.cmd_copy_buffer(vk.command_buffers[0], staging_buffer.backing_buffer(), dst_buffer, &[copy]);
 
-    vk.device.end_command_buffer(vk.general_command_buffer).unwrap();
+    vk.device.end_command_buffer(vk.command_buffers[0]).unwrap();
 
     let submit_info = vk::SubmitInfo {
         command_buffer_count: 1,
-        p_command_buffers: &vk.general_command_buffer,
+        p_command_buffers: &vk.command_buffers[0],
         ..Default::default()
     };
     let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-    vk.device.queue_submit(queue, &[submit_info], vk.general_command_buffer_fence).unwrap();
-    vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    vk.device.queue_submit(queue, &[submit_info], vk.command_buffer_fence).unwrap();
+    vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     staging_buffer.free(vk);
 }
 
-pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8]) {
+pub struct DeferredImage {
+    pub fence: vk::Fence,
+    pub staging_buffer: GPUBuffer,
+    pub command_buffer_idx: usize,
+    pub final_image: GPUImage
+}
+
+unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::ImageCreateInfo, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
     staging_buffer.upload_buffer(vk, &raw_bytes);
 
-    //Wait on the fence before beginning command recording
-    vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    vk.device.reset_fences(&[vk.general_command_buffer_fence]).unwrap();
-    vk.device.begin_command_buffer(vk.general_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+    //Create image
+    let image = vk.device.create_image(image_create_info, MEMORY_ALLOCATOR).unwrap();
+    let allocation = allocate_image_memory(vk, image);
+    let vim = GPUImage {
+        image,
+        view: vk::ImageView::default(),
+        width: image_create_info.extent.width,
+        height: image_create_info.extent.height,
+        mip_count: image_create_info.mip_levels,
+        allocation
+    };
 
+    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), MEMORY_ALLOCATOR).unwrap();
+    let command_buffer_idx = vk.command_buffer_indices.insert(0);
+
+    let command_buffer = vk.command_buffers[command_buffer_idx];
+    vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+    record_image_upload_commands(vk, command_buffer, &vim, &staging_buffer);
+    vk.device.end_command_buffer(command_buffer).unwrap();
+    
+    let submit_info = vk::SubmitInfo {
+        command_buffer_count: 1,
+        p_command_buffers: &vk.command_buffers[0],
+        ..Default::default()
+    };
+    let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+    vk.device.queue_submit(queue, &[submit_info], vk.command_buffer_fence).unwrap();
+
+    DeferredImage {
+        fence,
+        staging_buffer,
+        command_buffer_idx,
+        final_image: vim
+    }
+}
+
+//staging_buffer already has the image bytes uploaded to it
+unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, image: &GPUImage, staging_buffer: &GPUBuffer) {
     let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
         old_layout: vk::ImageLayout::UNDEFINED,
         new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        image: image.vk_image,
+        image: image.image,
         subresource_range: vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
@@ -577,7 +684,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
         },
         ..Default::default()
     };
-    vk.device.cmd_pipeline_barrier(vk.general_command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    vk.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     let mut cumulative_offset = 0;
     let mut copy_regions = vec![vk::BufferImageCopy::default(); image.mip_count as usize];
@@ -610,7 +717,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
         cumulative_offset += w * h;
     }
 
-    vk.device.cmd_copy_buffer_to_image(vk.general_command_buffer, staging_buffer.backing_buffer(), image.vk_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    vk.device.cmd_copy_buffer_to_image(command_buffer, staging_buffer.backing_buffer(), image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -624,22 +731,102 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
         dst_access_mask: vk::AccessFlags::SHADER_READ,
         old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        image: image.vk_image,
+        image: image.image,
         subresource_range,
         ..Default::default()
     };
-    vk.device.cmd_pipeline_barrier(vk.general_command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    vk.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+}
 
-    vk.device.end_command_buffer(vk.general_command_buffer).unwrap();
+pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8]) {
+    //Create staging buffer and upload raw image data
+    let bytes_size = raw_bytes.len() as vk::DeviceSize;
+    let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+    staging_buffer.upload_buffer(vk, &raw_bytes);
+
+    //Wait on the fence before beginning command recording
+    vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    vk.device.reset_fences(&[vk.command_buffer_fence]).unwrap();
+    vk.device.begin_command_buffer(vk.command_buffers[0], &vk::CommandBufferBeginInfo::default()).unwrap();
+
+    let image_memory_barrier = vk::ImageMemoryBarrier {
+        src_access_mask: vk::AccessFlags::empty(),
+        dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+        old_layout: vk::ImageLayout::UNDEFINED,
+        new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        image: image.image,
+        subresource_range: vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: image.mip_count,
+            base_array_layer: 0,
+            layer_count: 1
+        },
+        ..Default::default()
+    };
+    vk.device.cmd_pipeline_barrier(vk.command_buffers[0], vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+
+    let mut cumulative_offset = 0;
+    let mut copy_regions = vec![vk::BufferImageCopy::default(); image.mip_count as usize];
+    for i in 0..image.mip_count {
+        let w = image.width / (1 << i);
+        let h = image.height / (1 << i);
+        let subresource_layers = vk::ImageSubresourceLayers {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_level: i,
+            base_array_layer: 0,
+            layer_count: 1
+
+        };
+        let image_extent = vk::Extent3D {
+            width: u32::max(w, 1),
+            height: u32::max(h, 1),
+            depth: 1
+        };
+
+        cumulative_offset = size_to_alignment!(cumulative_offset, 16);
+        let copy_region = vk::BufferImageCopy {
+            buffer_offset: cumulative_offset as u64,
+            buffer_row_length: 0,
+            buffer_image_height: 0,
+            image_extent,
+            image_offset: vk::Offset3D::default(),
+            image_subresource: subresource_layers
+        };
+        copy_regions[i as usize] = copy_region;
+        cumulative_offset += w * h;
+    }
+
+    vk.device.cmd_copy_buffer_to_image(vk.command_buffers[0], staging_buffer.backing_buffer(), image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+
+    let subresource_range = vk::ImageSubresourceRange {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        base_mip_level: 0,
+        level_count: image.mip_count,
+        base_array_layer: 0,
+        layer_count: 1
+    };
+    let image_memory_barrier = vk::ImageMemoryBarrier {
+        src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+        dst_access_mask: vk::AccessFlags::SHADER_READ,
+        old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        image: image.image,
+        subresource_range,
+        ..Default::default()
+    };
+    vk.device.cmd_pipeline_barrier(vk.command_buffers[0], vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+
+    vk.device.end_command_buffer(vk.command_buffers[0]).unwrap();
     
     let submit_info = vk::SubmitInfo {
         command_buffer_count: 1,
-        p_command_buffers: &vk.general_command_buffer,
+        p_command_buffers: &vk.command_buffers[0],
         ..Default::default()
     };
     let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-    vk.device.queue_submit(queue, &[submit_info], vk.general_command_buffer_fence).unwrap();
-    vk.device.wait_for_fences(&[vk.general_command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    vk.device.queue_submit(queue, &[submit_info], vk.command_buffer_fence).unwrap();
+    vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     staging_buffer.free(vk);
 }
 
@@ -666,8 +853,9 @@ pub struct VulkanAPI {
     pub ext_swapchain: ash::extensions::khr::Swapchain,
     pub queue_family_index: u32,
     pub command_pool: vk::CommandPool,
-    pub general_command_buffer: vk::CommandBuffer,
-    pub general_command_buffer_fence: vk::Fence
+    pub command_buffer_indices: FreeList<u8>,
+    pub command_buffers: Vec<vk::CommandBuffer>,
+    pub command_buffer_fence: vk::Fence
 }
 
 impl VulkanAPI {
@@ -768,9 +956,9 @@ impl VulkanAPI {
             if physical_device_features.features.texture_compression_bc == vk::FALSE {
                 tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
-            buffer_device_address = buffer_address_features.buffer_device_address != 0;
+            buffer_device_address = buffer_address_features.buffer_device_address != vk::FALSE;
             
-            if indexing_features.descriptor_binding_partially_bound == 0 || indexing_features.runtime_descriptor_array == 0 {
+            if indexing_features.descriptor_binding_partially_bound == vk::FALSE || indexing_features.runtime_descriptor_array == vk::FALSE {
                 crash_with_error_dialog("Your GPU lacks the specific features required to do bindless rendering. Sorry.");
             }
 
@@ -808,7 +996,7 @@ impl VulkanAPI {
         let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);
 
         //Initialize gpu_allocator
-        let mut allocator = Allocator::new(&AllocatorCreateDesc {
+        let allocator = Allocator::new(&AllocatorCreateDesc {
             instance: vk_instance.clone(),
             device: vk_device.clone(),
             physical_device: vk_physical_device,
@@ -827,15 +1015,15 @@ impl VulkanAPI {
         };
 
         //Create command buffer
-        let graphics_command_buffer = unsafe {
-    
+        let command_buffer_count = 1024;
+        let general_command_buffers = unsafe {
             let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
                 command_pool,
-                command_buffer_count: 1,
+                command_buffer_count: command_buffer_count as u32,
                 level: vk::CommandBufferLevel::PRIMARY,
                 ..Default::default()
             };
-            vk_device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()[0]
+            vk_device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()
         };
 
         let graphics_command_buffer_fence = unsafe {
@@ -856,8 +1044,9 @@ impl VulkanAPI {
             ext_swapchain: vk_ext_swapchain,
             queue_family_index,
             command_pool,
-            general_command_buffer: graphics_command_buffer,
-            general_command_buffer_fence: graphics_command_buffer_fence
+            command_buffer_indices: FreeList::new(command_buffer_count),
+            command_buffers: general_command_buffers,
+            command_buffer_fence: graphics_command_buffer_fence
         }
     }
 }
@@ -1163,7 +1352,7 @@ pub struct FreeList<T> {
 }
 
 impl<T> FreeList<T> {
-    pub fn with_capacity(size: usize) -> Self {
+    pub fn new(size: usize) -> Self {
         FreeList {
             list: OptionVec::with_capacity(size),
             size: size as u64,

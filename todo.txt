@@ -1,4 +1,5 @@
 Generate terrain with compute shader
-Implement physically-based blur
-Implement scene graph
-Implement simple environment probe for indirect diffuse/specular light
+Physically-based blur
+Scene graph
+Simple environment probe for indirect diffuse/specular light
+Deferred/Batched GPU uploading

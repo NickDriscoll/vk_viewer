@@ -388,7 +388,7 @@ fn main() {
         let terrain_offsets = upload_vertex_attributes(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = vkutil::make_index_buffer(&mut vk, &terrain_indices);
-        renderer.register_model(Primitive {
+        renderer.register_primitive(Primitive {
             shadow_type: ShadowType::OpaqueCaster,
             index_buffer,
             index_count: terrain_indices.len().try_into().unwrap(),
@@ -571,18 +571,6 @@ fn main() {
             );
         }
 
-        if let Some(mesh_data) = dev_gui.do_props_window(&imgui_ui, &mut static_props) {
-            let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &mesh_data, vk_3D_graphics_pipeline);
-            let s = StaticProp {
-                name: mesh_data.name,
-                model_indices,
-                position: camera.position
-            };
-            static_props.insert(s);
-        }
-
-        dev_gui.do_material_list(&imgui_ui, &mut renderer);
-
         if dev_gui.do_gui {
             if let Some(t) = imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui) {
                 if let Some(mb) = imgui_ui.begin_menu_bar() {
@@ -644,6 +632,19 @@ fn main() {
                 t.end();
             }
         }
+
+        if let Some(mesh_data) = dev_gui.do_props_window(&imgui_ui, &mut static_props) {
+            let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &mesh_data, vk_3D_graphics_pipeline);
+            let s = StaticProp {
+                name: mesh_data.name,
+                model_indices,
+                position: camera.position,
+                ..Default::default()
+            };
+            static_props.insert(s);
+        }
+
+        dev_gui.do_material_list(&imgui_ui, &mut renderer);
 
         //Step the physics engine
         physics_engine.integration_parameters.dt = scaled_delta_time;
@@ -733,7 +734,10 @@ fn main() {
         //Push drawcalls for static props
         for (_, prop) in static_props.iter() {
             for idx in prop.model_indices.iter() {
-                let mm = glm::translation(&prop.position);
+                let mm = glm::translation(&prop.position) *
+                         glm::rotation(prop.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
+                         glm::rotation(prop.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+                         glm::rotation(prop.roll, &glm::vec3(0.0, 1.0, 0.0));
                 renderer.queue_drawcall(*idx, &[mm]);
             }
         }
