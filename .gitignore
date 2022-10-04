@@ -1,7 +1,5 @@
 /target
 /data/shaders
 /data/models
-/redist
-/.vscode
 imgui.ini
 *.log

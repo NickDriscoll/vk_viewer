@@ -37,7 +37,7 @@ use std::time::SystemTime;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
-use vkutil::{ColorSpace, FreeList, GPUBuffer, GPUImage, VulkanAPI};
+use vkutil::{ColorSpace, FreeList, GPUBuffer, GPUImage, VulkanAPI, DeferredImage};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
@@ -344,14 +344,28 @@ fn main() {
 
     let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices.positions, terrain.vertex_width, terrain.vertex_height);
     
-    //Loading terrain textures
-    let grass_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.png");
-    let grass_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.png");
-    let grass_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/ao_roughness_metallic.png");
-    let rock_color_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.png");
-    let rock_normal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.png");
-    let rock_aoroughmetal_global_index = vkutil::load_png_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/ao_roughness_metallic.png");
-    
+    //Loading terrain textures in a deferred way
+    let mut deferred_images = Vec::with_capacity(64);
+    let terrain_image_paths = [
+        "./data/textures/whispy_grass/color.png",
+        "./data/textures/whispy_grass/normal.png",
+        "./data/textures/whispy_grass/ao_roughness_metallic.png",
+        "./data/textures/rocky_ground/color.png",
+        "./data/textures/rocky_ground/normal.png",
+        "./data/textures/rocky_ground/ao_roughness_metallic.png"
+    ];
+    let mut terrain_image_indices = [0; 6];
+    for i in 0..terrain_image_paths.len() {
+        let image = GPUImage::from_png_file_deferred(&mut vk, terrain_image_paths[i]);
+        terrain_image_indices[i] = vkutil::make_global_texture_descriptor(
+            &mut renderer.global_textures,
+            renderer.material_sampler,
+            image.final_image.view
+        );
+        deferred_images.push(image);
+    }
+    let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
+
     //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
     //let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
     //let grass_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/metallic_roughness.dds", ColorSpace::LINEAR);
@@ -364,9 +378,9 @@ fn main() {
             pipeline: terrain_pipeline,
             base_color:  [1.0; 4],
             base_roughness: 1.0,
-            color_idx: grass_color_global_index,
-            normal_idx: grass_normal_global_index,
-            metal_roughness_idx: grass_aoroughmetal_global_index,
+            color_idx: grass_color_index,
+            normal_idx: grass_normal_index,
+            metal_roughness_idx: grass_arm_index,
             emissive_idx: renderer.default_emissive_idx
         }
     ) as u32;
@@ -375,9 +389,9 @@ fn main() {
             pipeline: terrain_pipeline,
             base_color:  [1.0; 4],
             base_roughness: 1.0,
-            color_idx: rock_color_global_index,
-            normal_idx: rock_normal_global_index,
-            metal_roughness_idx: rock_aoroughmetal_global_index,
+            color_idx: rock_color_index,
+            normal_idx: rock_normal_index,
+            metal_roughness_idx: rock_arm_index,
             emissive_idx: renderer.default_emissive_idx
         }
     ) as u32;
@@ -387,7 +401,7 @@ fn main() {
     let terrain_model_idx = {
         let terrain_offsets = upload_vertex_attributes(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
-        let index_buffer = vkutil::make_index_buffer(&mut vk, &terrain_indices);
+        let index_buffer = routines::make_index_buffer(&mut vk, &terrain_indices);
         renderer.register_primitive(Primitive {
             shadow_type: ShadowType::OpaqueCaster,
             index_buffer,
@@ -400,8 +414,8 @@ fn main() {
         })
     };
 
-    let mut totoro_lookat_dist = 7.5;
-    let mut totoro_lookat_pos = totoro_lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
+    let mut lookat_dist = 7.5;
+    let mut lookat_pos = lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
     //let test_scene_data = gltfutil::gltf_scenedata("./data/models/sponza2k.glb");
     //println!("Meshes in file: {}", test_scene_data.meshes.len());
@@ -453,6 +467,9 @@ fn main() {
     let mut dev_gui = DevGui::new(&mut vk, swapchain_pass, pipeline_layout);
 
     let mut input_system = input::InputSystem::init(&sdl_context);
+
+    //Synchronize with deferred asset loading
+    DeferredImage::synchronize(&mut vk, deferred_images);
 
     //Main application loop
     'running: loop {
@@ -691,15 +708,15 @@ fn main() {
         } else {
             let min = 3.0;
             let max = 200.0;
-            totoro_lookat_dist -= 0.1 * totoro_lookat_dist * input_output.scroll_amount;
-            totoro_lookat_dist = f32::clamp(totoro_lookat_dist, min, max);
+            lookat_dist -= 0.1 * lookat_dist * input_output.scroll_amount;
+            lookat_dist = f32::clamp(lookat_dist, min, max);
             
-            let lookat = glm::look_at(&totoro_lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+            let lookat = glm::look_at(&lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
             let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-input_output.orientation_delta.x, input_output.orientation_delta.y, 0.0, 0.0);
 
-            totoro_lookat_pos += totoro_lookat_dist * glm::vec4_to_vec3(&world_space_offset);
-            let camera_pos = glm::normalize(&totoro_lookat_pos);
-            totoro_lookat_pos = totoro_lookat_dist * camera_pos;
+            lookat_pos += lookat_dist * glm::vec4_to_vec3(&world_space_offset);
+            let camera_pos = glm::normalize(&lookat_pos);
+            lookat_pos = lookat_dist * camera_pos;
             
             let min = -0.95;
             let max = 0.95;
@@ -709,21 +726,21 @@ fn main() {
                 let current_angle = f32::acos(lookat_dot);
                 let amount = f32::acos(max) - current_angle;
 
-                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&totoro_lookat_pos);
-                totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
+                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&lookat_pos);
+                lookat_pos = glm::vec4_to_vec3(&new_pos);
             } else if lookat_dot < min {
                 let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
                 let current_angle = f32::acos(lookat_dot);
                 let amount = f32::acos(min) - current_angle;
 
-                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(totoro_lookat_pos));                
-                totoro_lookat_pos = glm::vec4_to_vec3(&new_pos);
+                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(lookat_pos));                
+                lookat_pos = glm::vec4_to_vec3(&new_pos);
             }
 
             let collider = physics_engine.collider_set.get(totoro_list[main_totoro_idx].as_ref().unwrap().collider_handle).unwrap();
             let t = collider.position().translation;
             let lookat_target = t.vector;
-            let pos = totoro_lookat_pos + lookat_target;
+            let pos = lookat_pos + lookat_target;
             let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
             renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
             m
@@ -777,7 +794,6 @@ fn main() {
             //Bindless descriptor setup for Shadow+HDR pass
             let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
             
-
             //Shadow rendering
             if let Some(sun) = &renderer.main_sun {
                 let sun_shadow_map = &sun.shadow_map;

@@ -1,5 +1,6 @@
 Generate terrain with compute shader
-Physically-based blur
+Physically-based bloom
 Scene graph
 Simple environment probe for indirect diffuse/specular light
 Deferred/Batched GPU uploading
+KTX2 texture compression
