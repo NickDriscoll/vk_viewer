@@ -388,6 +388,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glob"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
+
+[[package]]
 name = "gltf"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -576,6 +582,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ispc-texcomp"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f61ae1f145f78787527c92203f1cae4cf03ec6aa9584d6f090710664f17db98"
+dependencies = [
+ "cc",
+ "glob",
+ "ispc_rt",
+ "more-asserts",
+]
+
+[[package]]
+name = "ispc_rt"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a742565b79ad4e9147f37fc929af92f875601bf40e829aac667aa1c9a374213e"
+dependencies = [
+ "libc",
+ "num_cpus",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -724,6 +752,12 @@ checksum = "d2b29bd4bc3f33391105ebee3589c19197c4271e3e5a9ec9bfe8127eeff8f082"
 dependencies = [
  "adler",
 ]
+
+[[package]]
+name = "more-asserts"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fafa6961cabd9c63bcd77a45d7e3b7f3b552b70417831fb0f56db717e72407e"
 
 [[package]]
 name = "nalgebra"
@@ -1462,6 +1496,7 @@ dependencies = [
  "gltf",
  "gpu-allocator",
  "imgui",
+ "ispc-texcomp",
  "nalgebra-glm",
  "noise",
  "ozy_engine",

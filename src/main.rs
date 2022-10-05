@@ -1,9 +1,10 @@
 #![allow(non_snake_case)]
 
 //Alias some library names
+extern crate ispc_texcomp as ispc;
 extern crate nalgebra_glm as glm;
-extern crate tinyfiledialogs as tfd;
 extern crate ozy_engine as ozy;
+extern crate tinyfiledialogs as tfd;
 
 mod gltfutil;
 mod gui;
@@ -19,7 +20,8 @@ mod vkutil;
 use ash::vk;
 use gltfutil::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
-use imgui::{FontAtlasRefMut, TextureId};
+use imgui::{FontAtlasRefMut};
+use ozy::io::{DDSHeader, DDSHeader_DXT10};
 use rapier3d::prelude::*;
 use routines::struct_to_bytes;
 use sdl2::event::Event;
@@ -28,8 +30,9 @@ use sdl2::mixer::Music;
 use slotmap::DenseSlotMap;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::fs::{File};
+use std::fs::{File, OpenOptions};
 use std::ffi::{CStr, c_void};
+use std::io::{Read, Write};
 use std::mem::size_of;
 use std::ptr;
 use std::time::SystemTime;
@@ -365,6 +368,43 @@ fn main() {
         deferred_images.push(image);
     }
     let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
+
+    //Compress grass color texture
+    // {
+    //     let mut file = unwrap_result(File::open("./data/textures/whispy_grass/color.png"), &format!("Error opening png {}", "./data/textures/whispy_grass/color.png"));
+    //     let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
+    //     file.read_exact(&mut png_bytes).unwrap();
+    //     let decoder = png::Decoder::new(png_bytes.as_slice());
+    //     let read_info = decoder.read_info().unwrap();
+    //     let info = read_info.info();
+    //     let width = info.width;
+    //     let height = info.height;
+    //     let bytes = vkutil::decode_png(read_info);
+    //     let surface = ispc::RgbaSurface {
+    //         data: &bytes,
+    //         width,
+    //         height,
+    //         stride: 1
+    //     };
+    //     let mip_levels = (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
+
+    //     let settings = ispc::bc7::opaque_basic_settings();
+    //     let bc7_bytes = ispc::bc7::compress_blocks(&settings, &surface);
+
+    //     let dds_header = DDSHeader {
+    //         height,
+    //         width,
+    //         mipmap_count: mip_levels,
+    //         ..Default::default()
+    //     };
+    //     let dxt10_header = DDSHeader_DXT10 {
+            
+    //     };
+
+    //     let mut out_file = OpenOptions::new().write(true).create(true).open("./data/textures/whispy_grass/color_compressed.bc").unwrap();
+    //     out_file.write(struct_to_bytes(&dds_header)).unwrap();
+    //     out_file.write(&bc7_bytes).unwrap();
+    // }
 
     //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
     //let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);

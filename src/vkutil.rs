@@ -113,7 +113,7 @@ pub fn make_global_texture_descriptor(global_textures: &mut FreeList<vk::Descrip
 
 pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
     unsafe {
-        let vim = GPUImage::from_bc7(vk, path, color_space);
+        let vim = GPUImage::from_bc7_file(vk, path, color_space);
 
         let descriptor_info = vk::DescriptorImageInfo {
             sampler,
@@ -185,7 +185,8 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
     }
 }
 
-fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
+//Returns the uncompressed bytes of a png image
+pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
     use png::BitDepth;
     use png::ColorType;
 
@@ -403,7 +404,7 @@ impl GPUImage {
         }
     }
 
-    pub unsafe fn from_bc7(vk: &mut VulkanAPI, path: &str, color_space: ColorSpace) -> Self {
+    pub unsafe fn from_bc7_file(vk: &mut VulkanAPI, path: &str, color_space: ColorSpace) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
         let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
 
