@@ -382,6 +382,7 @@ fn main() {
         let info = read_info.info();
         let width = info.width;
         let height = info.height;
+        let mip_levels = (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
         let rgb_bitcount = match info.bit_depth {
             BitDepth::One => { 1 }
             BitDepth::Two => { 2 }
@@ -398,14 +399,14 @@ fn main() {
             data: &bytes,
             width,
             height,
-            stride: 1
+            stride: 4 * width
         };
-        let mip_levels = (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
 
         let settings = ispc::bc7::opaque_basic_settings();
         let bc7_bytes = ispc::bc7::compress_blocks(&settings, &surface);
         let dds_pixelformat = DDS_PixelFormat {
             rgb_bitcount,
+            flags: DDS_PixelFormat::DDPF_FOURCC,
             ..Default::default()
         };
 
@@ -419,7 +420,7 @@ fn main() {
             flags: DDSHeader::DDSD_CAPS | DDSHeader::DDSD_WIDTH | DDSHeader::DDSD_HEIGHT | DDSHeader::DDSD_PIXELFORMAT | DDSHeader::DDSD_LINEARSIZE,
             height,
             width,
-            pitch_or_linear_size: compute_pitch_bc(width, 8),
+            pitch_or_linear_size: compute_pitch_bc(width, 16),
             mipmap_count: 1,
             spf: dds_pixelformat,
             dx10_header,
@@ -429,6 +430,7 @@ fn main() {
         let mut out_file = OpenOptions::new().write(true).create(true).open("./data/textures/whispy_grass/color_compressed.bc").unwrap();
         out_file.write(struct_to_bytes(&dds_header)).unwrap();
         out_file.write(&bc7_bytes).unwrap();
+        std::process::exit(0);
     }
 
     //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
