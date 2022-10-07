@@ -403,7 +403,18 @@ impl WindowManager {
                 }
             }
 
-            let present_mode = present_modes[0];
+            let desired_present_mode = vk::PresentModeKHR::FIFO;
+            let mut has_fifo = false;
+            for mode in present_modes {
+                if mode == desired_present_mode {
+                    has_fifo = true;
+                    break;
+                }
+            }
+            if !has_fifo {
+                crash_with_error_dialog("FIFO present mode not supported on your system.");
+            }
+            let present_mode = desired_present_mode;
             //let present_mode = vk::PresentModeKHR::MAILBOX;
 
             vk_swapchain_image_format = surf_format.format;

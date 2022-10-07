@@ -55,7 +55,7 @@ fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
     let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
-    let mut window_size = glm::vec2(1920, 1080);
+    let mut window_size = glm::vec2(1280, 720);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
@@ -427,10 +427,10 @@ fn main() {
             ..Default::default()
         };
 
-        let mut out_file = OpenOptions::new().write(true).create(true).open("./data/textures/whispy_grass/color_compressed.bc").unwrap();
+        let mut out_file = OpenOptions::new().write(true).create(true).open("./data/textures/whispy_grass/color_compressed.dds").unwrap();
         out_file.write(struct_to_bytes(&dds_header)).unwrap();
         out_file.write(&bc7_bytes).unwrap();
-        std::process::exit(0);
+        //std::process::exit(0);
     }
 
     //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
