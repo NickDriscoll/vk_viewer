@@ -91,17 +91,6 @@ pub unsafe fn allocate_named_image_memory(vk: &mut VulkanAPI, image: vk::Image, 
     alloc
 }
 
-pub fn load_png_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str) -> u32 {
-    let vim = GPUImage::from_png_file(vk, path);
-
-    let descriptor_info = vk::DescriptorImageInfo {
-        sampler,
-        image_view: vim.view,
-        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-    };
-    global_textures.insert(descriptor_info) as u32
-}
-
 pub fn make_global_texture_descriptor(global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, image_view: vk::ImageView) -> u32 {
     let descriptor_info = vk::DescriptorImageInfo {
         sampler,
@@ -111,9 +100,9 @@ pub fn make_global_texture_descriptor(global_textures: &mut FreeList<vk::Descrip
     global_textures.insert(descriptor_info) as u32
 }
 
-pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str, color_space: ColorSpace) -> u32 {
+pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str) -> u32 {
     unsafe {
-        let vim = GPUImage::from_bc7_file(vk, path, color_space);
+        let vim = GPUImage::from_bc7_file(vk, path);
 
         let descriptor_info = vk::DescriptorImageInfo {
             sampler,
@@ -126,7 +115,7 @@ pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::D
     }
 }
 
-pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format: vk::Format, width: u32, height: u32, rgba: &[u8]) -> vk::DescriptorImageInfo {
+pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format: vk::Format, layout: vk::ImageLayout, width: u32, height: u32, rgba: &[u8]) -> vk::DescriptorImageInfo {
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
         format,
@@ -156,6 +145,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         height,
         mip_count: 1,
         format,
+        layout,
         allocation
     };
     upload_image(vk, &vim, &rgba);
@@ -185,7 +175,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
     }
 }
 
-//Returns the uncompressed bytes of a png image
+//Returns the uncompressed bytes of a png image to RGBA
 pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
     use png::BitDepth;
     use png::ColorType;
@@ -229,11 +219,6 @@ pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
     }
 }
 
-pub enum ColorSpace {
-    LINEAR,
-    SRGB
-}
-
 pub struct GPUImage {
     pub image: vk::Image,
     pub view: vk::ImageView,
@@ -241,6 +226,7 @@ pub struct GPUImage {
     pub height: u32,
     pub mip_count: u32,
     pub format: vk::Format,
+    pub layout: vk::ImageLayout,
     pub allocation: Allocation
 }
 
@@ -292,7 +278,7 @@ impl GPUImage {
                 ..Default::default()
             };
             
-            let mut def_image = upload_image_deferred(vk, &image_create_info, &bytes);
+            let mut def_image = upload_image_deferred(vk, &image_create_info, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
 
             let view_info = vk::ImageViewCreateInfo {
                 image: def_image.final_image.image,
@@ -381,6 +367,7 @@ impl GPUImage {
                 height,
                 mip_count: mip_levels,
                 format,
+                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 allocation
             };
             routines::record_image_upload_commands(vk, vk.command_buffers[cbidx], &vim, &staging_buffer);
@@ -404,7 +391,9 @@ impl GPUImage {
         }
     }
 
-    pub unsafe fn from_bc7_file(vk: &mut VulkanAPI, path: &str, color_space: ColorSpace) -> Self {
+    pub unsafe fn from_bc7_file(vk: &mut VulkanAPI, path: &str) -> Self {
+        use ozy::io::DXGI_FORMAT;
+
         let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
         let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
 
@@ -424,13 +413,10 @@ impl GPUImage {
         let mut raw_bytes = vec![0u8; bytes_size as usize];
         file.read_exact(&mut raw_bytes).unwrap();
         
-        let format = match color_space {
-            ColorSpace::LINEAR => {
-                vk::Format::BC7_UNORM_BLOCK
-            }
-            ColorSpace::SRGB => {
-                vk::Format::BC7_SRGB_BLOCK
-            }
+        let format = match dds_header.dx10_header.dxgi_format {
+            DXGI_FORMAT::BC7_UNORM => { vk::Format::BC7_UNORM_BLOCK }
+            DXGI_FORMAT::BC7_UNORM_SRGB => { vk::Format::BC7_SRGB_BLOCK }
+            _ => { crash_with_error_dialog("Unreachable statement reached in GPUImage::from_bc7_file()"); }
         };
 
         let image_extent = vk::Extent3D {
@@ -463,6 +449,7 @@ impl GPUImage {
             height,
             mip_count: mipmap_count,
             format,
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             allocation
         };
         upload_image(vk, &vim, &raw_bytes);
@@ -522,27 +509,43 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, o
     staging_buffer.free(vk);
 }
 
+//All of the data in a DeferredReadback is valid when it's created, but the GPU-side
+//data may only be considered valid after the associated fence has been signaled
+//staging_buffer can only be freed after fence has been signaled
+pub struct DeferredReadback {
+    pub fence: vk::Fence,
+    pub staging_buffer: GPUBuffer,
+    pub command_buffer_idx: usize,
+}
+
 //All of the data in a DeferredImage is valid when it's created, but the GPU-side
 //data may only be considered valid after the associated fence has been signaled
 //staging_buffer can only be freed after fence has been signaled
 pub struct DeferredImage {
     pub fence: vk::Fence,
-    pub staging_buffer: GPUBuffer,
+    pub staging_buffer: Option<GPUBuffer>,
     pub command_buffer_idx: usize,
     pub final_image: GPUImage
 }
 
 impl DeferredImage {
-    pub fn synchronize(vk: &mut VulkanAPI, images: Vec<Self>) {
+    pub fn synchronize(vk: &mut VulkanAPI, images: Vec<Self>) -> Vec<Self> {
         unsafe {
             let mut fences = Vec::with_capacity(images.len());
             for image in images.iter() {
                 fences.push(image.fence);
             }
             vk.device.wait_for_fences(&fences, true, vk::DeviceSize::MAX).unwrap();
-            for image in images {
-                image.staging_buffer.free(vk);
+            let mut new_images = Vec::with_capacity(images.len());
+            for mut image in images {
+                if let Some(buffer) = image.staging_buffer {
+                    buffer.free(vk);
+                }
+                image.staging_buffer = None;
+                vk.command_buffer_indices.remove(image.command_buffer_idx);
+                new_images.push(image);
             }
+            new_images
         }
     }
 }

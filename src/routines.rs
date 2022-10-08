@@ -172,7 +172,7 @@ pub fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Option<PhysicsP
     }
 }
 
-pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::ImageCreateInfo, raw_bytes: &[u8]) -> DeferredImage {
+pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::ImageCreateInfo, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
@@ -181,13 +181,29 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::
     //Create image
     let image = vk.device.create_image(image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
     let allocation = vkutil::allocate_image_memory(vk, image);
+    let view_info = vk::ImageViewCreateInfo {
+        image,
+        format: image_create_info.format,
+        view_type: vk::ImageViewType::TYPE_2D,
+        components: vkutil::COMPONENT_MAPPING_DEFAULT,
+        subresource_range: vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: image_create_info.mip_levels,
+            base_array_layer: 0,
+            layer_count: 1
+        },
+        ..Default::default()
+    };
+    let image_view = vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
     let vim = GPUImage {
         image,
-        view: vk::ImageView::default(),
+        view: image_view,
         width: image_create_info.extent.width,
         height: image_create_info.extent.height,
         mip_count: image_create_info.mip_levels,
         format: image_create_info.format,
+        layout,
         allocation
     };
 
@@ -209,7 +225,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::
 
     DeferredImage {
         fence,
-        staging_buffer,
+        staging_buffer: Some(staging_buffer),
         command_buffer_idx,
         final_image: vim
     }

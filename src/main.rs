@@ -17,7 +17,7 @@ mod structs;
 #[macro_use]
 mod vkutil;
 
-use ash::vk;
+use ash::vk::{self, BufferImageCopy};
 use gltfutil::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
 use imgui::{FontAtlasRefMut};
@@ -40,7 +40,7 @@ use std::time::SystemTime;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
-use vkutil::{ColorSpace, FreeList, GPUBuffer, GPUImage, VulkanAPI, DeferredImage};
+use vkutil::{FreeList, GPUBuffer, GPUImage, VulkanAPI, DeferredImage};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
@@ -222,7 +222,8 @@ fn main() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let atlas_texture = atlas.build_alpha8_texture();
             let atlas_format = vk::Format::R8_UNORM;
-            let descriptor_info = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_texture.width, atlas_texture.height, atlas_texture.data);
+            let atlas_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+            let descriptor_info = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
             let index = renderer.global_textures.insert(descriptor_info);
             renderer.default_texture_idx = index as u32;
             
@@ -370,8 +371,7 @@ fn main() {
     let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
 
     //Compress grass color texture
-    {
-        use png::BitDepth;
+    unsafe {
         use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
 
         let mut file = unwrap_result(File::open("./data/textures/whispy_grass/color.png"), &format!("Error opening png {}", "./data/textures/whispy_grass/color.png"));
@@ -382,19 +382,81 @@ fn main() {
         let info = read_info.info();
         let width = info.width;
         let height = info.height;
-        let mip_levels = (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
-        let rgb_bitcount = match info.bit_depth {
-            BitDepth::One => { 1 }
-            BitDepth::Two => { 2 }
-            BitDepth::Four => { 4 }
-            BitDepth::Eight => { 8 }
-            BitDepth::Sixteen => { 16 }
-        };
+        let rgb_bitcount = info.bit_depth as u32;
         let dxgi_format = match info.srgb {
             Some(_) => { DXGI_FORMAT::BC7_UNORM_SRGB }
             None => { DXGI_FORMAT::BC7_UNORM }
         };
+        let uncompressed_format = match info.srgb {
+            Some(_) => { vk::Format::R8G8B8A8_SRGB }
+            None => { vk::Format::R8G8B8A8_UNORM }
+        };
         let bytes = vkutil::decode_png(read_info);
+
+        //After decoding, upload to GPU for mipmap creation
+        let mip_levels = (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
+        let image_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::TYPE_2D,
+            format: uncompressed_format,
+            extent: vk::Extent3D {
+                width,
+                height,
+                depth: 1
+            },
+            mip_levels,
+            array_layers: 1,
+            samples: vk::SampleCountFlags::TYPE_1,
+            tiling: vk::ImageTiling::OPTIMAL,
+            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            queue_family_index_count: 1,
+            p_queue_family_indices: &vk.queue_family_index,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            ..Default::default()
+        };
+        
+        let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+        let def_image = upload_image_deferred(&mut vk, &image_create_info, gpu_image_layout, &bytes);
+        let def_image = &DeferredImage::synchronize(&mut vk, vec![def_image])[0];
+
+        //Get the GPU image back into system RAM
+        let finished_image_reqs = vk.device.get_image_memory_requirements(def_image.final_image.image);
+        let readback_buffer = GPUBuffer::allocate(&mut vk, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::CpuToGpu);
+        let cb_idx = vk.command_buffer_indices.insert(0);
+        let command_buffer = vk.command_buffers[cb_idx];
+        vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+
+        let mut regions = Vec::with_capacity(mip_levels as usize);
+        let mut current_offset = 0;
+        for i in 0..mip_levels {
+            let w = def_image.final_image.width / (1 << i);
+            let h = def_image.final_image.height / (1 << i);
+            let image_subresource = vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: i as u32,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let copy = vk::BufferImageCopy {
+                buffer_offset: current_offset,
+                buffer_row_length: 0,
+                buffer_image_height: 0,
+                image_extent: vk::Extent3D {
+                    width: w,
+                    height: h,
+                    depth: 1
+                },
+                image_subresource,
+                image_offset: vk::Offset3D::default()
+            };
+            regions.push(copy);
+            current_offset += (w * h) as u64;
+        }
+        vk.device.cmd_copy_image_to_buffer(command_buffer, def_image.final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
+
+        vk.device.end_command_buffer(command_buffer).unwrap();
+        vk.command_buffer_indices.remove(cb_idx);
+
         let surface = ispc::RgbaSurface {
             data: &bytes,
             width,
@@ -430,7 +492,6 @@ fn main() {
         let mut out_file = OpenOptions::new().write(true).create(true).open("./data/textures/whispy_grass/color_compressed.dds").unwrap();
         out_file.write(struct_to_bytes(&dds_header)).unwrap();
         out_file.write(&bc7_bytes).unwrap();
-        //std::process::exit(0);
     }
 
     //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
