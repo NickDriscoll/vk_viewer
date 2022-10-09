@@ -314,7 +314,7 @@ impl GPUImage {
         //Create staging buffer and upload raw image data
         let bytes_size = bytes.len() as vk::DeviceSize;
         let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-        staging_buffer.upload_buffer(vk, &bytes);
+        staging_buffer.write_buffer(vk, &bytes);
 
         unsafe {
             let mip_levels = (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
@@ -370,7 +370,7 @@ impl GPUImage {
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 allocation
             };
-            routines::record_image_upload_commands(vk, vk.command_buffers[cbidx], &vim, &staging_buffer);
+            routines::record_image_upload_commands(vk, vk.command_buffers[cbidx], &vim, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &staging_buffer);
 
             vk.device.end_command_buffer(vk.command_buffers[cbidx]).unwrap();
     
@@ -480,7 +480,7 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, o
     //Create staging buffer and upload raw buffer data
     let bytes_size = (raw_data.len() * size_of::<T>()) as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-    staging_buffer.upload_buffer(vk, &raw_data);
+    staging_buffer.write_buffer(vk, &raw_data);
 
     //Wait on the fence before beginning command recording
     vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
@@ -805,17 +805,28 @@ impl GPUBuffer {
         unsafe { vk.device.destroy_buffer(self.buffer, MEMORY_ALLOCATOR); }
     }
 
-    pub fn upload_buffer<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T]) {
-        self.upload_subbuffer_elements(vk, in_buffer, 0);
+    pub fn read_buffer_bytes(&self) -> Vec<u8> {
+        match self.allocation.mapped_slice() {
+            Some(s) => {
+                s.to_vec()
+            }
+            None => {
+                crash_with_error_dialog("Crashing for lazy reason in GPUBuffer::read_buffer_bytes()");
+            }
+        }
     }
 
-    pub fn upload_subbuffer_elements<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T], offset: u64) {
+    pub fn write_buffer<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T]) {
+        self.write_subbuffer_elements(vk, in_buffer, 0);
+    }
+
+    pub fn write_subbuffer_elements<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T], offset: u64) {
         let byte_buffer = slice_to_bytes(in_buffer);
         let byte_offset = offset * size_of::<T>() as u64;
-        self.upload_subbuffer_bytes(vk, byte_buffer, byte_offset as u64);
+        self.write_subbuffer_bytes(vk, byte_buffer, byte_offset as u64);
     }
 
-    pub fn upload_subbuffer_bytes(&self, vk: &mut VulkanAPI, in_buffer: &[u8], offset: u64) {
+    pub fn write_subbuffer_bytes(&self, vk: &mut VulkanAPI, in_buffer: &[u8], offset: u64) {
         let end_in_bytes = in_buffer.len() + offset as usize;
         if end_in_bytes as u64 > self.length {
             crash_with_error_dialog("OVERRAN BUFFER AAAAA");

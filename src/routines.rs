@@ -176,7 +176,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-    staging_buffer.upload_buffer(vk, &raw_bytes);
+    staging_buffer.write_buffer(vk, &raw_bytes);
 
     //Create image
     let image = vk.device.create_image(image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
@@ -212,7 +212,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::
 
     let command_buffer = vk.command_buffers[command_buffer_idx];
     vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-    record_image_upload_commands(vk, command_buffer, &vim, &staging_buffer);
+    record_image_upload_commands(vk, command_buffer, &vim, layout, &staging_buffer);
     vk.device.end_command_buffer(command_buffer).unwrap();
     
     let submit_info = vk::SubmitInfo {
@@ -232,7 +232,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::
 }
 
 //staging_buffer already has the image bytes uploaded to it
-pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, gpu_image: &GPUImage, staging_buffer: &GPUBuffer) {
+pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, gpu_image: &GPUImage, layout: vk::ImageLayout, staging_buffer: &GPUBuffer) {
     let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
@@ -401,7 +401,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: v
         src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
         dst_access_mask: vk::AccessFlags::SHADER_READ,
         old_layout: vk::ImageLayout::UNDEFINED,
-        new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        new_layout: layout,
         image: gpu_image.image,
         subresource_range,
         ..Default::default()
@@ -414,7 +414,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-    staging_buffer.upload_buffer(vk, &raw_bytes);
+    staging_buffer.write_buffer(vk, &raw_bytes);
 
     //Wait on the fence before beginning command recording
     vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
@@ -510,6 +510,6 @@ pub fn make_index_buffer(vk: &mut VulkanAPI, indices: &[u32]) -> GPUBuffer {
         vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
         MemoryLocation::GpuOnly
     );
-    index_buffer.upload_buffer(vk, indices);
+    index_buffer.write_buffer(vk, indices);
     index_buffer
 }

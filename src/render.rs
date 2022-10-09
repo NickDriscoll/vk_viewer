@@ -1168,7 +1168,7 @@ impl Renderer {
     fn upload_vertex_attribute(vk: &mut VulkanAPI, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
         let old_offset = *offset;
         let new_offset = old_offset + data.len() as u64;
-        buffer.upload_subbuffer_elements(vk, data, old_offset);
+        buffer.write_subbuffer_elements(vk, data, old_offset);
         *offset = new_offset;
         old_offset.try_into().unwrap()
     }
@@ -1256,7 +1256,7 @@ impl Renderer {
                 }
             }
 
-            self.material_buffer.upload_buffer(vk, &upload_mats);
+            self.material_buffer.write_buffer(vk, &upload_mats);
         }
         
         //Update uniform/storage buffers
@@ -1314,7 +1314,7 @@ impl Renderer {
             let dynamic_offset = (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64;
             
             let uniform_bytes = struct_to_bytes(&self.uniform_data);
-            self.uniform_buffer.upload_subbuffer_elements(vk, uniform_bytes, dynamic_offset);
+            self.uniform_buffer.write_subbuffer_elements(vk, uniform_bytes, dynamic_offset);
         };
 
         //Update instance data storage buffer
@@ -1330,7 +1330,7 @@ impl Renderer {
             let start_offset = size_to_alignment!(start_offset, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
 
             self.frames_in_flight[self.in_flight_frame].instance_data_start_offset = start_offset;
-            self.instance_buffer.upload_subbuffer_bytes(vk, instance_data_bytes, start_offset);
+            self.instance_buffer.write_subbuffer_bytes(vk, instance_data_bytes, start_offset);
         }
 
         frame_info

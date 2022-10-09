@@ -455,23 +455,56 @@ fn main() {
         vk.device.cmd_copy_image_to_buffer(command_buffer, def_image.final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
 
         vk.device.end_command_buffer(command_buffer).unwrap();
+
+        let submit_info = vk::SubmitInfo {
+            command_buffer_count: 1,
+            p_command_buffers: &command_buffer,
+            ..Default::default()
+        };
+        let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+        let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+        vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
+        vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX);
         vk.command_buffer_indices.remove(cb_idx);
 
-        let surface = ispc::RgbaSurface {
-            data: &bytes,
-            width,
-            height,
-            stride: 4 * width
-        };
+        let uncompressed_bytes = readback_buffer.read_buffer_bytes();
+        let mut bc7_bytes = vec![0u8; uncompressed_bytes.len() / 4];  //BC7 images are one byte per pixel
+        let mut current_offset = 0;
+        let mut last_offset = 0;
+        for i in 0..mip_levels {
+            let w = (def_image.final_image.width / (1 << i)) as usize;
+            let h = (def_image.final_image.height / (1 << i)) as usize;
+            let data = &uncompressed_bytes[current_offset..(current_offset + w * h) * 4];
+            let surface = ispc::RgbaSurface {
+                data,
+                width: w as u32,
+                height: h as u32,
+                stride: 4 * w as u32
+            };
+            let settings = ispc::bc7::opaque_slow_settings();
+            //ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[(current_offset/4) as usize..((current_offset + w * h) / 4) as usize]);
+            let comp_bytes = ispc::bc7::compress_blocks(&settings, &surface);
+            println!("unbytes: {}\ncomp_bytes: {}\n factor: {}", data.len(), comp_bytes.len(), data.len() / comp_bytes.len());
 
-        let settings = ispc::bc7::opaque_basic_settings();
-        let bc7_bytes = ispc::bc7::compress_blocks(&settings, &surface);
+            last_offset = current_offset;
+            current_offset += (w * h) * 4;
+        }
+
+        // let surface = ispc::RgbaSurface {
+        //     data: &bytes,
+        //     width,
+        //     height,
+        //     stride: 4 * width
+        // };
+
+        // let settings = ispc::bc7::opaque_basic_settings();
+        // let bc7_bytes = ispc::bc7::compress_blocks(&settings, &surface);
+
         let dds_pixelformat = DDS_PixelFormat {
             rgb_bitcount,
             flags: DDS_PixelFormat::DDPF_FOURCC,
             ..Default::default()
         };
-
         let dx10_header = DDSHeader_DXT10 {
             dxgi_format,
             resource_dimension: D3D10_RESOURCE_DIMENSION::TEXTURE2D,
