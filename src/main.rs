@@ -450,7 +450,7 @@ fn main() {
                 image_offset: vk::Offset3D::default()
             };
             regions.push(copy);
-            current_offset += (w * h) as u64;
+            current_offset += (w * h * 4) as u64;
         }
         vk.device.cmd_copy_image_to_buffer(command_buffer, def_image.final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
 
@@ -470,11 +470,10 @@ fn main() {
         let uncompressed_bytes = readback_buffer.read_buffer_bytes();
         let mut bc7_bytes = vec![0u8; uncompressed_bytes.len() / 4];  //BC7 images are one byte per pixel
         let mut current_offset = 0;
-        let mut last_offset = 0;
         for i in 0..mip_levels {
             let w = (def_image.final_image.width / (1 << i)) as usize;
             let h = (def_image.final_image.height / (1 << i)) as usize;
-            let data = &uncompressed_bytes[current_offset..(current_offset + w * h) * 4];
+            let data = &uncompressed_bytes[current_offset..(current_offset + w * h * 4)];
             let surface = ispc::RgbaSurface {
                 data,
                 width: w as u32,
@@ -482,23 +481,12 @@ fn main() {
                 stride: 4 * w as u32
             };
             let settings = ispc::bc7::opaque_slow_settings();
-            //ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[(current_offset/4) as usize..((current_offset + w * h) / 4) as usize]);
-            let comp_bytes = ispc::bc7::compress_blocks(&settings, &surface);
-            println!("unbytes: {}\ncomp_bytes: {}\n factor: {}", data.len(), comp_bytes.len(), data.len() / comp_bytes.len());
+            ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[(current_offset/4) as usize..]);
+            //let comp_bytes = ispc::bc7::compress_blocks(&settings, &surface);
+            //println!("unbytes: {}\ncomp_bytes: {}\n factor: {}", data.len(), comp_bytes.len(), data.len() / comp_bytes.len());
 
-            last_offset = current_offset;
-            current_offset += (w * h) * 4;
+            current_offset += w * h * 4;
         }
-
-        // let surface = ispc::RgbaSurface {
-        //     data: &bytes,
-        //     width,
-        //     height,
-        //     stride: 4 * width
-        // };
-
-        // let settings = ispc::bc7::opaque_basic_settings();
-        // let bc7_bytes = ispc::bc7::compress_blocks(&settings, &surface);
 
         let dds_pixelformat = DDS_PixelFormat {
             rgb_bitcount,
