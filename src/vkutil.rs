@@ -257,7 +257,7 @@ impl GPUImage {
         let bytes = decode_png(read_info);
 
         unsafe {
-            let mip_levels =  (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
+            let mip_levels =  calculate_miplevels(width, height);
             let image_create_info = vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,
                 format,
@@ -317,7 +317,7 @@ impl GPUImage {
         staging_buffer.write_buffer(vk, &bytes);
 
         unsafe {
-            let mip_levels = (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32;
+            let mip_levels = calculate_miplevels(width, height);
 
             let image_create_info = vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,
