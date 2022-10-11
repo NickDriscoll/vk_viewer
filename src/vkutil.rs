@@ -805,13 +805,14 @@ impl GPUBuffer {
         unsafe { vk.device.destroy_buffer(self.buffer, MEMORY_ALLOCATOR); }
     }
 
+    #[named]
     pub fn read_buffer_bytes(&self) -> Vec<u8> {
         match self.allocation.mapped_slice() {
             Some(s) => {
                 s.to_vec()
             }
             None => {
-                crash_with_error_dialog("Crashing for lazy reason in GPUBuffer::read_buffer_bytes()");
+                crash_with_error_dialog(&format!("{} is currently only implemented for host-mapped buffers", function_name!()));
             }
         }
     }

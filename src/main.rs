@@ -17,6 +17,7 @@ mod structs;
 #[macro_use]
 mod vkutil;
 
+use ::function_name::named;
 use ash::vk::{self, BufferImageCopy};
 use gltfutil::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
@@ -34,6 +35,7 @@ use std::fs::{File, OpenOptions};
 use std::ffi::{CStr, c_void};
 use std::io::{Read, Write};
 use std::mem::size_of;
+use std::path::Path;
 use std::ptr;
 use std::time::SystemTime;
 
@@ -49,150 +51,6 @@ use crate::routines::*;
 use crate::gltfutil::GLTFMeshData;
 use crate::gui::DevGui;
 use crate::structs::StaticProp;
-
-fn compress_png(vk: &mut VulkanAPI, path: &str) {
-    unsafe {
-        use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
-
-        let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
-        let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
-        file.read_exact(&mut png_bytes).unwrap();
-        let decoder = png::Decoder::new(png_bytes.as_slice());
-        let read_info = decoder.read_info().unwrap();
-        let info = read_info.info();
-        let width = info.width;
-        let height = info.height;
-        let rgb_bitcount = info.bit_depth as u32;
-        let dxgi_format = match info.srgb {
-            Some(_) => { DXGI_FORMAT::BC7_UNORM_SRGB }
-            None => { DXGI_FORMAT::BC7_UNORM }
-        };
-        let uncompressed_format = match info.srgb {
-            Some(_) => { vk::Format::R8G8B8A8_SRGB }
-            None => { vk::Format::R8G8B8A8_UNORM }
-        };
-        let bytes = vkutil::decode_png(read_info);
-
-        //After decoding, upload to GPU for mipmap creation
-        let mip_levels = calculate_miplevels(width, height);
-        let image_create_info = vk::ImageCreateInfo {
-            image_type: vk::ImageType::TYPE_2D,
-            format: uncompressed_format,
-            extent: vk::Extent3D {
-                width,
-                height,
-                depth: 1
-            },
-            mip_levels,
-            array_layers: 1,
-            samples: vk::SampleCountFlags::TYPE_1,
-            tiling: vk::ImageTiling::OPTIMAL,
-            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            queue_family_index_count: 1,
-            p_queue_family_indices: &vk.queue_family_index,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            ..Default::default()
-        };
-        
-        let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        let def_image = upload_image_deferred(vk, &image_create_info, gpu_image_layout, &bytes);
-        let def_image = &DeferredImage::synchronize(vk, vec![def_image])[0];
-
-        //Get the GPU image back into system RAM
-        let finished_image_reqs = vk.device.get_image_memory_requirements(def_image.final_image.image);
-        let readback_buffer = GPUBuffer::allocate(vk, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::CpuToGpu);
-        let cb_idx = vk.command_buffer_indices.insert(0);
-        let command_buffer = vk.command_buffers[cb_idx];
-        vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-
-        let mut regions = Vec::with_capacity(mip_levels as usize);
-        let mut current_offset = 0;
-        for i in 0..mip_levels {
-            let w = def_image.final_image.width / (1 << i);
-            let h = def_image.final_image.height / (1 << i);
-            let image_subresource = vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: i as u32,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let copy = vk::BufferImageCopy {
-                buffer_offset: current_offset,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_extent: vk::Extent3D {
-                    width: w,
-                    height: h,
-                    depth: 1
-                },
-                image_subresource,
-                image_offset: vk::Offset3D::default()
-            };
-            regions.push(copy);
-            current_offset += (w * h * 4) as u64;
-        }
-        vk.device.cmd_copy_image_to_buffer(command_buffer, def_image.final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
-
-        vk.device.end_command_buffer(command_buffer).unwrap();
-
-        let submit_info = vk::SubmitInfo {
-            command_buffer_count: 1,
-            p_command_buffers: &command_buffer,
-            ..Default::default()
-        };
-        let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-        let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
-        vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
-        vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-        vk.command_buffer_indices.remove(cb_idx);
-
-        let uncompressed_bytes = readback_buffer.read_buffer_bytes();
-        let mut bc7_bytes = vec![0u8; uncompressed_bytes.len() / 4];  //BC7 images are one byte per pixel
-        let mut current_offset = 0;
-        for i in 0..mip_levels {
-            let w = (def_image.final_image.width / (1 << i)) as usize;
-            let h = (def_image.final_image.height / (1 << i)) as usize;
-            let data = &uncompressed_bytes[current_offset..(current_offset + w * h * 4)];
-            let surface = ispc::RgbaSurface {
-                data,
-                width: w as u32,
-                height: h as u32,
-                stride: 4 * w as u32
-            };
-            let settings = ispc::bc7::opaque_slow_settings();
-            ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[(current_offset/4)..current_offset + w * h]);
-
-            current_offset += w * h * 4;
-        }
-
-        let dds_pixelformat = DDS_PixelFormat {
-            rgb_bitcount,
-            flags: DDS_PixelFormat::DDPF_FOURCC,
-            ..Default::default()
-        };
-        let dx10_header = DDSHeader_DXT10 {
-            dxgi_format,
-            resource_dimension: D3D10_RESOURCE_DIMENSION::TEXTURE2D,
-            array_size: 1,
-            ..Default::default()
-        };
-        let dds_header = DDSHeader {
-            flags: DDSHeader::DDSD_CAPS | DDSHeader::DDSD_WIDTH | DDSHeader::DDSD_HEIGHT | DDSHeader::DDSD_PIXELFORMAT | DDSHeader::DDSD_LINEARSIZE,
-            height,
-            width,
-            pitch_or_linear_size: compute_pitch_bc(width, 16),
-            mipmap_count: mip_levels,
-            spf: dds_pixelformat,
-            dx10_header,
-            ..Default::default()
-        };
-
-        let mut out_file = OpenOptions::new().write(true).create(true).open("./data/textures/whispy_grass/color_compressed.dds").unwrap();
-        out_file.write(struct_to_bytes(&dds_header)).unwrap();
-        out_file.write(&bc7_bytes).unwrap();
-    }
-}
 
 //Entry point
 fn main() {
@@ -493,7 +351,6 @@ fn main() {
     let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices.positions, terrain.vertex_width, terrain.vertex_height);
     
     //Loading terrain textures in a deferred way
-    let mut deferred_images = Vec::with_capacity(64);
     let terrain_image_paths = [
         "./data/textures/whispy_grass/color.png",
         "./data/textures/whispy_grass/normal.png",
@@ -504,169 +361,23 @@ fn main() {
     ];
     let mut terrain_image_indices = [0; 6];
     for i in 0..terrain_image_paths.len() {
-        let image = GPUImage::from_png_file_deferred(&mut vk, terrain_image_paths[i]);
-        terrain_image_indices[i] = vkutil::make_global_texture_descriptor(
-            &mut renderer.global_textures,
-            renderer.material_sampler,
-            image.final_image.view
-        );
-        deferred_images.push(image);
+        let path = terrain_image_paths[i];
+        let pathp = Path::new(path);
+
+        //let image = GPUImage::from_png_file(&mut vk, path);
+        //terrain_image_indices[i] = vkutil::make_global_texture_descriptor(
+        //    &mut renderer.global_textures,
+        //    renderer.material_sampler,
+        //    image.view
+        //);
+
+        if !pathp.with_extension("dds").is_file() {
+            compress_png_synchronous(&mut vk, path);
+        }
+        terrain_image_indices[i] = vkutil::load_bc7_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap());
     }
     let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
 
-    //Compress grass color texture
-    unsafe {
-        use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
-
-        let mut file = unwrap_result(File::open("./data/textures/whispy_grass/color.png"), &format!("Error opening png {}", "./data/textures/whispy_grass/color.png"));
-        let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
-        file.read_exact(&mut png_bytes).unwrap();
-        let decoder = png::Decoder::new(png_bytes.as_slice());
-        let read_info = decoder.read_info().unwrap();
-        let info = read_info.info();
-        let width = info.width;
-        let height = info.height;
-        let rgb_bitcount = info.bit_depth as u32;
-        let dxgi_format = match info.srgb {
-            Some(_) => { DXGI_FORMAT::BC7_UNORM_SRGB }
-            None => { DXGI_FORMAT::BC7_UNORM }
-        };
-        let uncompressed_format = match info.srgb {
-            Some(_) => { vk::Format::R8G8B8A8_SRGB }
-            None => { vk::Format::R8G8B8A8_UNORM }
-        };
-        let bytes = vkutil::decode_png(read_info);
-
-        //After decoding, upload to GPU for mipmap creation
-        let mip_levels = calculate_miplevels(width, height);
-        let image_create_info = vk::ImageCreateInfo {
-            image_type: vk::ImageType::TYPE_2D,
-            format: uncompressed_format,
-            extent: vk::Extent3D {
-                width,
-                height,
-                depth: 1
-            },
-            mip_levels,
-            array_layers: 1,
-            samples: vk::SampleCountFlags::TYPE_1,
-            tiling: vk::ImageTiling::OPTIMAL,
-            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            queue_family_index_count: 1,
-            p_queue_family_indices: &vk.queue_family_index,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            ..Default::default()
-        };
-        
-        let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        let def_image = upload_image_deferred(&mut vk, &image_create_info, gpu_image_layout, &bytes);
-        let def_image = &DeferredImage::synchronize(&mut vk, vec![def_image])[0];
-
-        //Get the GPU image back into system RAM
-        let finished_image_reqs = vk.device.get_image_memory_requirements(def_image.final_image.image);
-        let readback_buffer = GPUBuffer::allocate(&mut vk, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::CpuToGpu);
-        let cb_idx = vk.command_buffer_indices.insert(0);
-        let command_buffer = vk.command_buffers[cb_idx];
-        vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-
-        let mut regions = Vec::with_capacity(mip_levels as usize);
-        let mut current_offset = 0;
-        for i in 0..mip_levels {
-            let w = def_image.final_image.width / (1 << i);
-            let h = def_image.final_image.height / (1 << i);
-            let image_subresource = vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: i as u32,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let copy = vk::BufferImageCopy {
-                buffer_offset: current_offset,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_extent: vk::Extent3D {
-                    width: w,
-                    height: h,
-                    depth: 1
-                },
-                image_subresource,
-                image_offset: vk::Offset3D::default()
-            };
-            regions.push(copy);
-            current_offset += (w * h * 4) as u64;
-        }
-        vk.device.cmd_copy_image_to_buffer(command_buffer, def_image.final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
-
-        vk.device.end_command_buffer(command_buffer).unwrap();
-
-        let submit_info = vk::SubmitInfo {
-            command_buffer_count: 1,
-            p_command_buffers: &command_buffer,
-            ..Default::default()
-        };
-        let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-        let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
-        vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
-        vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-        vk.command_buffer_indices.remove(cb_idx);
-
-        let uncompressed_bytes = readback_buffer.read_buffer_bytes();
-        let mut bc7_bytes = vec![0u8; uncompressed_bytes.len() / 4];  //BC7 images are one byte per pixel
-        let mut current_offset = 0;
-        for i in 0..mip_levels {
-            let w = (def_image.final_image.width / (1 << i)) as usize;
-            let h = (def_image.final_image.height / (1 << i)) as usize;
-            let data = &uncompressed_bytes[current_offset..(current_offset + w * h * 4)];
-            let surface = ispc::RgbaSurface {
-                data,
-                width: w as u32,
-                height: h as u32,
-                stride: 4 * w as u32
-            };
-            let settings = ispc::bc7::opaque_slow_settings();
-            ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[(current_offset/4) as usize..]);
-            //let comp_bytes = ispc::bc7::compress_blocks(&settings, &surface);
-            //println!("unbytes: {}\ncomp_bytes: {}\n factor: {}", data.len(), comp_bytes.len(), data.len() / comp_bytes.len());
-
-            current_offset += w * h * 4;
-        }
-
-        let dds_pixelformat = DDS_PixelFormat {
-            rgb_bitcount,
-            flags: DDS_PixelFormat::DDPF_FOURCC,
-            ..Default::default()
-        };
-        let dx10_header = DDSHeader_DXT10 {
-            dxgi_format,
-            resource_dimension: D3D10_RESOURCE_DIMENSION::TEXTURE2D,
-            array_size: 1,
-            ..Default::default()
-        };
-        let dds_header = DDSHeader {
-            flags: DDSHeader::DDSD_CAPS | DDSHeader::DDSD_WIDTH | DDSHeader::DDSD_HEIGHT | DDSHeader::DDSD_PIXELFORMAT | DDSHeader::DDSD_LINEARSIZE,
-            height,
-            width,
-            pitch_or_linear_size: compute_pitch_bc(width, 16),
-            mipmap_count: mip_levels,
-            spf: dds_pixelformat,
-            dx10_header,
-            ..Default::default()
-        };
-
-        let mut out_file = OpenOptions::new().write(true).create(true).open("./data/textures/whispy_grass/color_compressed.dds").unwrap();
-        out_file.write(struct_to_bytes(&dds_header)).unwrap();
-        out_file.write(&bc7_bytes).unwrap();
-    }
-
-    let grass_color_index = vkutil::load_bc7_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color_compressed.dds");
-    //let grass_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/color.dds", ColorSpace::SRGB);
-    //let grass_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/normal.dds", ColorSpace::LINEAR);
-    //let grass_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/whispy_grass/metallic_roughness.dds", ColorSpace::LINEAR);
-    //let rock_color_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/color.dds", ColorSpace::SRGB);
-    //let rock_normal_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/normal.dds", ColorSpace::LINEAR);
-    //let rock_metalrough_global_index = vkutil::load_global_bc7(&mut vk, &mut renderer.global_textures, renderer.material_sampler, "./data/textures/rocky_ground/metallic_roughness.dds", ColorSpace::LINEAR);
-    
     let terrain_grass_matidx = renderer.global_materials.insert(
         Material {
             pipeline: terrain_pipeline,
@@ -758,9 +469,6 @@ fn main() {
     let mut dev_gui = DevGui::new(&mut vk, swapchain_pass, pipeline_layout);
 
     let mut input_system = input::InputSystem::init(&sdl_context);
-
-    //Synchronize with deferred asset loading
-    DeferredImage::synchronize(&mut vk, deferred_images);
 
     //Main application loop
     'running: loop {
