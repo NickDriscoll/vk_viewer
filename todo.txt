@@ -5,3 +5,4 @@ Simple environment probe for indirect diffuse/specular light
 Deferred/Batched GPU uploading
 Texture compression
     Take jpg/png as input and optimize to BC format
+    Figure out why images smaller than the BC7 block size don't compress correctly

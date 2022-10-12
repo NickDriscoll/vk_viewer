@@ -1,6 +1,7 @@
 use core::slice::Iter;
 use std::{convert::TryInto, ffi::c_void};
 use ash::vk::DescriptorImageInfo;
+use slotmap::{SlotMap, new_key_type};
 
 use crate::*;
 
@@ -525,6 +526,13 @@ pub struct InFlightFrameData {
     pub instance_data_size: u64
 }
 
+struct BufferBlock {
+    pub start_offset: u64,       //In f32s,
+    pub length: u64              //In f32s
+}
+
+new_key_type! { pub struct PositionBufferBlockKey; }
+
 pub struct Renderer {
     pub default_diffuse_idx: u32,
     pub default_normal_idx: u32,
@@ -545,13 +553,14 @@ pub struct Renderer {
 
     //Various GPU allocated buffers
     pub position_buffer: GPUBuffer,
-    position_offset: u64,
+    position_buffer_blocks: SlotMap<PositionBufferBlockKey, BufferBlock>,
+    position_offset: u64,               //In f32s
     pub tangent_buffer: GPUBuffer,
-    tangent_offset: u64,
+    tangent_offset: u64,                //In f32s
     pub normal_buffer: GPUBuffer,
-    normal_offset: u64,
+    normal_offset: u64,                 //In f32s
     pub uv_buffer: GPUBuffer,
-    uv_offset: u64,
+    uv_offset: u64,                     //In f32s
     pub imgui_buffer: GPUBuffer,
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
@@ -1116,6 +1125,7 @@ impl Renderer {
             descriptor_set_layout,
             bindless_descriptor_set,
             position_buffer,
+            position_buffer_blocks: SlotMap::with_key(),
             position_offset: 0,
             tangent_buffer,
             tangent_offset: 0,
@@ -1174,6 +1184,11 @@ impl Renderer {
     }
     
     pub fn append_vertex_positions(&mut self, vk: &mut VulkanAPI, positions: &[f32]) -> u32 {
+        let buffer_block = BufferBlock {
+            start_offset: self.position_offset,
+            length: positions.len() as u64
+        };
+        let block_key = self.position_buffer_blocks.insert(buffer_block);
         Self::upload_vertex_attribute(vk, positions, &self.position_buffer, &mut self.position_offset) / 4
     }
     

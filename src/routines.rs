@@ -15,7 +15,7 @@ pub fn slice_to_bytes<'a, T>(in_array: &'a [T]) -> &'a [u8] {
 
 #[inline]
 pub fn calculate_miplevels(width: u32, height: u32) -> u32 {
-    (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32
+    (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32 + 1
 }
 
 pub fn crash_with_error_dialog(message: &str) -> ! {
@@ -550,7 +550,7 @@ pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
             array_layers: 1,
             samples: vk::SampleCountFlags::TYPE_1,
             tiling: vk::ImageTiling::OPTIMAL,
-            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 1,
             p_queue_family_indices: &vk.queue_family_index,
@@ -634,7 +634,7 @@ pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
 
         let dds_pixelformat = DDS_PixelFormat {
             rgb_bitcount,
-            flags: DDS_PixelFormat::DDPF_FOURCC,
+            flags: DDS_PixelFormat::DDPF_FOURCC,        //We just always wanna use the 
             ..Default::default()
         };
         let dx10_header = DDSHeader_DXT10 {
