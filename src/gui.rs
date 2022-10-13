@@ -58,7 +58,10 @@ impl DevGui {
         let mut out = None;
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
             let mut i = 0;
+            let mut add_list = vec![];
+            let mut delete_list = vec![];
             for prop in props.iter_mut() {
+                let key = prop.0;
                 let prop = prop.1;
 
                 if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push(ui) {
@@ -68,8 +71,12 @@ impl DevGui {
                     imgui::Drag::new("Pitch").speed(0.05).build(ui, &mut prop.pitch);
                     imgui::Drag::new("Yaw").speed(0.05).build(ui, &mut prop.yaw);
                     imgui::Drag::new("Roll").speed(0.05).build(ui, &mut prop.roll);
+                    if Self::do_standard_button(ui, "Clone") {
+                        add_list.push(prop.clone());
+                    }
+                    ui.same_line();
                     if Self::do_standard_button(ui, "Delete") {
-
+                        delete_list.push(key);
                     }
                     ui.separator();
                     token.pop();
@@ -78,6 +85,15 @@ impl DevGui {
                 i += 1;
             }
             ui.separator();
+
+            for mut add in add_list {
+                add.position += glm::vec3(5.0, 0.0, 0.0);
+                props.insert(add);
+            }
+
+            for key in delete_list {
+                props.remove(key);
+            }
             
             if Self::do_standard_button(ui, "Load static prop") {
                 if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {

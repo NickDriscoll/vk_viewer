@@ -1,5 +1,5 @@
 use ozy::structs::UninterleavedVertexArrays;
-use crate::render::Model;
+use crate::render::{Model, PrimitiveKey};
 use crate::vkutil::{DeferredImage, VertexFetchOffsets};
 use crate::*;
 
@@ -53,11 +53,11 @@ pub fn regenerate_terrain(
     renderer: &mut Renderer,
     physics_engine: &mut PhysicsEngine,
     terrain_collider_handle: &mut ColliderHandle,
-    terrain_model_idx: usize,
+    primitive_key: PrimitiveKey,
     terrain: &mut TerrainSpec,
     terrain_generation_scale: f32
 ) {
-    if let Some(ter) = renderer.get_primitive(terrain_model_idx) {
+    if let Some(ter) = renderer.get_primitive(primitive_key) {
         let offset = ter.position_offset;
         let verts = compute_terrain_vertices(terrain, terrain.fixed_seed, terrain_generation_scale);
         replace_uploaded_vertices(vk, renderer, &verts, offset.into());

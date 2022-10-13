@@ -104,6 +104,7 @@ pub struct PhysicsProp {
     pub collider_handle: ColliderHandle
 }
 
+#[derive(Clone)]
 pub struct StaticProp {
     pub name: String,
     pub model: ModelKey,

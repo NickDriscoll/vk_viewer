@@ -45,7 +45,7 @@ use input::UserInput;
 use vkutil::{FreeList, GPUBuffer, GPUImage, VulkanAPI, DeferredImage};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp};
-use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
+use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, Model};
 
 use crate::routines::*;
 use crate::gltfutil::GLTFMeshData;
@@ -402,11 +402,11 @@ fn main() {
     ) as u32;
     
     //Upload terrain geometry
-    let terrain_model_idx = {
+    let terrain_model_key = {
         let terrain_offsets = upload_vertex_attributes(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = routines::make_index_buffer(&mut vk, &terrain_indices);
-        renderer.register_primitive(Primitive {
+        let prim_key = renderer.register_primitive(Primitive {
             shadow_type: ShadowType::OpaqueCaster,
             index_buffer,
             index_count: terrain_indices.len().try_into().unwrap(),
@@ -415,7 +415,8 @@ fn main() {
             normal_offset: terrain_offsets.normal_offset,
             uv_offset: terrain_offsets.uv_offset,
             material_idx: terrain_grass_matidx,
-        })
+        });
+        renderer.new_model(0, vec![prim_key])
     };
 
     let mut lookat_dist = 7.5;
@@ -493,15 +494,18 @@ fn main() {
             dev_gui.do_gui = !dev_gui.do_gui
         }
         if input_output.regen_terrain {
-            regenerate_terrain(
-                &mut vk,
-                &mut renderer,
-                &mut physics_engine,
-                &mut terrain_collider_handle,
-                terrain_model_idx,
-                &mut terrain,
-                terrain_generation_scale
-            );
+            if let Some(model) = renderer.get_model(terrain_model_key) {
+                let p_key = model.primitive_keys[0];
+                regenerate_terrain(
+                    &mut vk,
+                    &mut renderer,
+                    &mut physics_engine,
+                    &mut terrain_collider_handle,
+                    p_key,
+                    &mut terrain,
+                    terrain_generation_scale
+                );
+            }
         }
         if input_output.reset_totoro {
             reset_totoro(&mut physics_engine, &totoro_list[main_totoro_idx]);
@@ -575,15 +579,18 @@ fn main() {
 
         //Terrain generation window
         if dev_gui.do_terrain_window(&imgui_ui, &mut terrain) {
-            regenerate_terrain(
-                &mut vk,
-                &mut renderer,
-                &mut physics_engine,
-                &mut terrain_collider_handle,
-                terrain_model_idx,
-                &mut terrain,
-                terrain_generation_scale
-            );
+            if let Some(model) = renderer.get_model(terrain_model_key) {
+                let p_key = model.primitive_keys[0];
+                regenerate_terrain(
+                    &mut vk,
+                    &mut renderer,
+                    &mut physics_engine,
+                    &mut terrain_collider_handle,
+                    p_key,
+                    &mut terrain,
+                    terrain_generation_scale
+                );
+            }
         }
 
         if dev_gui.do_gui {
@@ -668,7 +675,7 @@ fn main() {
         physics_engine.step();
 
         let plane_model_matrix = glm::identity();
-        renderer.queue_drawcall_primitive(terrain_model_idx, &[plane_model_matrix]);
+        renderer.queue_drawcall(terrain_model_key, vec![plane_model_matrix]);
 
         let view_movement_vector = glm::mat4(
             1.0, 0.0, 0.0, 0.0,
@@ -685,9 +692,10 @@ fn main() {
  
         //Totoros update
         let mut matrices = vec![];
-        for prop in totoro_list.iter() {
+        for i in 0..totoro_list.len() {
+            let prop = &totoro_list[i];
             if let Some(p) = prop {
-                if glm::distance(physics_engine.rigid_body_set[p.rigid_body_handle].translation(), &glm::zero()) > 750.0 {
+                if i == main_totoro_idx && glm::distance(physics_engine.rigid_body_set[p.rigid_body_handle].translation(), &glm::zero()) > 750.0 {
                     reset_totoro(&mut physics_engine, &totoro_list[main_totoro_idx]);
                 }
                 let body_transform = physics_engine.rigid_body_set[p.rigid_body_handle].position().to_matrix();
@@ -695,7 +703,7 @@ fn main() {
                 matrices.push(matrix);
             }
         }
-        renderer.queue_drawcall(totoro_model, &matrices);
+        renderer.queue_drawcall(totoro_model, matrices);
 
         //Compute this frame's view matrix
         let view_from_world = if do_freecam {
@@ -753,7 +761,7 @@ fn main() {
                      glm::rotation(prop.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
                      glm::rotation(prop.roll, &glm::vec3(0.0, 1.0, 0.0));
 
-            renderer.queue_drawcall(prop.model, &[mm]);
+            renderer.queue_drawcall(prop.model, vec![mm]);
         }
         
         //Update sun
@@ -835,7 +843,7 @@ fn main() {
                 };
                 vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
                 for drawcall in renderer.drawlist_iter() {
-                    if let Some(model) = renderer.get_primitive(drawcall.geometry_idx) {
+                    if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
                         if let ShadowType::NonCaster = model.shadow_type { continue; }
     
                         let pcs = [
@@ -907,7 +915,7 @@ fn main() {
                     vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
                     last_bound_pipeline = drawcall.pipeline;
                 }
-                if let Some(model) = renderer.get_primitive(drawcall.geometry_idx) {
+                if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
                     let pcs = [
                         model.material_idx.to_le_bytes(),
                         model.position_offset.to_le_bytes(),

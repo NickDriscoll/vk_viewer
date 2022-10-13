@@ -1,4 +1,5 @@
 use core::slice::Iter;
+use std::cmp::Ordering;
 use std::{convert::TryInto, ffi::c_void, hash::{Hash, Hasher}, collections::hash_map::DefaultHasher};
 use slotmap::{SlotMap, new_key_type};
 
@@ -46,11 +47,42 @@ impl Material {
     }
 }
 
+pub struct DesiredDraw {
+    pub model_key: ModelKey,
+    pub world_transforms: Vec<glm::TMat4<f32>>
+}
+
 pub struct DrawCall {
-    pub geometry_idx: usize,
+    pub primitive_key: PrimitiveKey,
     pub pipeline: vk::Pipeline,
     pub instance_count: u32,
     pub first_instance: u32
+}
+
+impl PartialEq for DrawCall {
+    fn eq(&self, other: &Self) -> bool {
+        self.pipeline == other.pipeline
+    }
+}
+
+impl Eq for DrawCall {}
+
+impl PartialOrd for DrawCall {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DrawCall {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.pipeline < other.pipeline {
+            Ordering::Less
+        } else if self.pipeline == other.pipeline {
+            Ordering::Equal
+        } else {
+            Ordering::Greater
+        }
+    }
 }
 
 pub enum ShadowType {
@@ -74,12 +106,12 @@ pub struct Primitive {
 #[derive(Clone)]
 pub struct Model {
     pub id: u64,            //Just the hash of the asset's name
-    pub primitive_indices: Vec<usize>
+    pub primitive_keys: Vec<PrimitiveKey>
 }
 
 #[repr(C)]
 pub struct InstanceData {
-    pub world_from_model: glm::TMat4<f32>,
+    pub world_transform: glm::TMat4<f32>,
     pub normal_matrix: glm::TMat4<f32>
 }
 
@@ -116,7 +148,7 @@ impl InstanceData {
         cofactor(world_from_model.as_slice(), normal_matrix.as_mut_slice());
 
         InstanceData {
-            world_from_model,
+            world_transform: world_from_model,
             normal_matrix
         }
     }
@@ -545,6 +577,7 @@ struct BufferBlock {
 }
 
 new_key_type! { pub struct ModelKey; }
+new_key_type! { pub struct PrimitiveKey; }
 new_key_type! { pub struct PositionBufferBlockKey; }
 
 pub struct Renderer {
@@ -558,8 +591,9 @@ pub struct Renderer {
 
     models: SlotMap<ModelKey, Model>,
     model_counters: Vec<u64>,
-    primitives: OptionVec<Primitive>,
-    drawlist: Vec<DrawCall>,
+    primitives: SlotMap<PrimitiveKey, Primitive>,
+    raw_draws: Vec<DesiredDraw>,
+    drawstream: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
 
     pub window_manager: WindowManager,
@@ -1004,8 +1038,9 @@ impl Renderer {
             point_sampler,
             models: SlotMap::with_key(),
             model_counters: Vec::new(),
-            primitives: OptionVec::new(),
-            drawlist: Vec::new(),
+            primitives: SlotMap::with_key(),
+            raw_draws: Vec::new(),
+            drawstream: Vec::new(),
             instance_data: Vec::new(),
             window_manager,
             uniform_data: uniforms,
@@ -1200,7 +1235,7 @@ impl Renderer {
         }
 
         //let mut loading_images = vec![];
-        let mut indices = vec![];
+        let mut keys = vec![];
         let mut tex_id_map = HashMap::new();
         for prim in &data.primitives {
             let prim_tex_indices = [
@@ -1245,15 +1280,19 @@ impl Renderer {
                 uv_offset: offsets.uv_offset,
                 material_idx
             });
-            indices.push(model_idx);
+            keys.push(model_idx);
         }
         
+        self.new_model(id, keys)
+    }
+
+    pub fn new_model(&mut self, id: u64, primitive_keys: Vec<PrimitiveKey>) -> ModelKey {
         self.model_counters.push(1);
         let model = Model {
             id,
-            primitive_indices: indices
+            primitive_keys
         };
-        self.models.insert(model.clone())
+        self.models.insert(model)
     }
 
     fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {
@@ -1281,7 +1320,7 @@ impl Renderer {
         }
     }
 
-    pub fn register_primitive(&mut self, data: Primitive) -> usize {
+    pub fn register_primitive(&mut self, data: Primitive) -> PrimitiveKey {
         self.primitives.insert(data)
     }
 
@@ -1339,11 +1378,56 @@ impl Renderer {
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 
-    pub fn get_primitive(&self, idx: usize) -> &Option<Primitive> {
-        &self.primitives[idx]
+    pub fn get_primitive(&self, key: PrimitiveKey) -> Option<&Primitive> {
+        self.primitives.get(key)
     }
 
     pub fn prepare_frame(&mut self, vk: &mut VulkanAPI, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) -> InFlightFrameData {
+        //Process raw draw calls into draw stream
+        {
+            //Create map of ModelKeys to the instance data for all instances of that model
+            let mut model_instances : HashMap<ModelKey, Vec<InstanceData>> = HashMap::new();
+            for raw_draw in self.raw_draws.iter() {
+                let mut instances = {
+                    let mut is = Vec::with_capacity(raw_draw.world_transforms.len());
+                    for i in 0..is.capacity() {
+                        is.push(InstanceData::new(raw_draw.world_transforms[i]));
+                    }
+                    is
+                };
+
+                match model_instances.get_mut(&raw_draw.model_key) {
+                    Some(data) => { data.append(&mut instances); }
+                    None => { model_instances.insert(raw_draw.model_key, instances); }
+                }
+            }
+
+            //Generate DrawCalls for each primitive of each instance
+            let mut current_first_instance = 0;
+            for (model_key, instances) in model_instances.iter_mut() {
+                let instance_count = instances.len() as u32;
+                if let Some(model) = self.models.get(*model_key) {
+                    for prim_key in model.primitive_keys.iter() {
+                        if let Some(primitive) = self.primitives.get(*prim_key) {
+                            let pipeline = self.global_materials[primitive.material_idx.try_into().unwrap()].as_ref().unwrap().pipeline;
+                            let dc = DrawCall {
+                                primitive_key: *prim_key,
+                                pipeline,
+                                instance_count,
+                                first_instance: current_first_instance
+                            };
+                            self.drawstream.push(dc);
+                            self.instance_data.append(instances);
+                        }
+                    }
+                }
+                current_first_instance += instance_count;
+            }
+
+            //Sort DrawCalls according to their pipeline
+            self.drawstream.sort_unstable();
+        }
+
         //Wait for LRU frame to finish
         let frame_info = self.next_frame(vk);
 
@@ -1470,52 +1554,33 @@ impl Renderer {
             self.frames_in_flight[self.in_flight_frame].instance_data_start_offset = start_offset;
             self.instance_buffer.write_subbuffer_bytes(vk, instance_data_bytes, start_offset);
         }
-
+        
         frame_info
     }
 
-    pub fn queue_drawcall(&mut self, model_key: ModelKey, transforms: &[glm::TMat4<f32>]) {
-        let mut indices = vec![];
-        if let Some(model) = self.models.get(model_key) {
-            indices = model.primitive_indices.clone();
-        }
-        for idx in indices {
-            self.queue_drawcall_primitive(idx, transforms);
-        }
-    }
+    pub fn queue_drawcall(&mut self, model_key: ModelKey, world_transforms: Vec<glm::TMat4<f32>>) {
+        let desired_draw = DesiredDraw {
+            model_key,
+            world_transforms
+        };
+        self.raw_draws.push(desired_draw);
 
-    pub fn queue_drawcall_primitive(&mut self, idx: usize, transforms: &[glm::TMat4<f32>]) {
-        match &self.primitives[idx] {
-            None => {
-                tfd::message_box_ok("No primitive at supplied index", &format!("No primitive loaded at index {}", idx), tfd::MessageBoxIcon::Error);
-                return;
-            }
-            Some(prim) => {let instance_count = transforms.len() as u32;
-                let first_instance = self.instance_data.len() as u32;
-        
-                let pipeline = self.global_materials[prim.material_idx.try_into().unwrap()].as_ref().unwrap().pipeline;
-                for t in transforms {
-                    let instance_data = InstanceData::new(*t);
-                    self.instance_data.push(instance_data);
-                }
-                let drawcall = DrawCall {
-                    geometry_idx: idx,
-                    pipeline,
-                    instance_count,
-                    first_instance
-                };
-        
-                self.drawlist.push(drawcall);
-            }
-        }
+        // let mut indices = vec![];
+        // if let Some(model) = self.models.get(model_key) {
+        //     indices = model.primitive_indices.clone();
+        // }
+        // for idx in indices {
+        //     self.queue_drawcall_primitive(idx, transforms);
+        // }
     }
 
     pub fn drawlist_iter(&self) -> Iter<DrawCall> {
-        self.drawlist.iter()
+        self.drawstream.iter()
     }
 
     pub fn reset(&mut self) {
-        self.drawlist.clear();
+        self.raw_draws.clear();
+        self.drawstream.clear();
         self.instance_data.clear();
     }
 }
