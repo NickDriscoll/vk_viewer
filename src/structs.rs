@@ -1,7 +1,7 @@
 use ozy::structs::UninterleavedVertexArrays;
 use slotmap::new_key_type;
 
-use crate::*;
+use crate::{*, render::Model};
 
 pub struct Camera {
     pub position: glm::TVec3<f32>,
@@ -104,10 +104,9 @@ pub struct PhysicsProp {
     pub collider_handle: ColliderHandle
 }
 
-#[derive(Default)]
 pub struct StaticProp {
-    pub name: Option<String>,
-    pub model_indices: Vec<usize>,
+    pub name: String,
+    pub model: Model,
     pub position: glm::TVec3<f32>,
     pub pitch: f32,
     pub yaw: f32,

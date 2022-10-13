@@ -1,10 +1,8 @@
 use core::slice::Iter;
-use std::{convert::TryInto, ffi::c_void};
-use ash::vk::DescriptorImageInfo;
+use std::{convert::TryInto, ffi::c_void, hash::{Hash, Hasher}, collections::hash_map::DefaultHasher};
 use slotmap::{SlotMap, new_key_type};
 
 use crate::*;
-
 
 //1:1 with shader struct
 #[derive(Clone, Debug)]
@@ -61,7 +59,7 @@ pub enum ShadowType {
 }
 
 //This is a struct that contains mesh and material data
-//In other words, the data required to draw a specific kind of thing
+//In other words, the data required to drive a single draw call
 pub struct Primitive {
     pub shadow_type: ShadowType,
     pub index_buffer: GPUBuffer,
@@ -71,6 +69,11 @@ pub struct Primitive {
     pub normal_offset: u32,
     pub uv_offset: u32,
     pub material_idx: u32
+}
+
+pub struct Model {
+    pub id: u64,            //Just the hash of the asset's name
+    pub primitive_indices: Vec<usize>
 }
 
 #[repr(C)]
@@ -186,6 +189,7 @@ impl CascadedShadowMap {
     ) -> Self {
         let format = vk::Format::D32_SFLOAT;
 
+        let allocation;
         let image = unsafe {
             let extent = vk::Extent3D {
                 width: resolution,
@@ -210,7 +214,7 @@ impl CascadedShadowMap {
             };
 
             let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            vkutil::allocate_image_memory(vk, depth_image);
+            allocation = vkutil::allocate_image_memory(vk, depth_image);
             depth_image
         };
 
@@ -265,12 +269,20 @@ impl CascadedShadowMap {
             let p = clipping_from_view * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
             clip_distances[i] = p.z;
         }
+
+        let gpu_image = GPUImage {
+            image,
+            view: image_view,
+            width: resolution,
+            height: resolution,
+            mip_count: 1,
+            format,
+            layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            sampler: renderer.material_sampler,
+            allocation
+        };
         
-        let texture_index = renderer.global_textures.insert(vk::DescriptorImageInfo {
-            sampler: renderer.point_sampler,
-            image_view,
-            image_layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL
-        }) as u32;
+        let texture_index = renderer.global_images.insert(gpu_image) as u32;
 
         CascadedShadowMap {
             framebuffer,
@@ -542,6 +554,8 @@ pub struct Renderer {
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
 
+    models: OptionVec<Model>,
+    model_counters: Vec<u64>,
     primitives: OptionVec<Primitive>,
     drawlist: Vec<DrawCall>,
     instance_data: Vec<InstanceData>,
@@ -566,7 +580,7 @@ pub struct Renderer {
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
 
-    pub global_textures: FreeList<DescriptorImageInfo>,
+    pub global_images: FreeList<GPUImage>,
     pub default_texture_idx: u32,
     pub global_materials: FreeList<Material>,
 
@@ -604,142 +618,7 @@ impl Renderer {
         vk.device.wait_for_fences(&self.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
     }
 
-    fn create_hdr_framebuffers(vk: &mut VulkanAPI, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler: vk::Sampler, global_textures: &mut FreeList<vk::DescriptorImageInfo>) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
-        let hdr_color_format = vk::Format::R32G32B32A32_SFLOAT;
-        let vk_depth_format = vk::Format::D32_SFLOAT;
-
-        //Create main depth buffer
-        let depth_buffer_image = unsafe {
-            let create_info = vk::ImageCreateInfo {
-                queue_family_index_count: 1,
-                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-                flags: vk::ImageCreateFlags::empty(),
-                image_type: vk::ImageType::TYPE_2D,
-                format: vk_depth_format,
-                extent,
-                mip_levels: 1,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-
-            let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-            vkutil::allocate_image_memory(vk, depth_image);
-            depth_image
-        };
-
-        let depth_buffer_view = unsafe {
-            let image_subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::DEPTH,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let view_info = vk::ImageViewCreateInfo {
-                image: depth_buffer_image,
-                format: vk_depth_format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                subresource_range: image_subresource_range,
-                ..Default::default()
-            };
-
-            vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-        };
-
-        let mut color_buffers = [vk::Image::default(); Self::FRAMES_IN_FLIGHT];
-        let mut color_buffer_views = [vk::ImageView::default(); Self::FRAMES_IN_FLIGHT];
-        let mut hdr_framebuffers = [vk::Framebuffer::default(); Self::FRAMES_IN_FLIGHT];
-        for i in 0..Self::FRAMES_IN_FLIGHT {
-            let primary_color_buffer = unsafe {
-                let create_info = vk::ImageCreateInfo {
-                    queue_family_index_count: 1,
-                    p_queue_family_indices: [vk.queue_family_index].as_ptr(),
-                    flags: vk::ImageCreateFlags::empty(),
-                    image_type: vk::ImageType::TYPE_2D,
-                    format: hdr_color_format,
-                    extent,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    samples: vk::SampleCountFlags::TYPE_1,
-                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-                    sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    ..Default::default()
-                };
-
-                let image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-                vkutil::allocate_image_memory(vk, image);
-                image
-            };
-            color_buffers[i] = primary_color_buffer;
-
-            let color_buffer_view = unsafe {
-                let image_subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1
-                };
-                let view_info = vk::ImageViewCreateInfo {
-                    image: primary_color_buffer,
-                    format: hdr_color_format,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: image_subresource_range,
-                    ..Default::default()
-                };
-
-                vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-            };
-            color_buffer_views[i] = color_buffer_view;
-        
-            //Create framebuffer
-            let framebuffer_object = unsafe {
-                let attachments = [color_buffer_view, depth_buffer_view];
-                let fb_info = vk::FramebufferCreateInfo {
-                    render_pass: hdr_render_pass,
-                    attachment_count: attachments.len() as u32,
-                    p_attachments: attachments.as_ptr(),
-                    width: extent.width,
-                    height: extent.height,
-                    layers: 1,
-                    ..Default::default()
-                };
-                vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap()
-            };
-            hdr_framebuffers[i] = framebuffer_object;
-        }
-
-        let mut framebuffers = [FrameBuffer::default(); Self::FRAMES_IN_FLIGHT];
-        for i in 0..Self::FRAMES_IN_FLIGHT {
-            let descriptor_info = vk::DescriptorImageInfo {
-                sampler,
-                image_view: color_buffer_views[i],
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-            };
-            let texture_index = global_textures.insert(descriptor_info) as u32;
-
-            framebuffers[i] = FrameBuffer {
-                framebuffer_object: hdr_framebuffers[i],
-                color_buffer: color_buffers[i],
-                color_buffer_view: color_buffer_views[i],
-                depth_buffer: depth_buffer_image,
-                depth_buffer_view,
-                texture_index
-            };
-        }
-        framebuffers
-    }
-
-
     pub fn init(vk: &mut VulkanAPI, window: &sdl2::video::Window, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
-        //Maintain free list for texture allocation
-        let mut global_textures = FreeList::new(1024);
-
         //Allocate buffer for frame-constant uniforms
         let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
         let uniform_buffer_size = Self::FRAMES_IN_FLIGHT as u64 * size_to_alignment!(size_of::<EnvironmentUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
@@ -824,6 +703,9 @@ impl Renderer {
             usage_flags,
             MemoryLocation::CpuToGpu
         );
+            
+        //Maintain free list for texture allocation
+        let mut global_images = FreeList::new(1024);
 
         //Set up global bindless descriptor set
         let descriptor_set_layout;
@@ -930,14 +812,14 @@ impl Renderer {
             let binding = vk::DescriptorSetLayoutBinding {
                 binding: buffer_descriptor_descs.len() as u32,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: global_textures.size() as u32,
+                descriptor_count: global_images.size() as u32,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
                 ..Default::default()
             };
             bindings.push(binding);
             let pool_size = vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: global_textures.size() as u32
+                descriptor_count: global_images.size() as u32
             };
             pool_sizes.push(pool_size);
 
@@ -1035,10 +917,10 @@ impl Renderer {
 
         let format = vk::Format::R8G8B8A8_UNORM;
         let layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-        let default_color_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
-        let default_metalrough_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0x00, 0xFF])) as u32};
-        let default_emissive_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x00, 0x00, 0x00, 0xFF])) as u32};
-        let default_normal_idx = unsafe { global_textures.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
+        let default_color_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
+        let default_metalrough_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0x00, 0xFF])) as u32};
+        let default_emissive_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x00, 0x00, 0x00, 0xFF])) as u32};
+        let default_normal_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
         //Create free list for materials
         let global_materials = FreeList::new(256);
@@ -1048,9 +930,9 @@ impl Renderer {
 
         //Load environment textures
         {
-            let sunzenith_index = vkutil::load_bc7_texture(vk, &mut global_textures, material_sampler, "./data/textures/sunzenith_gradient.dds");
-            let viewzenith_index = vkutil::load_bc7_texture(vk, &mut global_textures, material_sampler, "./data/textures/viewzenith_gradient.dds");
-            let sunview_index = vkutil::load_bc7_texture(vk, &mut global_textures, material_sampler, "./data/textures/sunview_gradient.dds");
+            let sunzenith_index = vkutil::load_bc7_texture(vk, &mut global_images, material_sampler, "./data/textures/sunzenith_gradient.dds");
+            let viewzenith_index = vkutil::load_bc7_texture(vk, &mut global_images, material_sampler, "./data/textures/viewzenith_gradient.dds");
+            let sunview_index = vkutil::load_bc7_texture(vk, &mut global_images, material_sampler, "./data/textures/sunview_gradient.dds");
             
             uniforms.sunzenith_idx = sunzenith_index;
             uniforms.viewzenith_idx = viewzenith_index;
@@ -1067,7 +949,7 @@ impl Renderer {
             depth: 1
         };
 
-        let framebuffers = Self::create_hdr_framebuffers(vk, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_textures);
+        let framebuffers = Self::create_hdr_framebuffers(vk, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images);
         
         //Initialize per-frame rendering state
         let in_flight_frame_data = {
@@ -1114,12 +996,14 @@ impl Renderer {
             default_emissive_idx,
             material_sampler,
             point_sampler,
+            models: OptionVec::new(),
+            model_counters: Vec::new(),
             primitives: OptionVec::new(),
             drawlist: Vec::new(),
             instance_data: Vec::new(),
             window_manager,
             uniform_data: uniforms,
-            global_textures,
+            global_images,
             default_texture_idx: 0,
             global_materials,
             descriptor_set_layout,
@@ -1144,6 +1028,224 @@ impl Renderer {
         }
     }
 
+    fn create_hdr_framebuffers(vk: &mut VulkanAPI, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler: vk::Sampler, global_images: &mut FreeList<GPUImage>) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
+        let hdr_color_format = vk::Format::R16G16B16A16_SFLOAT;
+        let vk_depth_format = vk::Format::D32_SFLOAT;
+
+        //Create main depth buffer
+        let depth_buffer_image = unsafe {
+            let create_info = vk::ImageCreateInfo {
+                queue_family_index_count: 1,
+                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                flags: vk::ImageCreateFlags::empty(),
+                image_type: vk::ImageType::TYPE_2D,
+                format: vk_depth_format,
+                extent,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+
+            let depth_image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+            vkutil::allocate_image_memory(vk, depth_image);
+            depth_image
+        };
+
+        let depth_buffer_view = unsafe {
+            let image_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let view_info = vk::ImageViewCreateInfo {
+                image: depth_buffer_image,
+                format: vk_depth_format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                subresource_range: image_subresource_range,
+                ..Default::default()
+            };
+
+            vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        };
+
+        let mut color_buffers = [vk::Image::default(); Self::FRAMES_IN_FLIGHT];
+        let mut color_buffer_views = [vk::ImageView::default(); Self::FRAMES_IN_FLIGHT];
+        let mut hdr_framebuffers = [vk::Framebuffer::default(); Self::FRAMES_IN_FLIGHT];
+        let mut framebuffers = [FrameBuffer::default(); Self::FRAMES_IN_FLIGHT];
+        for i in 0..Self::FRAMES_IN_FLIGHT {
+            let allocation;
+            let primary_color_buffer = unsafe {
+                let create_info = vk::ImageCreateInfo {
+                    queue_family_index_count: 1,
+                    p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                    flags: vk::ImageCreateFlags::empty(),
+                    image_type: vk::ImageType::TYPE_2D,
+                    format: hdr_color_format,
+                    extent,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    ..Default::default()
+                };
+
+                let image = vk.device.create_image(&create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+                allocation = vkutil::allocate_image_memory(vk, image);
+                image
+            };
+            color_buffers[i] = primary_color_buffer;
+
+            let color_buffer_view = unsafe {
+                let image_subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                };
+                let view_info = vk::ImageViewCreateInfo {
+                    image: primary_color_buffer,
+                    format: hdr_color_format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkutil::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: image_subresource_range,
+                    ..Default::default()
+                };
+
+                vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+            };
+            color_buffer_views[i] = color_buffer_view;
+        
+            //Create framebuffer
+            let framebuffer_object = unsafe {
+                let attachments = [color_buffer_view, depth_buffer_view];
+                let fb_info = vk::FramebufferCreateInfo {
+                    render_pass: hdr_render_pass,
+                    attachment_count: attachments.len() as u32,
+                    p_attachments: attachments.as_ptr(),
+                    width: extent.width,
+                    height: extent.height,
+                    layers: 1,
+                    ..Default::default()
+                };
+                vk.device.create_framebuffer(&fb_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+            };
+            hdr_framebuffers[i] = framebuffer_object;
+
+            let gpu_image = GPUImage {
+                image: primary_color_buffer,
+                view: color_buffer_view,
+                width: extent.width,
+                height: extent.height,
+                mip_count: 1,
+                format: hdr_color_format,
+                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                sampler,
+                allocation
+            };
+            let texture_index = global_images.insert(gpu_image) as u32;
+
+            framebuffers[i] = FrameBuffer {
+                framebuffer_object: hdr_framebuffers[i],
+                color_buffer: color_buffers[i],
+                color_buffer_view: color_buffer_views[i],
+                depth_buffer: depth_buffer_image,
+                depth_buffer_view,
+                texture_index
+            };
+        }
+        
+        framebuffers
+    }
+
+    pub fn upload_gltf_model(&mut self, vk: &mut VulkanAPI, data: &GLTFMeshData, pipeline: vk::Pipeline) -> Model {
+        fn load_prim_png(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFMeshData, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize) -> u32 {
+            match tex_id_map.get(&prim_tex_idx) {
+                Some(id) => { *id }
+                None => {
+                    let image = GPUImage::from_png_bytes(vk, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
+                    let global_tex_id = renderer.global_images.insert(image) as u32;
+                    tex_id_map.insert(prim_tex_idx, global_tex_id);
+                    global_tex_id
+                }
+            }
+        }
+
+        //Compute this model's id
+        let mut hasher = DefaultHasher::new();
+        data.name.hash(&mut hasher);
+        let id = hasher.finish();
+
+        //Check if this model is already loaded
+        for model in self.models.iter() {
+            if let Some(m) = model {
+                if id == m.id {
+
+                }
+            }
+        }
+
+        //let mut loading_images = vec![];
+        let mut indices = vec![];
+        let mut tex_id_map = HashMap::new();
+        for prim in &data.primitives {
+            let prim_tex_indices = [
+                prim.material.color_index,
+                prim.material.normal_index,
+                prim.material.metallic_roughness_index,
+                prim.material.emissive_index
+            ];
+            let mut inds = [
+                self.default_diffuse_idx,
+                self.default_normal_idx,
+                self.default_metal_roughness_idx,
+                self.default_emissive_idx,
+            ];
+            for i in 0..prim_tex_indices.len() {
+                if let Some(idx) = prim_tex_indices[i] {
+                    inds[i] = load_prim_png(vk, self, data, &mut tex_id_map, idx);
+                }
+            }
+
+            let material = Material {
+                pipeline,
+                base_color: prim.material.base_color,
+                base_roughness: prim.material.base_roughness,
+                color_idx: inds[0],
+                normal_idx: inds[1],
+                metal_roughness_idx: inds[2],
+                emissive_idx: inds[3]
+            };
+            let material_idx = self.global_materials.insert(material) as u32;
+
+            let offsets = upload_primitive_vertices(vk, self, &prim);
+
+            let index_buffer = make_index_buffer(vk, &prim.indices);
+            let model_idx = self.register_primitive(Primitive {
+                shadow_type: ShadowType::OpaqueCaster,
+                index_buffer,
+                index_count: prim.indices.len().try_into().unwrap(),
+                position_offset: offsets.position_offset,
+                tangent_offset: offsets.tangent_offset,
+                normal_offset: offsets.normal_offset,
+                uv_offset: offsets.uv_offset,
+                material_idx
+            });
+            indices.push(model_idx);
+        }
+        
+        Model {
+            primitive_indices: indices
+        }
+    }
+
     fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {
         let cb = self.frames_in_flight[self.in_flight_frame];
         unsafe { vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap(); }
@@ -1158,14 +1260,12 @@ impl Renderer {
             vk.device.destroy_framebuffer(framebuffer.framebuffer_object, vkutil::MEMORY_ALLOCATOR);
             vk.device.destroy_image_view(framebuffer.color_buffer_view, vkutil::MEMORY_ALLOCATOR);
             vk.device.destroy_image(framebuffer.color_buffer, vkutil::MEMORY_ALLOCATOR);
+            self.global_images.remove(framebuffer.texture_index as usize);
         }
         vk.device.destroy_image_view(fbs[0].depth_buffer_view, vkutil::MEMORY_ALLOCATOR);
         vk.device.destroy_image(fbs[0].depth_buffer, vkutil::MEMORY_ALLOCATOR);
 
-        for i in 0..self.frames_in_flight.len() {
-            self.global_textures.remove(self.frames_in_flight[i].framebuffer.texture_index as usize);
-        }
-        let framebuffers = Self::create_hdr_framebuffers(vk, extent, hdr_render_pass, self.material_sampler, &mut self.global_textures);
+        let framebuffers = Self::create_hdr_framebuffers(vk, extent, hdr_render_pass, self.material_sampler, &mut self.global_images);
         for i in 0..self.frames_in_flight.len() {
             self.frames_in_flight[i].framebuffer = framebuffers[i];
         }
@@ -1229,7 +1329,7 @@ impl Renderer {
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 
-    pub fn get_model(&self, idx: usize) -> &Option<Primitive> {
+    pub fn get_primitive(&self, idx: usize) -> &Option<Primitive> {
         &self.primitives[idx]
     }
 
@@ -1238,19 +1338,34 @@ impl Renderer {
         let frame_info = self.next_frame(vk);
 
         //Update bindless texture sampler descriptors
-        if self.global_textures.updated {
-            self.global_textures.updated = false;
+        if self.global_images.was_updated() {
+            let default_texture = &self.global_images[self.default_texture_idx as usize].as_ref().unwrap();
+            let default_descriptor_info = vk::DescriptorImageInfo {
+                sampler: default_texture.sampler,
+                image_view: default_texture.view,
+                image_layout: default_texture.layout
+            };
 
-            let mut image_infos = vec![self.global_textures[self.default_texture_idx.try_into().unwrap()].unwrap(); self.global_textures.size() as usize];
-            for i in 0..self.global_textures.len() {
-                if let Some(info) = self.global_textures[i] {
-                    image_infos[i] = info;
+            let mut image_infos = vec![default_descriptor_info; self.global_images.size() as usize];
+            for i in 0..self.global_images.len() {
+                match &self.global_images[i] {
+                    Some(image) => {
+                        let descriptor_info = vk::DescriptorImageInfo {
+                            sampler: image.sampler,
+                            image_view: image.view,
+                            image_layout: image.layout
+                        };
+                        image_infos[i] = descriptor_info;
+                    }
+                    None => {
+                        image_infos[i] = default_descriptor_info;
+                    }
                 }
             }
 
             let sampler_write = vk::WriteDescriptorSet {
                 dst_set: self.bindless_descriptor_set,
-                descriptor_count: self.global_textures.size() as u32,
+                descriptor_count: self.global_images.size() as u32,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 p_image_info: image_infos.as_ptr(),
                 dst_array_element: 0,
@@ -1261,9 +1376,7 @@ impl Renderer {
         }
 
         //Update bindless material definitions
-        if self.global_materials.updated {
-            self.global_materials.updated = false;
-
+        if self.global_materials.was_updated() {
             let mut upload_mats = Vec::with_capacity(self.global_materials.len());
             for i in 0..self.global_materials.len() {
                 if let Some(mat) = &self.global_materials[i] {

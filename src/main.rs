@@ -129,7 +129,7 @@ fn main() {
 
     let hdr_forward_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
-            format: vk::Format::R32G32B32A32_SFLOAT,
+            format: vk::Format::R16G16B16A16_SFLOAT,
             samples: vk::SampleCountFlags::TYPE_1,
             load_op: vk::AttachmentLoadOp::CLEAR,
             store_op: vk::AttachmentStoreOp::STORE,
@@ -226,7 +226,7 @@ fn main() {
             let atlas_format = vk::Format::R8_UNORM;
             let atlas_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
             let descriptor_info = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
-            let index = renderer.global_textures.insert(descriptor_info);
+            let index = renderer.global_images.insert(descriptor_info);
             renderer.default_texture_idx = index as u32;
             
             atlas.clear_tex_data();  //Free atlas memory CPU-side
@@ -374,7 +374,7 @@ fn main() {
         if !pathp.with_extension("dds").is_file() {
             compress_png_synchronous(&mut vk, path);
         }
-        terrain_image_indices[i] = vkutil::load_bc7_texture(&mut vk, &mut renderer.global_textures, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap());
+        terrain_image_indices[i] = vkutil::load_bc7_texture(&mut vk, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap());
     }
     let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
 
@@ -402,7 +402,6 @@ fn main() {
     ) as u32;
     
     //Upload terrain geometry
-    //let terrain_model_idx = 0;
     let terrain_model_idx = {
         let terrain_offsets = upload_vertex_attributes(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
@@ -426,7 +425,7 @@ fn main() {
     let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
 
     //Register each primitive with the renderer
-    let totoro_model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &totoro_data, vk_3D_graphics_pipeline);
+    let totoro_model = renderer.upload_gltf_model(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
     let mut totoro_list = OptionVec::new();
@@ -650,12 +649,14 @@ fn main() {
         }
 
         if let Some(mesh_data) = dev_gui.do_props_window(&imgui_ui, &mut static_props) {
-            let model_indices = upload_gltf_primitives(&mut vk, &mut renderer, &mesh_data, vk_3D_graphics_pipeline);
+            let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
             let s = StaticProp {
                 name: mesh_data.name,
-                model_indices,
+                model,
                 position: camera.position,
-                ..Default::default()
+                pitch: 0.0,
+                yaw: 0.0,
+                roll: 0.0
             };
             static_props.insert(s);
         }
@@ -694,7 +695,7 @@ fn main() {
                 matrices.push(matrix);
             }
         }
-        for idx in &totoro_model_indices {
+        for idx in &totoro_model.primitive_indices {
             renderer.queue_drawcall(*idx, &matrices);
         }
 
@@ -749,7 +750,7 @@ fn main() {
 
         //Push drawcalls for static props
         for (_, prop) in static_props.iter() {
-            for idx in prop.model_indices.iter() {
+            for idx in prop.model.primitive_indices.iter() {
                 let mm = glm::translation(&prop.position) *
                          glm::rotation(prop.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
                          glm::rotation(prop.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
@@ -837,7 +838,7 @@ fn main() {
                 };
                 vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
                 for drawcall in renderer.drawlist_iter() {
-                    if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
+                    if let Some(model) = renderer.get_primitive(drawcall.geometry_idx) {
                         if let ShadowType::NonCaster = model.shadow_type { continue; }
     
                         let pcs = [
@@ -909,7 +910,7 @@ fn main() {
                     vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
                     last_bound_pipeline = drawcall.pipeline;
                 }
-                if let Some(model) = renderer.get_model(drawcall.geometry_idx) {
+                if let Some(model) = renderer.get_primitive(drawcall.geometry_idx) {
                     let pcs = [
                         model.material_idx.to_le_bytes(),
                         model.position_offset.to_le_bytes(),

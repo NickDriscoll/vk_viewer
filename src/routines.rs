@@ -1,4 +1,5 @@
 use ozy::structs::UninterleavedVertexArrays;
+use crate::render::Model;
 use crate::vkutil::{DeferredImage, VertexFetchOffsets};
 use crate::*;
 
@@ -56,7 +57,7 @@ pub fn regenerate_terrain(
     terrain: &mut TerrainSpec,
     terrain_generation_scale: f32
 ) {
-    if let Some(ter) = renderer.get_model(terrain_model_idx) {
+    if let Some(ter) = renderer.get_primitive(terrain_model_idx) {
         let offset = ter.position_offset;
         let verts = compute_terrain_vertices(terrain, terrain.fixed_seed, terrain_generation_scale);
         replace_uploaded_vertices(vk, renderer, &verts, offset.into());
@@ -102,75 +103,6 @@ pub fn replace_uploaded_vertices(vk: &mut VulkanAPI, renderer: &mut Renderer, at
     renderer.replace_vertex_uvs(vk, &attributes.uvs, offset);
 }
 
-pub fn upload_gltf_primitives(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFMeshData, pipeline: vk::Pipeline) -> Vec<usize> {
-    fn load_prim_png(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFMeshData, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize) -> u32 {
-        match tex_id_map.get(&prim_tex_idx) {
-            Some(id) => { *id }
-            None => {
-                let image = GPUImage::from_png_bytes(vk, data.texture_bytes[prim_tex_idx].as_slice());
-                let image_info = vk::DescriptorImageInfo {
-                    sampler: renderer.material_sampler,
-                    image_view: image.view,
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                };
-                let global_tex_id = renderer.global_textures.insert(image_info) as u32;
-                tex_id_map.insert(prim_tex_idx, global_tex_id);
-                global_tex_id
-            }
-        }
-    }
-
-    //let mut loading_images = vec![];
-    let mut indices = vec![];
-    let mut tex_id_map = HashMap::new();
-    for prim in &data.primitives {
-        let prim_tex_indices = [
-            prim.material.color_index,
-            prim.material.normal_index,
-            prim.material.metallic_roughness_index,
-            prim.material.emissive_index
-        ];
-        let mut inds = [
-            renderer.default_diffuse_idx,
-            renderer.default_normal_idx,
-            renderer.default_metal_roughness_idx,
-            renderer.default_emissive_idx,
-        ];
-        for i in 0..prim_tex_indices.len() {
-            if let Some(idx) = prim_tex_indices[i] {
-                inds[i] = load_prim_png(vk, renderer, data, &mut tex_id_map, idx);
-            }
-        }
-
-        let material = Material {
-            pipeline,
-            base_color: prim.material.base_color,
-            base_roughness: prim.material.base_roughness,
-            color_idx: inds[0],
-            normal_idx: inds[1],
-            metal_roughness_idx: inds[2],
-            emissive_idx: inds[3]
-        };
-        let material_idx = renderer.global_materials.insert(material) as u32;
-
-        let offsets = upload_primitive_vertices(vk, renderer, &prim);
-
-        let index_buffer = make_index_buffer(vk, &prim.indices);
-        let model_idx = renderer.register_primitive(Primitive {
-            shadow_type: ShadowType::OpaqueCaster,
-            index_buffer,
-            index_count: prim.indices.len().try_into().unwrap(),
-            position_offset: offsets.position_offset,
-            tangent_offset: offsets.tangent_offset,
-            normal_offset: offsets.normal_offset,
-            uv_offset: offsets.uv_offset,
-            material_idx
-        });
-        indices.push(model_idx);
-    }
-    indices
-}
-
 pub fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Option<PhysicsProp>) {
     let handle = totoro.as_ref().unwrap().rigid_body_handle;
     if let Some(body) = physics_engine.rigid_body_set.get_mut(handle) {
@@ -179,7 +111,7 @@ pub fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Option<PhysicsP
     }
 }
 
-pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::ImageCreateInfo, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
+pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::ImageCreateInfo, sampler: vk::Sampler, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
@@ -211,6 +143,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::
         mip_count: image_create_info.mip_levels,
         format: image_create_info.format,
         layout,
+        sampler,
         allocation
     };
 
@@ -557,9 +490,10 @@ pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
-        
+
+        let sampler = vk.device.create_sampler(&vk::SamplerCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
         let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        let def_image = upload_image_deferred(vk, &image_create_info, gpu_image_layout, &bytes);
+        let def_image = upload_image_deferred(vk, &image_create_info, sampler, gpu_image_layout, &bytes);
         let def_image = &DeferredImage::synchronize(vk, vec![def_image])[0];
 
         //Get the GPU image back into system RAM
@@ -659,6 +593,8 @@ pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
         let mut out_file = OpenOptions::new().write(true).create(true).open(out_path).unwrap();
         out_file.write(struct_to_bytes(&dds_header)).unwrap();
         out_file.write(&bc7_bytes).unwrap();
+
+        vk.device.destroy_sampler(sampler, vkutil::MEMORY_ALLOCATOR);
     }
 }
 

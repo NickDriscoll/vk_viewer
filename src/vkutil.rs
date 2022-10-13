@@ -100,22 +100,14 @@ pub fn make_global_texture_descriptor(global_textures: &mut FreeList<vk::Descrip
     global_textures.insert(descriptor_info) as u32
 }
 
-pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, path: &str) -> u32 {
+pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<GPUImage>, sampler: vk::Sampler, path: &str) -> u32 {
     unsafe {
-        let vim = GPUImage::from_bc7_file(vk, path);
-
-        let descriptor_info = vk::DescriptorImageInfo {
-            sampler,
-            image_view: vim.view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        };
-        let index = global_textures.insert(descriptor_info);
-
-        index as u32
+        let vim = GPUImage::from_bc7_file(vk, sampler, path);
+        global_textures.insert(vim) as u32
     }
 }
 
-pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format: vk::Format, layout: vk::ImageLayout, width: u32, height: u32, rgba: &[u8]) -> vk::DescriptorImageInfo {
+pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format: vk::Format, layout: vk::ImageLayout, width: u32, height: u32, rgba: &[u8]) -> GPUImage {
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
         format,
@@ -138,7 +130,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
     let normal_image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
     let allocation = allocate_image_memory(vk, normal_image);
 
-    let vim = GPUImage {
+    let mut vim = GPUImage {
         image: normal_image,
         view: vk::ImageView::default(),
         width,
@@ -146,33 +138,29 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         mip_count: 1,
         format,
         layout,
+        sampler,
         allocation
     };
     upload_image(vk, &vim, &rgba);
 
     //Then create the image view
-    let sampler_subresource_range = vk::ImageSubresourceRange {
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        base_mip_level: 0,
-        level_count: 1,
-        base_array_layer: 0,
-        layer_count: 1
-    };
     let view_info = vk::ImageViewCreateInfo {
         image: normal_image,
         format,
         view_type: vk::ImageViewType::TYPE_2D,
         components: COMPONENT_MAPPING_DEFAULT,
-        subresource_range: sampler_subresource_range,
+        subresource_range: vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1
+        },
         ..Default::default()
     };
-    let view = vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
+    vim.view = vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
     
-    vk::DescriptorImageInfo {
-        sampler,
-        image_view: view,
-        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-    }
+    vim
 }
 
 //Returns the uncompressed bytes of a png image to RGBA
@@ -227,24 +215,25 @@ pub struct GPUImage {
     pub mip_count: u32,
     pub format: vk::Format,
     pub layout: vk::ImageLayout,
+    pub sampler: vk::Sampler,
     pub allocation: Allocation
 }
 
 impl GPUImage {
-    pub fn from_png_file(vk: &mut VulkanAPI, path: &str) -> Self {
+    pub fn from_png_file(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
         file.read_exact(&mut png_bytes).unwrap();
-        Self::from_png_bytes(vk, &png_bytes)
+        Self::from_png_bytes(vk, sampler, &png_bytes)
     }
 
-    pub fn from_png_file_deferred(vk: &mut VulkanAPI, path: &str) -> DeferredImage {
+    pub fn from_png_file_deferred(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> DeferredImage {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
         file.read_exact(&mut png_bytes).unwrap();
-        Self::from_png_bytes_deferred(vk, &png_bytes)
+        Self::from_png_bytes_deferred(vk, sampler, &png_bytes)
     }
-    pub fn from_png_bytes_deferred(vk: &mut VulkanAPI, png_bytes: &[u8]) -> DeferredImage {
+    pub fn from_png_bytes_deferred(vk: &mut VulkanAPI, sampler: vk::Sampler, png_bytes: &[u8]) -> DeferredImage {
         let decoder = png::Decoder::new(png_bytes);
         let read_info = decoder.read_info().unwrap();
         let info = read_info.info();
@@ -278,7 +267,7 @@ impl GPUImage {
                 ..Default::default()
             };
             
-            let mut def_image = upload_image_deferred(vk, &image_create_info, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
+            let mut def_image = upload_image_deferred(vk, &image_create_info, sampler, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
 
             let view_info = vk::ImageViewCreateInfo {
                 image: def_image.final_image.image,
@@ -299,7 +288,7 @@ impl GPUImage {
         }
     }
 
-    pub fn from_png_bytes(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Self {
+    pub fn from_png_bytes(vk: &mut VulkanAPI, sampler: vk::Sampler, png_bytes: &[u8]) -> Self {
         let decoder = png::Decoder::new(png_bytes);
         let read_info = decoder.read_info().unwrap();
         let info = read_info.info();
@@ -368,6 +357,7 @@ impl GPUImage {
                 mip_count: mip_levels,
                 format,
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                sampler,
                 allocation
             };
             routines::record_image_upload_commands(vk, vk.command_buffers[cbidx], &vim, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &staging_buffer);
@@ -391,7 +381,7 @@ impl GPUImage {
         }
     }
 
-    pub unsafe fn from_bc7_file(vk: &mut VulkanAPI, path: &str) -> Self {
+    pub unsafe fn from_bc7_file(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> Self {
         use ozy::io::DXGI_FORMAT;
 
         let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
@@ -450,6 +440,7 @@ impl GPUImage {
             mip_count: mipmap_count,
             format,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            sampler,
             allocation
         };
         upload_image(vk, &vim, &raw_bytes);
@@ -1068,7 +1059,7 @@ impl GraphicsPipelineBuilder {
 pub struct FreeList<T> {
     list: OptionVec<T>,
     size: u64,
-    pub updated: bool
+    updated: bool
 }
 
 impl<T> FreeList<T> {
@@ -1092,6 +1083,12 @@ impl<T> FreeList<T> {
     pub fn remove(&mut self, idx: usize) {
         self.updated = true;
         self.list.delete(idx);
+    }
+
+    pub fn was_updated(&mut self) -> bool {
+        let r = self.updated;
+        self.updated = false;
+        r
     }
 }
 

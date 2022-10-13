@@ -1,13 +1,14 @@
 use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
 use std::ptr;
+use crate::*;
 
 use crate::routines::*;
 
 #[derive(Debug)]
 pub enum GLTFImageType {
     PNG,
-    KTX
+    JPG
 }
 
 #[derive(Debug)]
@@ -37,7 +38,7 @@ pub struct GLTFPrimitive {
 
 #[derive(Debug)]
 pub struct GLTFMeshData {
-    pub name: Option<String>,
+    pub name: String,
     pub primitives: Vec<GLTFPrimitive>,
     pub texture_bytes: Vec<Vec<u8>>,        //Indices correspond to the image index in the JSON
     pub children: Vec<usize>                //Indices correspond to the meshes in GLTFSceneData
@@ -266,6 +267,7 @@ fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, primitive_array: &mut Vec<GLTFP
     }
 }
 
+#[named]
 pub fn gltf_scenedata(path: &str) -> GLTFSceneData {
     let glb = Gltf::open(path).unwrap();
 
@@ -279,28 +281,29 @@ pub fn gltf_scenedata(path: &str) -> GLTFSceneData {
 
     let mut meshes = Vec::with_capacity(glb.meshes().count());
     for node in scene.nodes() {
-        let mut name = None;
         let mut primitives = vec![];
         let mut texture_bytes = vec![Vec::new(); glb.textures().count()];
         if let Some(mesh) = node.mesh() {
-            if let Some(n) = mesh.name() {
-                name = Some(String::from(n));
+            if let None = mesh.name() {
+                crash_with_error_dialog(&format!("Assets must be named: {}", function_name!()));
             }
+            let name = String::from(mesh.name().unwrap());
+            
             load_mesh_primitives(&glb, &mesh, &mut primitives, &mut texture_bytes);
-        }
         
-        let mut children = Vec::with_capacity(node.children().count());
-        for child in node.children() {
-            children.push(child.index());
+            let mut children = Vec::with_capacity(node.children().count());
+            for child in node.children() {
+                children.push(child.index());
+            }
+    
+            let mesh_data = GLTFMeshData {
+                name,
+                primitives,
+                texture_bytes,
+                children
+            };
+            meshes.push(mesh_data);
         }
-
-        let mesh_data = GLTFMeshData {
-            name,
-            primitives,
-            texture_bytes,
-            children
-        };
-        meshes.push(mesh_data);
     }
 
     GLTFSceneData {
@@ -324,6 +327,11 @@ pub fn gltf_meshdata(path: &str) -> GLTFMeshData {
 
         load_mesh_primitives(&glb, &mesh, &mut primitives, &mut texture_bytes);
     }
+
+    if let None = name {
+        crash_with_error_dialog("Something needs to be named!");
+    }
+    let name = name.unwrap();
 
     GLTFMeshData {
         name,

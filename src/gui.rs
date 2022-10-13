@@ -60,12 +60,8 @@ impl DevGui {
             let mut i = 0;
             for prop in props.iter_mut() {
                 let prop = prop.1;
-                let name = match &prop.name {
-                    Some(n) => { n }
-                    None => { "<unnamed prop>" }
-                };
 
-                if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(name).push(ui) {
+                if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push(ui) {
                     imgui::Drag::new("X").speed(0.1).build(ui, &mut prop.position.x);
                     imgui::Drag::new("Y").speed(0.1).build(ui, &mut prop.position.y);
                     imgui::Drag::new("Z").speed(0.1).build(ui, &mut prop.position.z);
