@@ -71,6 +71,7 @@ pub struct Primitive {
     pub material_idx: u32
 }
 
+#[derive(Clone)]
 pub struct Model {
     pub id: u64,            //Just the hash of the asset's name
     pub primitive_indices: Vec<usize>
@@ -543,6 +544,7 @@ struct BufferBlock {
     pub length: u64              //In f32s
 }
 
+new_key_type! { pub struct ModelKey; }
 new_key_type! { pub struct PositionBufferBlockKey; }
 
 pub struct Renderer {
@@ -554,7 +556,7 @@ pub struct Renderer {
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
 
-    models: OptionVec<Model>,
+    models: SlotMap<ModelKey, Model>,
     model_counters: Vec<u64>,
     primitives: OptionVec<Primitive>,
     drawlist: Vec<DrawCall>,
@@ -612,6 +614,10 @@ impl Renderer {
             fs[i] = self.frames_in_flight[i].framebuffer;
         }
         fs
+    }
+
+    pub fn get_model(&self, key: ModelKey) -> Option<&Model> {
+        self.models.get(key)
     }
 
     pub unsafe fn cleanup(&mut self, vk: &mut VulkanAPI) {
@@ -996,7 +1002,7 @@ impl Renderer {
             default_emissive_idx,
             material_sampler,
             point_sampler,
-            models: OptionVec::new(),
+            models: SlotMap::with_key(),
             model_counters: Vec::new(),
             primitives: OptionVec::new(),
             drawlist: Vec::new(),
@@ -1165,7 +1171,7 @@ impl Renderer {
         framebuffers
     }
 
-    pub fn upload_gltf_model(&mut self, vk: &mut VulkanAPI, data: &GLTFMeshData, pipeline: vk::Pipeline) -> Model {
+    pub fn upload_gltf_model(&mut self, vk: &mut VulkanAPI, data: &GLTFMeshData, pipeline: vk::Pipeline) -> ModelKey {
         fn load_prim_png(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFMeshData, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize) -> u32 {
             match tex_id_map.get(&prim_tex_idx) {
                 Some(id) => { *id }
@@ -1184,12 +1190,13 @@ impl Renderer {
         let id = hasher.finish();
 
         //Check if this model is already loaded
+        let mut i = 0;
         for model in self.models.iter() {
-            if let Some(m) = model {
-                if id == m.id {
-
-                }
+            if model.1.id == id {
+                self.model_counters[i] += 1;
+                return model.0;
             }
+            i += 1;
         }
 
         //let mut loading_images = vec![];
@@ -1241,9 +1248,12 @@ impl Renderer {
             indices.push(model_idx);
         }
         
-        Model {
+        self.model_counters.push(1);
+        let model = Model {
+            id,
             primitive_indices: indices
-        }
+        };
+        self.models.insert(model.clone())
     }
 
     fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {
@@ -1464,10 +1474,20 @@ impl Renderer {
         frame_info
     }
 
-    pub fn queue_drawcall(&mut self, model_idx: usize, transforms: &[glm::TMat4<f32>]) {
-        match &self.primitives[model_idx] {
+    pub fn queue_drawcall(&mut self, model_key: ModelKey, transforms: &[glm::TMat4<f32>]) {
+        let mut indices = vec![];
+        if let Some(model) = self.models.get(model_key) {
+            indices = model.primitive_indices.clone();
+        }
+        for idx in indices {
+            self.queue_drawcall_primitive(idx, transforms);
+        }
+    }
+
+    pub fn queue_drawcall_primitive(&mut self, idx: usize, transforms: &[glm::TMat4<f32>]) {
+        match &self.primitives[idx] {
             None => {
-                tfd::message_box_ok("No model at supplied index", &format!("No model loaded at index {}", model_idx), tfd::MessageBoxIcon::Error);
+                tfd::message_box_ok("No primitive at supplied index", &format!("No primitive loaded at index {}", idx), tfd::MessageBoxIcon::Error);
                 return;
             }
             Some(prim) => {let instance_count = transforms.len() as u32;
@@ -1479,7 +1499,7 @@ impl Renderer {
                     self.instance_data.push(instance_data);
                 }
                 let drawcall = DrawCall {
-                    geometry_idx: model_idx,
+                    geometry_idx: idx,
                     pipeline,
                     instance_count,
                     first_instance

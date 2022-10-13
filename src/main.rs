@@ -668,7 +668,7 @@ fn main() {
         physics_engine.step();
 
         let plane_model_matrix = glm::identity();
-        renderer.queue_drawcall(terrain_model_idx, &[plane_model_matrix]);
+        renderer.queue_drawcall_primitive(terrain_model_idx, &[plane_model_matrix]);
 
         let view_movement_vector = glm::mat4(
             1.0, 0.0, 0.0, 0.0,
@@ -695,9 +695,7 @@ fn main() {
                 matrices.push(matrix);
             }
         }
-        for idx in &totoro_model.primitive_indices {
-            renderer.queue_drawcall(*idx, &matrices);
-        }
+        renderer.queue_drawcall(totoro_model, &matrices);
 
         //Compute this frame's view matrix
         let view_from_world = if do_freecam {
@@ -750,13 +748,12 @@ fn main() {
 
         //Push drawcalls for static props
         for (_, prop) in static_props.iter() {
-            for idx in prop.model.primitive_indices.iter() {
-                let mm = glm::translation(&prop.position) *
-                         glm::rotation(prop.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
-                         glm::rotation(prop.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-                         glm::rotation(prop.roll, &glm::vec3(0.0, 1.0, 0.0));
-                renderer.queue_drawcall(*idx, &[mm]);
-            }
+            let mm = glm::translation(&prop.position) *
+                     glm::rotation(prop.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
+                     glm::rotation(prop.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+                     glm::rotation(prop.roll, &glm::vec3(0.0, 1.0, 0.0));
+
+            renderer.queue_drawcall(prop.model, &[mm]);
         }
         
         //Update sun
