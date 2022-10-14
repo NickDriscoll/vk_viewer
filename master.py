@@ -42,4 +42,4 @@ shutil.make_archive(release_name, "zip", root_dir=staging_dir)
 print("Done compressing in %.4f seconds" % (time.time() - start_time))
 
 #Cleanup
-#shutil.rmtree(staging_dir)
+shutil.rmtree(staging_dir)

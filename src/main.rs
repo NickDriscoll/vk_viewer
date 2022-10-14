@@ -44,12 +44,12 @@ use ozy::structs::{FrameTimer, OptionVec};
 use input::UserInput;
 use vkutil::{FreeList, GPUBuffer, GPUImage, VulkanAPI, DeferredImage};
 use physics::PhysicsEngine;
-use structs::{Camera, TerrainSpec, PhysicsProp};
+use structs::{Camera, TerrainSpec, PhysicsProp, SimulationSOA};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, Model};
 
 use crate::routines::*;
 use crate::gltfutil::GLTFMeshData;
-use crate::gui::DevGui;
+use crate::gui::{DevGui, PropsWindowResponse};
 use crate::structs::StaticProp;
 
 //Entry point
@@ -444,7 +444,8 @@ fn main() {
         })
     };
 
-    let mut static_props = DenseSlotMap::<_, StaticProp>::new();
+    let mut simulation_state = SimulationSOA::new();
+    let mut focused_prop = None;
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -452,7 +453,6 @@ fn main() {
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
     let mut last_view_from_world = glm::identity();
-    let mut do_freecam = false;
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
@@ -641,7 +641,6 @@ fn main() {
                 imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
     
                 if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
-                imgui_ui.checkbox("Freecam", &mut do_freecam);
     
                 imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
                 
@@ -655,19 +654,24 @@ fn main() {
             }
         }
 
-        if let Some(mesh_data) = dev_gui.do_props_window(&imgui_ui, &mut static_props) {
-            let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
-            let s = StaticProp {
-                name: mesh_data.name,
-                model,
-                position: camera.position,
-                pitch: 0.0,
-                yaw: 0.0,
-                roll: 0.0
-            };
-            static_props.insert(s);
+        match dev_gui.do_props_window(&imgui_ui, &mut simulation_state.static_props, focused_prop) {
+            PropsWindowResponse::LoadModel(mesh_data) => {
+                let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
+                let s = StaticProp {
+                    name: mesh_data.name,
+                    model,
+                    position: camera.position,
+                    pitch: 0.0,
+                    yaw: 0.0,
+                    roll: 0.0,
+                    scale: 1.0
+                };
+                simulation_state.static_props.insert(s);
+            }
+            PropsWindowResponse::FocusCamera(k) => { focused_prop = k; }
+            _ => {}
         }
-
+        
         dev_gui.do_material_list(&imgui_ui, &mut renderer);
 
         //Step the physics engine
@@ -683,12 +687,6 @@ fn main() {
             0.0, -1.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 1.0
         ) * glm::vec3_to_vec4(&input_output.movement_vector);
-        const FREECAM_SPEED: f32 = 3.0;
-        if do_freecam {
-            let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
-            camera.position += glm::vec4_to_vec3(&delta_pos);
-            camera.orientation += input_output.orientation_delta;
-        }
  
         //Totoros update
         let mut matrices = vec![];
@@ -706,60 +704,83 @@ fn main() {
         renderer.queue_drawcall(totoro_model, matrices);
 
         //Compute this frame's view matrix
-        let view_from_world = if do_freecam {
-            //Camera orientation based on user input
-            camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
-            renderer.uniform_data.camera_position = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
-            camera.make_view_matrix()
-        } else {
-            let min = 3.0;
-            let max = 200.0;
-            lookat_dist -= 0.1 * lookat_dist * input_output.scroll_amount;
-            lookat_dist = f32::clamp(lookat_dist, min, max);
+        let view_from_world = match focused_prop {
+            Some(key) => {
+                match simulation_state.static_props.get(key) {
+                    Some(prop) => {
+                        let min = 3.0;
+                        let max = 200.0;
+                        lookat_dist -= 0.1 * lookat_dist * input_output.scroll_amount;
+                        lookat_dist = f32::clamp(lookat_dist, min, max);
+                        
+                        let lookat = glm::look_at(&lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+                        let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-input_output.orientation_delta.x, input_output.orientation_delta.y, 0.0, 0.0);
             
-            let lookat = glm::look_at(&lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
-            let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-input_output.orientation_delta.x, input_output.orientation_delta.y, 0.0, 0.0);
-
-            lookat_pos += lookat_dist * glm::vec4_to_vec3(&world_space_offset);
-            let camera_pos = glm::normalize(&lookat_pos);
-            lookat_pos = lookat_dist * camera_pos;
+                        lookat_pos += lookat_dist * glm::vec4_to_vec3(&world_space_offset);
+                        let camera_pos = glm::normalize(&lookat_pos);
+                        lookat_pos = lookat_dist * camera_pos;
+                        
+                        let min = -0.95;
+                        let max = 0.95;
+                        let lookat_dot = glm::dot(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+                        if lookat_dot > max {
+                            let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+                            let current_angle = f32::acos(lookat_dot);
+                            let amount = f32::acos(max) - current_angle;
             
-            let min = -0.95;
-            let max = 0.95;
-            let lookat_dot = glm::dot(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
-            if lookat_dot > max {
-                let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
-                let current_angle = f32::acos(lookat_dot);
-                let amount = f32::acos(max) - current_angle;
+                            let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&lookat_pos);
+                            lookat_pos = glm::vec4_to_vec3(&new_pos);
+                        } else if lookat_dot < min {
+                            let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+                            let current_angle = f32::acos(lookat_dot);
+                            let amount = f32::acos(min) - current_angle;
+            
+                            let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(lookat_pos));                
+                            lookat_pos = glm::vec4_to_vec3(&new_pos);
+                        }
+            
+                        let lookat_target = prop.position;
+                        let pos = lookat_pos + lookat_target;
+                        let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
+                        renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
+                        m
 
-                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&lookat_pos);
-                lookat_pos = glm::vec4_to_vec3(&new_pos);
-            } else if lookat_dot < min {
-                let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
-                let current_angle = f32::acos(lookat_dot);
-                let amount = f32::acos(min) - current_angle;
-
-                let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(lookat_pos));                
-                lookat_pos = glm::vec4_to_vec3(&new_pos);
+                    }
+                    None => {
+                        //Freecam update                
+                        const FREECAM_SPEED: f32 = 3.0;
+                        let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
+                        camera.position += glm::vec4_to_vec3(&delta_pos);
+                        camera.orientation += input_output.orientation_delta;
+        
+                        camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
+                        renderer.uniform_data.camera_position = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
+                        camera.make_view_matrix()
+                    }
+                }
             }
+            None => {
+                //Freecam update                
+                const FREECAM_SPEED: f32 = 3.0;
+                let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
+                camera.position += glm::vec4_to_vec3(&delta_pos);
+                camera.orientation += input_output.orientation_delta;
 
-            let collider = physics_engine.collider_set.get(totoro_list[main_totoro_idx].as_ref().unwrap().collider_handle).unwrap();
-            let t = collider.position().translation;
-            let lookat_target = t.vector;
-            let pos = lookat_pos + lookat_target;
-            let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
-            renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
-            m
+                camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
+                renderer.uniform_data.camera_position = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
+                camera.make_view_matrix()
+            }
         };
         last_view_from_world = view_from_world;
         renderer.uniform_data.view_from_world = view_from_world;
 
         //Push drawcalls for static props
-        for (_, prop) in static_props.iter() {
+        for (_, prop) in simulation_state.static_props.iter() {
             let mm = glm::translation(&prop.position) *
                      glm::rotation(prop.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
                      glm::rotation(prop.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-                     glm::rotation(prop.roll, &glm::vec3(0.0, 1.0, 0.0));
+                     glm::rotation(prop.roll, &glm::vec3(0.0, 1.0, 0.0)) * 
+                     ozy::routines::uniform_scale(prop.scale);
 
             renderer.queue_drawcall(prop.model, vec![mm]);
         }

@@ -2,9 +2,15 @@ use ash::vk;
 use imgui::{DrawCmd, Ui, TreeNodeId};
 use slotmap::DefaultKey;
 use crate::render::Renderer;
-use crate::structs::TerrainSpec;
+use crate::structs::{TerrainSpec, StaticPropKey};
 use crate::vkutil::*;
 use crate::*;
+
+pub enum PropsWindowResponse {
+    LoadModel(GLTFMeshData),
+    FocusCamera(Option<StaticPropKey>),
+    None
+}
 
 #[derive(Default)]
 pub struct DevGui {
@@ -52,16 +58,15 @@ impl DevGui {
         }
     }
 
-    pub fn do_props_window(&mut self, ui: &Ui, props: &mut DenseSlotMap<DefaultKey, StaticProp>) -> Option<GLTFMeshData> {
-        if !self.do_props_window { return None; }
-
-        let mut out = None;
+    pub fn do_props_window(&mut self, ui: &Ui, props: &mut DenseSlotMap<StaticPropKey, StaticProp>, focused_prop: Option<StaticPropKey>) -> PropsWindowResponse {
+        let mut out = PropsWindowResponse::None;
+        if !self.do_props_window { return out; }
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
             let mut i = 0;
             let mut add_list = vec![];
             let mut delete_list = vec![];
             for prop in props.iter_mut() {
-                let key = prop.0;
+                let prop_key = prop.0;
                 let prop = prop.1;
 
                 if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push(ui) {
@@ -71,12 +76,23 @@ impl DevGui {
                     imgui::Drag::new("Pitch").speed(0.05).build(ui, &mut prop.pitch);
                     imgui::Drag::new("Yaw").speed(0.05).build(ui, &mut prop.yaw);
                     imgui::Drag::new("Roll").speed(0.05).build(ui, &mut prop.roll);
+                    imgui::Drag::new("Scale").speed(0.05).build(ui, &mut prop.scale);
+
+                    let mut b = false;
+                    if let Some(key) = focused_prop {
+                        b = prop_key == key;
+                    }
+                    if ui.checkbox("Focus camera", &mut b) {
+                        out = if !b { PropsWindowResponse::FocusCamera(None) }
+                              else { PropsWindowResponse::FocusCamera(Some(prop_key)) };
+                    }
+
                     if Self::do_standard_button(ui, "Clone") {
                         add_list.push(prop.clone());
                     }
                     ui.same_line();
                     if Self::do_standard_button(ui, "Delete") {
-                        delete_list.push(key);
+                        delete_list.push(prop_key);
                     }
                     ui.separator();
                     token.pop();
@@ -97,7 +113,7 @@ impl DevGui {
             
             if Self::do_standard_button(ui, "Load static prop") {
                 if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                    out = Some(gltfutil::gltf_meshdata(&path));
+                    out = PropsWindowResponse::LoadModel(gltfutil::gltf_meshdata(&path));
                 }
             }
 

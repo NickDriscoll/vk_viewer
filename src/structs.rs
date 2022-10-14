@@ -111,13 +111,25 @@ pub struct StaticProp {
     pub position: glm::TVec3<f32>,
     pub pitch: f32,
     pub yaw: f32,
-    pub roll: f32
+    pub roll: f32,
+    pub scale: f32
 }
 
 new_key_type! { pub struct ModelMatrixKey; }
 new_key_type! { pub struct ModelIndexKey; }
+new_key_type! { pub struct StaticPropKey; }
 pub struct SimulationSOA {
     pub model_matrices: DenseSlotMap<ModelMatrixKey, glm::TMat4<f32>>,
     pub model_indices: DenseSlotMap<ModelIndexKey, Vec<usize>>,
+    pub static_props: DenseSlotMap<StaticPropKey, StaticProp>
+}
 
+impl SimulationSOA {
+    pub fn new() -> Self {
+        SimulationSOA{
+            model_matrices: DenseSlotMap::with_key(),
+            model_indices: DenseSlotMap::with_key(),
+            static_props: DenseSlotMap::with_key()
+        }
+    }
 }
