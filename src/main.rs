@@ -6,7 +6,7 @@ extern crate nalgebra_glm as glm;
 extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
-mod gltfutil;
+mod asset;
 mod gui;
 mod input;
 mod physics;
@@ -19,7 +19,7 @@ mod vkutil;
 
 use ::function_name::named;
 use ash::vk::{self, BufferImageCopy};
-use gltfutil::GLTFPrimitive;
+use asset::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
 use imgui::{FontAtlasRefMut};
 use ozy::io::{DDSHeader, DDSHeader_DXT10, DDS_PixelFormat};
@@ -48,7 +48,7 @@ use structs::{Camera, TerrainSpec, PhysicsProp, SimulationSOA};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, Model};
 
 use crate::routines::*;
-use crate::gltfutil::GLTFMeshData;
+use crate::asset::GLTFMeshData;
 use crate::gui::{DevGui, PropsWindowResponse};
 use crate::structs::StaticProp;
 
@@ -372,7 +372,7 @@ fn main() {
         //);
 
         if !pathp.with_extension("dds").is_file() {
-            compress_png_synchronous(&mut vk, path);
+            asset::compress_png_synchronous(&mut vk, path);
         }
         terrain_image_indices[i] = vkutil::load_bc7_texture(&mut vk, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap());
     }
@@ -423,7 +423,7 @@ fn main() {
     let mut lookat_pos = lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
     //Load totoro as glb
-    let totoro_data = gltfutil::gltf_meshdata("./data/models/totoro_backup.glb");
+    let totoro_data = asset::gltf_meshdata("./data/models/totoro_backup.glb");
 
     //Register each primitive with the renderer
     let totoro_model = renderer.upload_gltf_model(&mut vk, &totoro_data, vk_3D_graphics_pipeline);

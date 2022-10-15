@@ -9,3 +9,4 @@ Texture compression
     Figure out why images smaller than the BC7 block size don't compress correctly
 Make orbit camera work for any object
 Fix Imgui flickering bugs
+Optimize glTFs to custom format

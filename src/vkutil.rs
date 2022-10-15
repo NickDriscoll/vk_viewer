@@ -141,7 +141,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         sampler,
         allocation
     };
-    upload_image(vk, &vim, &rgba);
+    asset::upload_image(vk, &vim, &rgba);
 
     //Then create the image view
     let view_info = vk::ImageViewCreateInfo {
@@ -267,7 +267,7 @@ impl GPUImage {
                 ..Default::default()
             };
             
-            let mut def_image = upload_image_deferred(vk, &image_create_info, sampler, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
+            let mut def_image = asset::upload_image_deferred(vk, &image_create_info, sampler, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
 
             let view_info = vk::ImageViewCreateInfo {
                 image: def_image.final_image.image,
@@ -360,7 +360,7 @@ impl GPUImage {
                 sampler,
                 allocation
             };
-            routines::record_image_upload_commands(vk, vk.command_buffers[cbidx], &vim, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &staging_buffer);
+            asset::record_image_upload_commands(vk, vk.command_buffers[cbidx], &vim, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &staging_buffer);
 
             vk.device.end_command_buffer(vk.command_buffers[cbidx]).unwrap();
     
@@ -443,7 +443,7 @@ impl GPUImage {
             sampler,
             allocation
         };
-        upload_image(vk, &vim, &raw_bytes);
+        asset::upload_image(vk, &vim, &raw_bytes);
         
         let sampler_subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,

@@ -113,7 +113,7 @@ impl DevGui {
             
             if Self::do_standard_button(ui, "Load static prop") {
                 if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                    out = PropsWindowResponse::LoadModel(gltfutil::gltf_meshdata(&path));
+                    out = PropsWindowResponse::LoadModel(asset::gltf_meshdata(&path));
                 }
             }
 
