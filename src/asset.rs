@@ -366,7 +366,7 @@ pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
     }
 }
 
-pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8], out_bc7_bytes: &mut [u8]) {
+pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Vec<u8> {
     //Extract metadata and decode to raw RGBA bytes
     let decoder = png::Decoder::new(png_bytes);
     let read_info = decoder.read_info().unwrap();
@@ -486,6 +486,7 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8], out_
             uncompressed_byte_offset += w2 * h2 * 4;
             bc7_offset += bc7_range;
         }
+        bc7_bytes
     }
 }
 
@@ -775,16 +776,15 @@ fn load_primitive_index_buffer(glb: &Gltf, prim: &gltf::Primitive) -> Vec<u32> {
     }
 }
 
-fn optimize_glb(vk: &mut VulkanAPI, path: &str) {
+pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
     let glb = Gltf::open(path).unwrap();
 
     let parent_dir = Path::new(path).parent().unwrap();
     let name = Path::new(path).file_stem().unwrap().to_string_lossy();;
-    let output_dir = format!("{}/.optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
-    let mut meshes = Vec::with_capacity(glb.meshes().count());
+    let output_location = format!("{}/.optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
+    let mut materials = Vec::with_capacity(glb.materials().count());
+    let mut primitives = Vec::with_capacity(64);
     for mesh in glb.meshes() {
-        let mut materials = Vec::with_capacity(glb.materials().count());
-        let mut primitives = Vec::with_capacity(mesh.primitives().count());
         for prim in mesh.primitives() {
             use gltf::Semantic;
             let vertex_positions = match get_f32_semantic(&glb, &prim, Semantic::Positions) {
@@ -838,7 +838,6 @@ fn optimize_glb(vk: &mut VulkanAPI, path: &str) {
                 }
                 None => { None }
             };
-            compress_png_file_synchronous(vk, path);
 
             let normal_png_bytes = match mat.normal_texture() {
                 Some(t) => {
@@ -873,10 +872,30 @@ fn optimize_glb(vk: &mut VulkanAPI, path: &str) {
                 None => { None }
             };
 
-            let color_bc7_bytes = None;
-            let normal_bc7_bytes = None;
-            let arm_bc7_bytes = None;
-            let emissive_bc7_bytes = None;
+            let color_bc7_bytes = match color_png_bytes {
+                Some(bytes) => {
+                    Some(compress_png_bytes_synchronous(vk, &bytes))
+                }
+                None => None
+            };
+            let normal_bc7_bytes = match normal_png_bytes {
+                Some(bytes) => {
+                    Some(compress_png_bytes_synchronous(vk, &bytes))
+                }
+                None => None
+            };
+            let arm_bc7_bytes = match arm_png_bytes {
+                Some(bytes) => {
+                    Some(compress_png_bytes_synchronous(vk, &bytes))
+                }
+                None => None
+            };
+            let emissive_bc7_bytes = match emissive_png_bytes {
+                Some(bytes) => {
+                    Some(compress_png_bytes_synchronous(vk, &bytes))
+                }
+                None => None
+            };
             let ozy_mat = OzyMaterial {
                 base_color: pbr.base_color_factor(),
                 emissive_factor: mat.emissive_factor(),
@@ -898,18 +917,13 @@ fn optimize_glb(vk: &mut VulkanAPI, path: &str) {
                 vertex_uvs,
                 material_idx: (materials.len() - 1) as u32
             };
+            primitives.push(ozy_prim);
         }
-
-        let mesh = OzyMesh {
-            materials,
-            primitives
-        };
-        meshes.push(mesh);
     }
 
+    //File header is gonna be material count + primitive count
+    let mut output_file = OpenOptions::new().write(true).open(output_location).unwrap();
     
-    let mut output_file = OpenOptions::new().write(true).open(output_dir).unwrap();
-
 
 }
 

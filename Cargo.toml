@@ -11,7 +11,7 @@ inherits = "release"
 strip = true
 incremental = false
 debug = false
-panic = "abort"
+#panic = "abort"
 lto = true
 opt-level = 3
 

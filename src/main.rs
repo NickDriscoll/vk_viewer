@@ -656,6 +656,7 @@ fn main() {
         match dev_gui.do_asset_window(&imgui_ui, "./data/models") {
             AssetWindowResponse::OptimizeGLB(path) => {
                 println!("Optimizing {}", path);
+                asset::optimize_glb_mesh(&mut vk, &path);
             }
             AssetWindowResponse::None => {}
         }
