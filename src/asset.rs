@@ -1,5 +1,6 @@
 use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
+use ozy::io::{OzyMaterial, OzyPrimitive, OzyMesh};
 use std::ptr;
 use crate::*;
 
@@ -14,24 +15,9 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::
     //Create image
     let image = vk.device.create_image(image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
     let allocation = vkutil::allocate_image_memory(vk, image);
-    let view_info = vk::ImageViewCreateInfo {
-        image,
-        format: image_create_info.format,
-        view_type: vk::ImageViewType::TYPE_2D,
-        components: vkutil::COMPONENT_MAPPING_DEFAULT,
-        subresource_range: vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: image_create_info.mip_levels,
-            base_array_layer: 0,
-            layer_count: 1
-        },
-        ..Default::default()
-    };
-    let image_view = vk.device.create_image_view(&view_info, vkutil::MEMORY_ALLOCATOR).unwrap();
     let vim = GPUImage {
         image,
-        view: image_view,
+        view: None,
         width: image_create_info.extent.width,
         height: image_create_info.extent.height,
         mip_count: image_create_info.mip_levels,
@@ -128,7 +114,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: v
         src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
         dst_access_mask: vk::AccessFlags::SHADER_READ,
         old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        new_layout: layout,
         image: gpu_image.image,
         subresource_range,
         ..Default::default()
@@ -139,7 +125,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: v
     let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-        old_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        old_layout: layout,
         new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         image: gpu_image.image,
         subresource_range: vk::ImageSubresourceRange {
@@ -336,8 +322,175 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
     staging_buffer.free(vk);
 }
 
+//Returns the uncompressed bytes of a png image to RGBA
+pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
+    use png::BitDepth;
+    use png::ColorType;
+
+    let info = reader.info().clone();
+
+    //We're given a depth in bits, so we set up an integer divide
+    let byte_size_divisor = match info.bit_depth {
+        BitDepth::One => { 8 }
+        BitDepth::Two => { 4 }
+        BitDepth::Four => { 2 }
+        BitDepth::Eight => { 1 }
+        _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
+    };
+
+    let width = info.width;
+    let height = info.height;
+    let pixel_count = (width * height / byte_size_divisor) as usize;
+    match info.color_type {
+        ColorType::Rgb => {
+            let mut raw_bytes = vec![0u8; 3 * pixel_count];
+            reader.next_frame(&mut raw_bytes).unwrap();
+
+            //Convert to RGBA by adding an alpha of 1.0 to each pixel
+            let mut bytes = vec![0xFFu8; 4 * pixel_count];
+            for i in 0..pixel_count {
+                let idx = 4 * i;
+                let r_idx = 3 * i;
+                bytes[idx] = raw_bytes[r_idx];
+                bytes[idx + 1] = raw_bytes[r_idx + 1];
+                bytes[idx + 2] = raw_bytes[r_idx + 2];
+            }
+            bytes
+        }
+        ColorType::Rgba => {
+            let mut bytes = vec![0xFFu8; 4 * pixel_count];
+            reader.next_frame(&mut bytes).unwrap();
+            bytes
+        }
+        t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
+    }
+}
+
+pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8], out_bc7_bytes: &mut [u8]) {
+    //Extract metadata and decode to raw RGBA bytes
+    let decoder = png::Decoder::new(png_bytes);
+    let read_info = decoder.read_info().unwrap();
+    let info = read_info.info();
+    let width = info.width;
+    let height = info.height;
+    let rgb_bitcount = info.bit_depth as u32;
+    let uncompressed_format = match info.srgb {
+        Some(_) => { vk::Format::R8G8B8A8_SRGB }
+        None => { vk::Format::R8G8B8A8_UNORM }
+    };
+    let bytes = decode_png(read_info);
+
+    //After decoding, upload to GPU for mipmap creation
+    let mip_levels = calculate_miplevels(width, height);
+    let image_create_info = vk::ImageCreateInfo {
+        image_type: vk::ImageType::TYPE_2D,
+        format: uncompressed_format,
+        extent: vk::Extent3D {
+            width,
+            height,
+            depth: 1
+        },
+        mip_levels,
+        array_layers: 1,
+        samples: vk::SampleCountFlags::TYPE_1,
+        tiling: vk::ImageTiling::OPTIMAL,
+        usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST,
+        sharing_mode: vk::SharingMode::EXCLUSIVE,
+        queue_family_index_count: 1,
+        p_queue_family_indices: &vk.queue_family_index,
+        initial_layout: vk::ImageLayout::UNDEFINED,
+        ..Default::default()
+    };
+    
+    let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+
+    unsafe {
+        //Get the GPU image back into system RAM
+        let sampler = vk.device.create_sampler(&vk::SamplerCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+        let def_image = upload_image_deferred(vk, &image_create_info, sampler, gpu_image_layout, &bytes);
+        let def_image = &DeferredImage::synchronize(vk, vec![def_image])[0];
+        let finished_image_reqs = vk.device.get_image_memory_requirements(def_image.final_image.image);
+        let readback_buffer = GPUBuffer::allocate(vk, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::CpuToGpu);
+        
+        let cb_idx = vk.command_buffer_indices.insert(0);
+        let command_buffer = vk.command_buffers[cb_idx];
+        vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+
+        let mut regions = Vec::with_capacity(mip_levels as usize);
+        let mut current_offset = 0;
+        for i in 0..mip_levels {
+            let w = width / (1 << i);
+            let h = height / (1 << i);
+            let image_subresource = vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: i as u32,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let copy = vk::BufferImageCopy {
+                buffer_offset: current_offset,
+                buffer_row_length: 0,
+                buffer_image_height: 0,
+                image_extent: vk::Extent3D {
+                    width: w,
+                    height: h,
+                    depth: 1
+                },
+                image_subresource,
+                image_offset: vk::Offset3D::default()
+            };
+            regions.push(copy);
+            current_offset += (w * h * 4) as u64;
+        }
+        vk.device.cmd_copy_image_to_buffer(command_buffer, def_image.final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
+
+        vk.device.end_command_buffer(command_buffer).unwrap();
+
+        let submit_info = vk::SubmitInfo {
+            command_buffer_count: 1,
+            p_command_buffers: &command_buffer,
+            ..Default::default()
+        };
+        let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+        let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+        vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
+        vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+        vk.command_buffer_indices.remove(cb_idx);
+        vk.device.destroy_sampler(sampler, vkutil::MEMORY_ALLOCATOR);
+    
+        let mut uncompressed_bytes_size = 0;
+        for j in 0..mip_levels {
+            let w2 = (width / (1 << j)) as usize;
+            let h2 = (height / (1 << j)) as usize;
+            uncompressed_bytes_size += w2 * h2;
+        }
+        let mut bc7_bytes = vec![0u8; uncompressed_bytes_size / 4];  //BC7 images are one byte per pixel
+
+        let uncompressed_bytes = readback_buffer.read_buffer_bytes();
+        let mut uncompressed_byte_offset = 0;
+        let mut bc7_offset = 0;
+        for j in 0..mip_levels {
+            let w2 = (width / (1 << j)) as usize;
+            let h2 = (height / (1 << j)) as usize;
+            let data = &uncompressed_bytes[uncompressed_byte_offset..(uncompressed_byte_offset + w2 * h2 * 4)];
+            let surface = ispc::RgbaSurface {
+                data,
+                width: w2 as u32,
+                height: h2 as u32,
+                stride: 4 * w2 as u32
+            };
+            let settings = ispc::bc7::opaque_slow_settings();
+            let bc7_range = usize::max(w2 * h2, 16);    //BC7 blocks are 16 bytes at minimum
+            ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[bc7_offset..(bc7_offset + bc7_range)]);
+
+            uncompressed_byte_offset += w2 * h2 * 4;
+            bc7_offset += bc7_range;
+        }
+    }
+}
+
 #[named]
-pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
+pub fn compress_png_file_synchronous(vk: &mut VulkanAPI, path: &str) {
     unsafe {
         use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
 
@@ -353,15 +506,15 @@ pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
         let width = info.width;
         let height = info.height;
         let rgb_bitcount = info.bit_depth as u32;
-        let dxgi_format = match info.srgb {
-            Some(_) => { DXGI_FORMAT::BC7_UNORM_SRGB }
-            None => { DXGI_FORMAT::BC7_UNORM }
-        };
         let uncompressed_format = match info.srgb {
             Some(_) => { vk::Format::R8G8B8A8_SRGB }
             None => { vk::Format::R8G8B8A8_UNORM }
         };
-        let bytes = vkutil::decode_png(read_info);
+        let dxgi_format = match info.srgb {
+            Some(_) => { DXGI_FORMAT::BC7_UNORM_SRGB }
+            None => { DXGI_FORMAT::BC7_UNORM }
+        };
+        let bytes = decode_png(read_info);
 
         //After decoding, upload to GPU for mipmap creation
         let mip_levels = calculate_miplevels(width, height);
@@ -400,8 +553,8 @@ pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
         let mut regions = Vec::with_capacity(mip_levels as usize);
         let mut current_offset = 0;
         for i in 0..mip_levels {
-            let w = def_image.final_image.width / (1 << i);
-            let h = def_image.final_image.height / (1 << i);
+            let w = width / (1 << i);
+            let h = height / (1 << i);
             let image_subresource = vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: i as u32,
@@ -437,6 +590,7 @@ pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
         vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
         vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
         vk.command_buffer_indices.remove(cb_idx);
+        vk.device.destroy_sampler(sampler, vkutil::MEMORY_ALLOCATOR);
 
         let uncompressed_bytes = readback_buffer.read_buffer_bytes();
         let mut bc7_bytes = vec![0u8; uncompressed_bytes.len() / 4];  //BC7 images are one byte per pixel
@@ -487,8 +641,6 @@ pub fn compress_png_synchronous(vk: &mut VulkanAPI, path: &str) {
         let mut out_file = OpenOptions::new().write(true).create(true).open(out_path).unwrap();
         out_file.write(struct_to_bytes(&dds_header)).unwrap();
         out_file.write(&bc7_bytes).unwrap();
-
-        vk.device.destroy_sampler(sampler, vkutil::MEMORY_ALLOCATOR);
     }
 }
 
@@ -537,6 +689,27 @@ pub struct GLTFSceneData {
     pub meshes: Vec<GLTFMeshData>
 }
 
+fn png_bytes_from_source(glb: &Gltf, source: gltf::image::Source) -> Vec<u8> {
+    let mut bytes = vec![];
+    match source {
+        gltf::image::Source::View {view, mime_type} => unsafe {
+            if mime_type.ne("image/png") {
+                crash_with_error_dialog(&format!("Error loading image from glb\nUnsupported image type: {}", mime_type));
+            }
+            if let Some(blob) = &glb.blob {
+                bytes = vec![0u8; view.length()];
+                let src_ptr = blob.as_ptr() as *const u8;
+                let src_ptr = src_ptr.offset(view.offset() as isize);
+                ptr::copy_nonoverlapping(src_ptr, bytes.as_mut_ptr(), view.length());
+            }
+        }
+        gltf::image::Source::Uri {..} => {
+            crash_with_error_dialog("Uri not supported");
+        }
+    }
+    bytes
+}
+
 fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic) -> Option<Vec<f32>> {
     let acc = match prim.get(&semantic) {
         Some(a) => { a }
@@ -570,38 +743,180 @@ fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic
     }
 }
 
-fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, primitive_array: &mut Vec<GLTFPrimitive>, texture_bytes: &mut [Vec<u8>]) {
+fn load_primitive_index_buffer(glb: &Gltf, prim: &gltf::Primitive) -> Vec<u32> {
+    unsafe {
+        let acc = prim.indices().unwrap();
+        let view = acc.view().unwrap();
+        match acc.data_type() {
+            DataType::U16 => {
+                let index_count = view.length() / 2;
+                let mut index_buffer = vec![0u32; index_count];
+                if let Some(blob) = &glb.blob {
+                    for i in 0..index_count {
+                        let current_idx = 2 * i + view.offset();
+                        let bytes = [blob[current_idx], blob[current_idx + 1], 0, 0];
+                        index_buffer[i] = u32::from_le_bytes(bytes);
+                    }
+                }
+                index_buffer
+            }
+            DataType::U32 => {
+                let index_count = view.length() / 4;
+                let mut index_buffer = vec![0u32; index_count];
+                if let Some(blob) = &glb.blob {
+                    let src_ptr = blob.as_ptr() as *const u8;
+                    let src_ptr = src_ptr.offset(view.offset() as isize);
+                    ptr::copy_nonoverlapping(src_ptr, index_buffer.as_mut_ptr() as *mut u8, view.length());
+                }
+                index_buffer
+            }
+            _ => { crash_with_error_dialog(&format!("Unsupported index type: {:?}", acc.data_type())); }
+        }
+    }
+}
+
+fn optimize_glb(vk: &mut VulkanAPI, path: &str) {
+    let glb = Gltf::open(path).unwrap();
+
+    let parent_dir = Path::new(path).parent().unwrap();
+    let name = Path::new(path).file_stem().unwrap().to_string_lossy();;
+    let output_dir = format!("{}/.optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
+    let mut meshes = Vec::with_capacity(glb.meshes().count());
+    for mesh in glb.meshes() {
+        let mut materials = Vec::with_capacity(glb.materials().count());
+        let mut primitives = Vec::with_capacity(mesh.primitives().count());
+        for prim in mesh.primitives() {
+            use gltf::Semantic;
+            let vertex_positions = match get_f32_semantic(&glb, &prim, Semantic::Positions) {
+                Some(v) => {
+                    let mut out = vec![0.0; v.len() * 4 / 3];
+                    for i in (0..v.len()).step_by(3) {
+                        out[4 * i / 3] =     v[i];
+                        out[4 * i / 3 + 1] = v[i + 1];
+                        out[4 * i / 3 + 2] = v[i + 2];
+                        out[4 * i / 3 + 3] = 1.0;
+                    }
+                    out
+                }
+                None => {
+                    crash_with_error_dialog("GLTF primitive was missing position attribute.");
+                }
+            };
+            let vertex_normals = match get_f32_semantic(&glb, &prim, Semantic::Normals) {
+                Some(v) => {
+                    //Align to float4
+                    let mut out = vec![0.0; v.len() * 4 / 3];
+                    for i in (0..v.len()).step_by(3) {
+                        out[4 * i / 3] =     v[i];
+                        out[4 * i / 3 + 1] = v[i + 1];
+                        out[4 * i / 3 + 2] = v[i + 2];
+                        out[4 * i / 3 + 3] = 0.0;
+                    }
+                    out
+                }
+                None => { vec![0.0; vertex_positions.len()] }
+            };
+
+            let vertex_tangents = match get_f32_semantic(&glb, &prim, Semantic::Tangents) {
+                Some(v) => { v }
+                None => { vec![0.0; vertex_positions.len() / 3 * 4] }
+            };
+            let vertex_uvs = match get_f32_semantic(&glb, &prim, Semantic::TexCoords(0)) {
+                Some(v) => { v }
+                None => { vec![0.0; vertex_positions.len() / 3 * 2] }
+            };
+
+            let mat = prim.material();
+            let pbr = mat.pbr_metallic_roughness();            
+            let color_png_bytes = match pbr.base_color_texture() {
+                Some(t) => {
+                    let image = t.texture().source();
+                    let idx = image.index();
+                    let source = image.source();
+                    let png_bytes = png_bytes_from_source(&glb, source);
+                    Some(png_bytes)
+                }
+                None => { None }
+            };
+            compress_png_file_synchronous(vk, path);
+
+            let normal_png_bytes = match mat.normal_texture() {
+                Some(t) => {
+                    let image = t.texture().source();
+                    let idx = image.index();
+                    let source = image.source();
+                    let png_bytes = png_bytes_from_source(&glb, source);
+                    Some(png_bytes)
+                }
+                None => { None }
+            };
+
+            let arm_png_bytes = match pbr.metallic_roughness_texture() {
+                Some(t) => {
+                    let image = t.texture().source();
+                    let idx = image.index();
+                    let source = image.source();
+                    let png_bytes = png_bytes_from_source(&glb, source);
+                    Some(png_bytes)
+                }
+                None => { None }
+            };
+
+            let emissive_png_bytes = match mat.emissive_texture() {
+                Some(t) => {
+                    let image = t.texture().source();
+                    let idx = image.index();
+                    let source = image.source();
+                    let png_bytes = png_bytes_from_source(&glb, source);
+                    Some(png_bytes)
+                }
+                None => { None }
+            };
+
+            let color_bc7_bytes = None;
+            let normal_bc7_bytes = None;
+            let arm_bc7_bytes = None;
+            let emissive_bc7_bytes = None;
+            let ozy_mat = OzyMaterial {
+                base_color: pbr.base_color_factor(),
+                emissive_factor: mat.emissive_factor(),
+                base_roughness: pbr.roughness_factor(),
+                color_bc7_bytes,
+                normal_bc7_bytes,
+                arm_bc7_bytes,
+                emissive_bc7_bytes
+            };
+            materials.push(ozy_mat);
+
+            let indices = load_primitive_index_buffer(&glb, &prim);
+
+            let ozy_prim = OzyPrimitive {
+                indices,
+                vertex_positions,
+                vertex_normals,
+                vertex_tangents,
+                vertex_uvs,
+                material_idx: (materials.len() - 1) as u32
+            };
+        }
+
+        let mesh = OzyMesh {
+            materials,
+            primitives
+        };
+        meshes.push(mesh);
+    }
+
+    
+    let mut output_file = OpenOptions::new().write(true).open(output_dir).unwrap();
+
+
+}
+
+fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, out_primitive_array: &mut Vec<GLTFPrimitive>, texture_bytes: &mut [Vec<u8>]) {
     for prim in mesh.primitives() {
         //We always expect an index buffer to be present
-        let acc = prim.indices().unwrap();
-        let index_buffer = unsafe {
-            let view = acc.view().unwrap();
-            match acc.data_type() {
-                DataType::U16 => {
-                    let index_count = view.length() / 2;
-                    let mut index_buffer = vec![0u32; index_count];
-                    if let Some(blob) = &glb.blob {
-                        for i in 0..index_count {
-                            let current_idx = 2 * i + view.offset();
-                            let bytes = [blob[current_idx], blob[current_idx + 1], 0, 0];
-                            index_buffer[i] = u32::from_le_bytes(bytes);
-                        }
-                    }
-                    index_buffer
-                }
-                DataType::U32 => {
-                    let index_count = view.length() / 4;
-                    let mut index_buffer = vec![0u32; index_count];
-                    if let Some(blob) = &glb.blob {
-                        let src_ptr = blob.as_ptr() as *const u8;
-                        let src_ptr = src_ptr.offset(view.offset() as isize);
-                        ptr::copy_nonoverlapping(src_ptr, index_buffer.as_mut_ptr() as *mut u8, view.length());
-                    }
-                    index_buffer
-                }
-                _ => { crash_with_error_dialog(&format!("Unsupported index type: {:?}", acc.data_type())); }
-            }
-        };
+        let index_buffer = load_primitive_index_buffer(glb, &prim);
         //We always expect position data to be present
         use gltf::Semantic;
         let position_vec = match get_f32_semantic(&glb, &prim, Semantic::Positions) {
@@ -644,27 +959,6 @@ fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, primitive_array: &mut Vec<GLTFP
         };
 
         //Handle material data
-        use gltf::image::Source;
-        fn png_bytes_from_source(glb: &Gltf, source: Source) -> Vec<u8> {
-            let mut bytes = vec![];
-            match source {
-                Source::View {view, mime_type} => unsafe {
-                    if mime_type.ne("image/png") {
-                        crash_with_error_dialog(&format!("Error loading image from glb\nUnsupported image type: {}", mime_type));
-                    }
-                    if let Some(blob) = &glb.blob {
-                        bytes = vec![0u8; view.length()];
-                        let src_ptr = blob.as_ptr() as *const u8;
-                        let src_ptr = src_ptr.offset(view.offset() as isize);
-                        ptr::copy_nonoverlapping(src_ptr, bytes.as_mut_ptr(), view.length());
-                    }
-                }
-                Source::Uri {..} => {
-                    crash_with_error_dialog("Uri not supported");
-                }
-            }
-            bytes
-        }
         let mat = prim.material();
         let pbr_model = mat.pbr_metallic_roughness();
 
@@ -750,7 +1044,7 @@ fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, primitive_array: &mut Vec<GLTFP
             indices: index_buffer,
             material: mat
         };
-        primitive_array.push(p);
+        out_primitive_array.push(p);
     }
 }
 

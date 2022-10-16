@@ -21,6 +21,7 @@ use ::function_name::named;
 use ash::vk::{self, BufferImageCopy};
 use asset::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
+use gui::AssetWindowResponse;
 use imgui::{FontAtlasRefMut};
 use ozy::io::{DDSHeader, DDSHeader_DXT10, DDS_PixelFormat};
 use rapier3d::prelude::*;
@@ -364,15 +365,8 @@ fn main() {
         let path = terrain_image_paths[i];
         let pathp = Path::new(path);
 
-        //let image = GPUImage::from_png_file(&mut vk, path);
-        //terrain_image_indices[i] = vkutil::make_global_texture_descriptor(
-        //    &mut renderer.global_textures,
-        //    renderer.material_sampler,
-        //    image.view
-        //);
-
         if !pathp.with_extension("dds").is_file() {
-            asset::compress_png_synchronous(&mut vk, path);
+            asset::compress_png_file_synchronous(&mut vk, path);
         }
         terrain_image_indices[i] = vkutil::load_bc7_texture(&mut vk, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap());
     }
@@ -599,7 +593,11 @@ fn main() {
                     if let Some(mt) = imgui_ui.begin_menu("File") {
                         if imgui::MenuItem::new("New").build(&imgui_ui) {}
                         if imgui::MenuItem::new("Load").build(&imgui_ui) {}
-                        if imgui::MenuItem::new("Save").build(&imgui_ui) {}
+                        if imgui::MenuItem::new("Save As...").build(&imgui_ui) {
+                            if let Some(path) = tfd::save_file_dialog("Save As...", "./data/scenes") {
+                                
+                            }
+                        }
                         if imgui::MenuItem::new("Quit").build(&imgui_ui) { break 'running; }
                         mt.end();
                     }
@@ -608,6 +606,7 @@ fn main() {
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Environment") {
+                        if imgui::MenuItem::new("Asset window").build(&imgui_ui) { dev_gui.do_asset_window = true; }
                         if imgui::MenuItem::new("Props window").build(&imgui_ui) { dev_gui.do_props_window = true; }
                         if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) { dev_gui.do_terrain_window = true; }
                         mt.end();
@@ -654,6 +653,13 @@ fn main() {
             }
         }
 
+        match dev_gui.do_asset_window(&imgui_ui, "./data/models") {
+            AssetWindowResponse::OptimizeGLB(path) => {
+                println!("Optimizing {}", path);
+            }
+            AssetWindowResponse::None => {}
+        }
+
         match dev_gui.do_props_window(&imgui_ui, &mut simulation_state.static_props, focused_prop) {
             PropsWindowResponse::LoadModel(mesh_data) => {
                 let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
@@ -669,7 +675,8 @@ fn main() {
                 simulation_state.static_props.insert(s);
             }
             PropsWindowResponse::FocusCamera(k) => { focused_prop = k; }
-            _ => {}
+            PropsWindowResponse::Interacted => {}
+            PropsWindowResponse::None => {}
         }
         
         dev_gui.do_material_list(&imgui_ui, &mut renderer);

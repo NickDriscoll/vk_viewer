@@ -6,7 +6,17 @@ build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[profile.master]
+inherits = "release"
+strip = true
+incremental = false
+debug = false
+panic = "abort"
+lto = true
+opt-level = 3
+
 [profile.release]
+lto = false
 strip = false
 incremental = true
 

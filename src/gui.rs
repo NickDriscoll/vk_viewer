@@ -6,9 +6,15 @@ use crate::structs::{TerrainSpec, StaticPropKey};
 use crate::vkutil::*;
 use crate::*;
 
+pub enum AssetWindowResponse {
+    OptimizeGLB(String),
+    None
+}
+
 pub enum PropsWindowResponse {
     LoadModel(GLTFMeshData),
     FocusCamera(Option<StaticPropKey>),
+    Interacted,
     None
 }
 
@@ -21,6 +27,7 @@ pub struct DevGui {
     pub do_terrain_window: bool,
     pub do_prop_window: bool,
     pub do_props_window: bool,
+    pub do_asset_window: bool,
     pub do_mat_list: bool
 }
 
@@ -28,7 +35,7 @@ impl DevGui {
     pub const FRAMES_IN_FLIGHT: usize = Renderer::FRAMES_IN_FLIGHT + 1;
     pub const FLOATS_PER_VERTEX: usize = 8;
 
-    pub fn do_standard_button(ui: &Ui, label: &str) -> bool { ui.button_with_size(label, [0.0, 32.0]) }
+    pub fn do_standard_button<S: AsRef<str>>(ui: &Ui, label: S) -> bool { ui.button_with_size(label, [0.0, 32.0]) }
 
     pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
         let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
@@ -58,9 +65,45 @@ impl DevGui {
         }
     }
 
+    pub fn do_asset_window(&mut self, ui: &Ui, path: &str) -> AssetWindowResponse {
+        let mut response = AssetWindowResponse::None;
+        if !self.do_asset_window { return response; }
+        if let Some(win_t) = imgui::Window::new("Asset manager").begin(ui) {
+            let p = Path::new(path);
+            let mut i = 0;
+            for entry in p.read_dir().unwrap() {
+                let entry = entry.unwrap();
+                let metadata = entry.metadata().unwrap();
+                let e_path = entry.path();
+                let name = e_path.file_stem().unwrap().to_string_lossy();
+                if metadata.is_file() {
+                    ui.text(entry.file_name().to_string_lossy());
+                    ui.same_line();
+                    let parent_dir = p.parent().unwrap();
+                    let opt_path = format!("{}/.optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
+                    let opt_dir = Path::new(&opt_path);
+                    if opt_dir.exists() {
+                        ui.text("Asset has been optimized.");
+                    } else {
+                        if Self::do_standard_button(ui, format!("Optimize###{}", i)) {
+                            response = AssetWindowResponse::OptimizeGLB(String::from(entry.path().to_str().unwrap()));
+                        }
+                    }
+                }
+                ui.separator();
+
+                i += 1;
+            }
+            if DevGui::do_standard_button(ui, "Close") { self.do_asset_window = false; }
+            win_t.end();
+        }
+        response
+    }
+
     pub fn do_props_window(&mut self, ui: &Ui, props: &mut DenseSlotMap<StaticPropKey, StaticProp>, focused_prop: Option<StaticPropKey>) -> PropsWindowResponse {
         let mut out = PropsWindowResponse::None;
         if !self.do_props_window { return out; }
+        let mut interacted = false;
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
             let mut i = 0;
             let mut add_list = vec![];
@@ -70,13 +113,13 @@ impl DevGui {
                 let prop = prop.1;
 
                 if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push(ui) {
-                    imgui::Drag::new("X").speed(0.1).build(ui, &mut prop.position.x);
-                    imgui::Drag::new("Y").speed(0.1).build(ui, &mut prop.position.y);
-                    imgui::Drag::new("Z").speed(0.1).build(ui, &mut prop.position.z);
-                    imgui::Drag::new("Pitch").speed(0.05).build(ui, &mut prop.pitch);
-                    imgui::Drag::new("Yaw").speed(0.05).build(ui, &mut prop.yaw);
-                    imgui::Drag::new("Roll").speed(0.05).build(ui, &mut prop.roll);
-                    imgui::Drag::new("Scale").speed(0.05).build(ui, &mut prop.scale);
+                    interacted |= imgui::Drag::new("X").speed(0.1).build(ui, &mut prop.position.x);
+                    interacted |= imgui::Drag::new("Y").speed(0.1).build(ui, &mut prop.position.y);
+                    interacted |= imgui::Drag::new("Z").speed(0.1).build(ui, &mut prop.position.z);
+                    interacted |= imgui::Drag::new("Pitch").speed(0.05).build(ui, &mut prop.pitch);
+                    interacted |= imgui::Drag::new("Yaw").speed(0.05).build(ui, &mut prop.yaw);
+                    interacted |= imgui::Drag::new("Roll").speed(0.05).build(ui, &mut prop.roll);
+                    interacted |= imgui::Drag::new("Scale").speed(0.05).build(ui, &mut prop.scale);
 
                     let mut b = false;
                     if let Some(key) = focused_prop {
@@ -120,6 +163,7 @@ impl DevGui {
             if DevGui::do_standard_button(ui, "Close") { self.do_props_window = false; }
             win_token.end();
         }
+        if interacted { out = PropsWindowResponse::Interacted; }
 
         out
     }

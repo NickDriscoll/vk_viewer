@@ -305,7 +305,7 @@ impl CascadedShadowMap {
 
         let gpu_image = GPUImage {
             image,
-            view: image_view,
+            view: Some(image_view),
             width: resolution,
             height: resolution,
             mip_count: 1,
@@ -1182,7 +1182,7 @@ impl Renderer {
 
             let gpu_image = GPUImage {
                 image: primary_color_buffer,
-                view: color_buffer_view,
+                view: Some(color_buffer_view),
                 width: extent.width,
                 height: extent.height,
                 mip_count: 1,
@@ -1235,7 +1235,7 @@ impl Renderer {
         }
 
         //let mut loading_images = vec![];
-        let mut keys = vec![];
+        let mut primitive_keys = vec![];
         let mut tex_id_map = HashMap::new();
         for prim in &data.primitives {
             let prim_tex_indices = [
@@ -1280,10 +1280,11 @@ impl Renderer {
                 uv_offset: offsets.uv_offset,
                 material_idx
             });
-            keys.push(model_idx);
+            primitive_keys.push(model_idx);
         }
+        let model_key = self.new_model(id, primitive_keys);
         
-        self.new_model(id, keys)
+        model_key
     }
 
     pub fn new_model(&mut self, id: u64, primitive_keys: Vec<PrimitiveKey>) -> ModelKey {
@@ -1436,7 +1437,7 @@ impl Renderer {
             let default_texture = &self.global_images[self.default_texture_idx as usize].as_ref().unwrap();
             let default_descriptor_info = vk::DescriptorImageInfo {
                 sampler: default_texture.sampler,
-                image_view: default_texture.view,
+                image_view: default_texture.view.unwrap(),
                 image_layout: default_texture.layout
             };
 
@@ -1446,7 +1447,7 @@ impl Renderer {
                     Some(image) => {
                         let descriptor_info = vk::DescriptorImageInfo {
                             sampler: image.sampler,
-                            image_view: image.view,
+                            image_view: image.view.unwrap(),
                             image_layout: image.layout
                         };
                         image_infos[i] = descriptor_info;
@@ -1564,14 +1565,6 @@ impl Renderer {
             world_transforms
         };
         self.raw_draws.push(desired_draw);
-
-        // let mut indices = vec![];
-        // if let Some(model) = self.models.get(model_key) {
-        //     indices = model.primitive_indices.clone();
-        // }
-        // for idx in indices {
-        //     self.queue_drawcall_primitive(idx, transforms);
-        // }
     }
 
     pub fn drawlist_iter(&self) -> Iter<DrawCall> {

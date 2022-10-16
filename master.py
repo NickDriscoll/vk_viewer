@@ -15,7 +15,8 @@ if os.path.exists(staging_dir):
 cargo_proc = subprocess.run([
 		"cargo",
 		"rustc",
-		"--release",
+		"--profile",
+		"master",
 		"--",
 		"--cfg",
 		"master"
@@ -32,7 +33,7 @@ for d in asset_dirs:
 	shutil.copytree(d, "%s/%s" % (staging_dir, d))
 
 
-shutil.copy("target/release/%s.exe" % name, "%s/" % staging_dir)
+shutil.copy("target/master/%s.exe" % name, "%s/" % staging_dir)
 shutil.copy("run_from_cmd.bat", "%s/" % staging_dir)
 
 #Compress the build into a zip archive

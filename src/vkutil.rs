@@ -91,15 +91,6 @@ pub unsafe fn allocate_named_image_memory(vk: &mut VulkanAPI, image: vk::Image, 
     alloc
 }
 
-pub fn make_global_texture_descriptor(global_textures: &mut FreeList<vk::DescriptorImageInfo>, sampler: vk::Sampler, image_view: vk::ImageView) -> u32 {
-    let descriptor_info = vk::DescriptorImageInfo {
-        sampler,
-        image_view,
-        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-    };
-    global_textures.insert(descriptor_info) as u32
-}
-
 pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<GPUImage>, sampler: vk::Sampler, path: &str) -> u32 {
     unsafe {
         let vim = GPUImage::from_bc7_file(vk, sampler, path);
@@ -132,7 +123,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
 
     let mut vim = GPUImage {
         image: normal_image,
-        view: vk::ImageView::default(),
+        view: None,
         width,
         height,
         mip_count: 1,
@@ -158,58 +149,14 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format:
         },
         ..Default::default()
     };
-    vim.view = vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
+    vim.view = Some(vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap());
     
     vim
 }
 
-//Returns the uncompressed bytes of a png image to RGBA
-pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
-    use png::BitDepth;
-    use png::ColorType;
-
-    let info = reader.info().clone();
-
-    //We're given a depth in bits, so we set up an integer divide
-    let byte_size_divisor = match info.bit_depth {
-        BitDepth::One => { 8 }
-        BitDepth::Two => { 4 }
-        BitDepth::Four => { 2 }
-        BitDepth::Eight => { 1 }
-        _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
-    };
-
-    let width = info.width;
-    let height = info.height;
-    let pixel_count = (width * height / byte_size_divisor) as usize;
-    match info.color_type {
-        ColorType::Rgb => {
-            let mut raw_bytes = vec![0u8; 3 * pixel_count];
-            reader.next_frame(&mut raw_bytes).unwrap();
-
-            //Convert to RGBA by adding an alpha of 1.0 to each pixel
-            let mut bytes = vec![0xFFu8; 4 * pixel_count];
-            for i in 0..pixel_count {
-                let idx = 4 * i;
-                let r_idx = 3 * i;
-                bytes[idx] = raw_bytes[r_idx];
-                bytes[idx + 1] = raw_bytes[r_idx + 1];
-                bytes[idx + 2] = raw_bytes[r_idx + 2];
-            }
-            bytes
-        }
-        ColorType::Rgba => {
-            let mut bytes = vec![0xFFu8; 4 * pixel_count];
-            reader.next_frame(&mut bytes).unwrap();
-            bytes
-        }
-        t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
-    }
-}
-
 pub struct GPUImage {
     pub image: vk::Image,
-    pub view: vk::ImageView,
+    pub view: Option<vk::ImageView>,
     pub width: u32,
     pub height: u32,
     pub mip_count: u32,
@@ -243,7 +190,7 @@ impl GPUImage {
             Some(_) => { vk::Format::R8G8B8A8_SRGB }
             None => { vk::Format::R8G8B8A8_UNORM }
         };
-        let bytes = decode_png(read_info);
+        let bytes = asset::decode_png(read_info);
 
         unsafe {
             let mip_levels =  calculate_miplevels(width, height);
@@ -283,7 +230,7 @@ impl GPUImage {
                 },
                 ..Default::default()
             };
-            def_image.final_image.view = vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
+            def_image.final_image.view = Some(vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap());
             def_image
         }
     }
@@ -298,7 +245,7 @@ impl GPUImage {
             Some(_) => { vk::Format::R8G8B8A8_SRGB }
             None => { vk::Format::R8G8B8A8_UNORM }
         };
-        let bytes = decode_png(read_info);
+        let bytes = asset::decode_png(read_info);
                 
         //Create staging buffer and upload raw image data
         let bytes_size = bytes.len() as vk::DeviceSize;
@@ -351,7 +298,7 @@ impl GPUImage {
 
             let mut vim = GPUImage {
                 image,
-                view,
+                view: Some(view),
                 width,
                 height,
                 mip_count: mip_levels,
@@ -376,7 +323,6 @@ impl GPUImage {
             vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
             vk.command_buffer_indices.remove(cbidx);
 
-            vim.view = view;
             vim
         }
     }
@@ -434,7 +380,7 @@ impl GPUImage {
 
         let mut vim = GPUImage {
             image,
-            view: vk::ImageView::default(),
+            view: None,
             width,
             height,
             mip_count: mipmap_count,
@@ -445,24 +391,23 @@ impl GPUImage {
         };
         asset::upload_image(vk, &vim, &raw_bytes);
         
-        let sampler_subresource_range = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: mipmap_count,
-            base_array_layer: 0,
-            layer_count: 1
-        };
-        let grass_view_info = vk::ImageViewCreateInfo {
+        let view_info = vk::ImageViewCreateInfo {
             image: image,
             format,
             view_type: vk::ImageViewType::TYPE_2D,
             components: COMPONENT_MAPPING_DEFAULT,
-            subresource_range: sampler_subresource_range,
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: mipmap_count,
+                base_array_layer: 0,
+                layer_count: 1
+            },
             ..Default::default()
         };
-        let view = vk.device.create_image_view(&grass_view_info, MEMORY_ALLOCATOR).unwrap();
+        let view = vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
 
-        vim.view = view;
+        vim.view = Some(view);
         vim
     }
 }
