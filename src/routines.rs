@@ -14,6 +14,10 @@ pub fn slice_to_bytes<'a, T>(in_array: &'a [T]) -> &'a [u8] {
     unsafe { core::slice::from_raw_parts(in_array.as_ptr() as *const u8, in_array.len() * size_of::<T>()) }
 }
 
+pub fn vec_to_bytes<'a, T>(vec: &Vec<T>) -> &'a [u8] {
+    unsafe { core::slice::from_raw_parts(vec.as_ptr() as *const u8, vec.len() * size_of::<T>()) }
+}
+
 #[inline]
 pub fn calculate_miplevels(width: u32, height: u32) -> u32 {
     (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32 + 1

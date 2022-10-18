@@ -203,11 +203,17 @@ float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D 
 }
 
 float determine_shadowed(float3 f_shadow_pos, float3 normal, float3 light_direction, Sampler2DArray shadow_map, int cascade) {
-    // float bias = 0.00125;
-    // float bias = 0.0;
-    float bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.00125;
-    float3 sample_uv = float3(f_shadow_pos.xy, (float)cascade);
-    
+    bool front_facing : SV_IsFrontFace;
+    float bias;
+    if (front_facing) {
+        bias = 0.0;
+    } else {
+        // bias = 0.00125;
+        // bias = 0.0;
+        bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.00125;
+    }
+
+    float3 sample_uv = float3(f_shadow_pos.xy, (float)cascade);    
     //float2 sample_uv = f_shadow_pos.xy;    
     //sample_uv.x = sample_uv.x / SHADOW_CASCADE_COUNT;
     //sample_uv.x += (float)cascade / (float)SHADOW_CASCADE_COUNT;
@@ -218,7 +224,7 @@ float determine_shadowed(float3 f_shadow_pos, float3 normal, float3 light_direct
 }
 
 float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2DArray shadow_map, int shadow_cascade, float3 normal, float3 light_direction) {
-    //Compute how shadowed if we are potentially shadowed
+    // Compute how shadowed if we are potentially shadowed
     float shadow = 0.0;
     if (shadow_cascade > -1) {
         if (true) {
@@ -242,6 +248,8 @@ float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2DArray shadow_
         }
     }
 
+    //float shadow = shadow_map.SampleCmp(float3(adj_shadow_space_pos.xy, (float)shadow_cascade), adj_shadow_space_pos.z);
+    
     return 1.0 - shadow;
 }
 

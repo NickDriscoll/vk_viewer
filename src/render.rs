@@ -311,7 +311,7 @@ impl CascadedShadowMap {
             mip_count: 1,
             format,
             layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-            sampler: renderer.material_sampler,
+            sampler: renderer.shadow_sampler,
             allocation
         };
         
@@ -588,13 +588,14 @@ pub struct Renderer {
 
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
+    pub shadow_sampler: vk::Sampler,
 
     models: SlotMap<ModelKey, Model>,
     model_counters: Vec<u64>,
     primitives: SlotMap<PrimitiveKey, Primitive>,
+    instance_data: Vec<InstanceData>,
     raw_draws: Vec<DesiredDraw>,
     drawstream: Vec<DrawCall>,
-    instance_data: Vec<InstanceData>,
 
     pub window_manager: WindowManager,
     
@@ -923,7 +924,7 @@ impl Renderer {
         };
 
         //Create texture samplers
-        let (material_sampler, point_sampler) = unsafe {
+        let (material_sampler, point_sampler, shadow_sampler) = unsafe {
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::LINEAR,
                 mag_filter: vk::Filter::LINEAR,
@@ -951,8 +952,26 @@ impl Renderer {
                 ..sampler_info
             };
             let font = vk.device.create_sampler(&sampler_info, vkutil::MEMORY_ALLOCATOR).unwrap();
+
+            let sampler_info = vk::SamplerCreateInfo {
+                min_filter: vk::Filter::LINEAR,
+                mag_filter: vk::Filter::LINEAR,
+                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                address_mode_u: vk::SamplerAddressMode::REPEAT,
+                address_mode_v: vk::SamplerAddressMode::REPEAT,
+                address_mode_w: vk::SamplerAddressMode::REPEAT,
+                mip_lod_bias: 0.0,
+                compare_enable: vk::TRUE,
+                compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                min_lod: 0.0,
+                max_lod: vk::LOD_CLAMP_NONE,
+                border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
+                unnormalized_coordinates: vk::FALSE,
+                ..Default::default()
+            };
+            let shadow = vk.device.create_sampler(&sampler_info, vkutil::MEMORY_ALLOCATOR).unwrap();
             
-            (mat, font)
+            (mat, font, shadow)
         };
 
         let format = vk::Format::R8G8B8A8_UNORM;
@@ -1036,6 +1055,7 @@ impl Renderer {
             default_emissive_idx,
             material_sampler,
             point_sampler,
+            shadow_sampler,
             models: SlotMap::with_key(),
             model_counters: Vec::new(),
             primitives: SlotMap::with_key(),
