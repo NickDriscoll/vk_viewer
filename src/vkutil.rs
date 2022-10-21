@@ -1,6 +1,7 @@
 use std::{ffi::c_void, io::Read, ops::Index};
 
 use ash::vk;
+use gpu_allocator::vulkan;
 use gpu_allocator::vulkan::*;
 use gpu_allocator::MemoryLocation;
 use ozy::io::DDSHeader;
@@ -167,6 +168,10 @@ pub struct GPUImage {
 }
 
 impl GPUImage {
+    pub fn free(self, vk: &mut VulkanAPI) {
+        vk.allocator.free(self.allocation).unwrap();
+    }
+
     pub fn from_png_file(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];

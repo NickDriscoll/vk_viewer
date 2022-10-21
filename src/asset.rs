@@ -1,6 +1,6 @@
 use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
-use ozy::io::{OzyMaterial, OzyPrimitive, OzyMesh};
+use ozy::io::{OzyMaterial, OzyPrimitive, OzyMesh, OzyImage};
 use std::ptr;
 use crate::*;
 
@@ -73,8 +73,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: v
     let mut cumulative_offset = 0;
     let mut copy_regions = vec![vk::BufferImageCopy::default(); gpu_image.mip_count as usize];
     for i in 0..gpu_image.mip_count {
-        let w = gpu_image.width / (1 << i);
-        let h = gpu_image.height / (1 << i);
+        let (w, h) = mip_resolution(gpu_image.width, gpu_image.height, i);
         let subresource_layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: i,
@@ -261,8 +260,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
     let mut cumulative_offset = 0;
     let mut copy_regions = vec![vk::BufferImageCopy::default(); image.mip_count as usize];
     for i in 0..image.mip_count {
-        let w = image.width / (1 << i);
-        let h = image.height / (1 << i);
+        let (w, h) = mip_resolution(image.width, image.height, i);
         let subresource_layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: i,
@@ -379,6 +377,8 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
         None => { vk::Format::R8G8B8A8_UNORM }
     };
     let bytes = decode_png(read_info);
+    println!("png bytes: {}", png_bytes.len());
+    println!("raw bytes: {}", bytes.len());
 
     //After decoding, upload to GPU for mipmap creation
     let mip_levels = calculate_miplevels(width, height);
@@ -405,22 +405,16 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
     let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
 
     unsafe {
-        //Get the GPU image back into system RAM
         let sampler = vk.device.create_sampler(&vk::SamplerCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
         let def_image = upload_image_deferred(vk, &image_create_info, sampler, gpu_image_layout, &bytes);
-        let def_image = &DeferredImage::synchronize(vk, vec![def_image])[0];
-        let finished_image_reqs = vk.device.get_image_memory_requirements(def_image.final_image.image);
-        let readback_buffer = GPUBuffer::allocate(vk, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::CpuToGpu);
+        let mut def_images = DeferredImage::synchronize(vk, vec![def_image]);
+        let finished_image_reqs = vk.device.get_image_memory_requirements(def_images[0].final_image.image);
+        let readback_buffer = GPUBuffer::allocate(vk, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
         
-        let cb_idx = vk.command_buffer_indices.insert(0);
-        let command_buffer = vk.command_buffers[cb_idx];
-        vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-
         let mut regions = Vec::with_capacity(mip_levels as usize);
         let mut current_offset = 0;
         for i in 0..mip_levels {
-            let w = width / (1 << i);
-            let h = height / (1 << i);
+            let (w, h) = mip_resolution(width, height, i);
             let image_subresource = vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: i as u32,
@@ -442,8 +436,11 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
             regions.push(copy);
             current_offset += (w * h * 4) as u64;
         }
-        vk.device.cmd_copy_image_to_buffer(command_buffer, def_image.final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
-
+        
+        let cb_idx = vk.command_buffer_indices.insert(0);
+        let command_buffer = vk.command_buffers[cb_idx];
+        vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+        vk.device.cmd_copy_image_to_buffer(command_buffer, def_images[0].final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
         vk.device.end_command_buffer(command_buffer).unwrap();
 
         let submit_info = vk::SubmitInfo {
@@ -455,16 +452,31 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
         let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
         vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
         vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+        for im in def_images.drain(0..def_images.len()) {
+            im.final_image.free(vk);
+        }
         vk.command_buffer_indices.remove(cb_idx);
         vk.device.destroy_sampler(sampler, vkutil::MEMORY_ALLOCATOR);
 
         let uncompressed_bytes = readback_buffer.read_buffer_bytes();
+        readback_buffer.free(vk);
+
+        let bc7_output_size = {
+            let mut total = 0;
+            for i in 0..mip_levels {
+                let (w, h) = mip_resolution(width, height, i);
+                total += ispc::bc7::calc_output_size(w, h);
+            }
+            total
+        };
+        println!("BC7 output size: {}", bc7_output_size);
+        let mut bc7_bytes = vec![0u8; bc7_output_size];
         let mut uncompressed_byte_offset = 0;
         let mut bc7_offset = 0;
-        let mut bc7_bytes = vec![0u8; uncompressed_bytes.len() / 4];  //BC7 images are one byte per pixel
         for j in 0..mip_levels {
-            let w2 = (width / (1 << j)) as usize;
-            let h2 = (height / (1 << j)) as usize;
+            let (w2, h2) = mip_resolution(width, height, j as u32);
+            let w2 = w2 as usize;
+            let h2 = h2 as usize;
             let data = &uncompressed_bytes[uncompressed_byte_offset..(uncompressed_byte_offset + w2 * h2 * 4)];
             let surface = ispc::RgbaSurface {
                 data,
@@ -476,7 +488,7 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
             let bc7_range = usize::max(w2 * h2, 16);    //BC7 blocks are 16 bytes at minimum
             ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[bc7_offset..(bc7_offset + bc7_range)]);
 
-            uncompressed_byte_offset += w2 * h2 * 4;
+            uncompressed_byte_offset += bc7_range * 4;
             bc7_offset += bc7_range;
         }
         bc7_bytes
@@ -547,8 +559,7 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanAPI, path: &str) {
         let mut regions = Vec::with_capacity(mip_levels as usize);
         let mut current_offset = 0;
         for i in 0..mip_levels {
-            let w = width / (1 << i);
-            let h = height / (1 << i);
+            let (w, h) = mip_resolution(width, height, i);
             let image_subresource = vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: i as u32,
@@ -591,8 +602,9 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanAPI, path: &str) {
         let mut uncompressed_byte_offset = 0;
         let mut bc7_offset = 0;
         for j in 0..mip_levels {
-            let w2 = (def_image.final_image.width / (1 << j)) as usize;
-            let h2 = (def_image.final_image.height / (1 << j)) as usize;
+            let (w2, h2) = mip_resolution(def_image.final_image.width, def_image.final_image.height, j as u32);
+            let w2 = w2 as usize;
+            let h2 = h2 as usize;
             let data = &uncompressed_bytes[uncompressed_byte_offset..(uncompressed_byte_offset + w2 * h2 * 4)];
             let surface = ispc::RgbaSurface {
                 data,
@@ -775,7 +787,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
     let parent_dir = Path::new(path).parent().unwrap();
     let name = Path::new(path).file_stem().unwrap().to_string_lossy();
     let output_location = format!("{}/.optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
-    let mut texture_bytes = Vec::with_capacity(glb.images().count());
+    let mut textures = vec![OzyImage::default(); glb.images().count()];
     let mut materials = Vec::with_capacity(glb.materials().count());
     let mut primitives = Vec::with_capacity(64);
     for mesh in glb.meshes() {
@@ -820,17 +832,31 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
                 None => { vec![0.0; vertex_positions.len() / 3 * 2] }
             };
 
+            fn tex_fn(vk: &mut VulkanAPI, glb: &Gltf, image: gltf::Image) -> OzyImage {
+                let source = image.source();
+                let png_bytes = png_bytes_from_source(glb, source);
+                let decoder = png::Decoder::new(png_bytes.as_slice()).read_info().unwrap();
+                let info = decoder.info();
+                let width = info.width;
+                let height = info.height;
+                let bc7_bytes = compress_png_bytes_synchronous(vk, &png_bytes);
+                OzyImage {
+                    width,
+                    height,
+                    bc7_bytes
+                }
+            }
+
             let mat = prim.material();
             let pbr = mat.pbr_metallic_roughness();            
             let color_bc7_idx = match pbr.base_color_texture() {
                 Some(t) => {
                     let image = t.texture().source();
                     let idx = image.index();
-                    let source = image.source();
-                    let png_bytes = png_bytes_from_source(&glb, source);
-                    let bc7_bytes = compress_png_bytes_synchronous(vk, &png_bytes);
-                    texture_bytes.push(bc7_bytes);
-                    Some(texture_bytes.len() as u32 - 1)
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        textures[idx] = tex_fn(vk, &glb, image);
+                    }
+                    Some(idx as u32)
                 }
                 None => { None }
             };
@@ -839,11 +865,10 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
                 Some(t) => {
                     let image = t.texture().source();
                     let idx = image.index();
-                    let source = image.source();
-                    let png_bytes = png_bytes_from_source(&glb, source);
-                    let bc7_bytes = compress_png_bytes_synchronous(vk, &png_bytes);
-                    texture_bytes.push(bc7_bytes);
-                    Some(texture_bytes.len() as u32 - 1)
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        textures[idx] = tex_fn(vk, &glb, image);
+                    }
+                    Some(idx as u32)
                 }
                 None => { None }
             };
@@ -852,11 +877,10 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
                 Some(t) => {
                     let image = t.texture().source();
                     let idx = image.index();
-                    let source = image.source();
-                    let png_bytes = png_bytes_from_source(&glb, source);
-                    let bc7_bytes = compress_png_bytes_synchronous(vk, &png_bytes);
-                    texture_bytes.push(bc7_bytes);
-                    Some(texture_bytes.len() as u32 - 1)
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        textures[idx] = tex_fn(vk, &glb, image);
+                    }
+                    Some(idx as u32)
                 }
                 None => { None }
             };
@@ -865,11 +889,10 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
                 Some(t) => {
                     let image = t.texture().source();
                     let idx = image.index();
-                    let source = image.source();
-                    let png_bytes = png_bytes_from_source(&glb, source);
-                    let bc7_bytes = compress_png_bytes_synchronous(vk, &png_bytes);
-                    texture_bytes.push(bc7_bytes);
-                    Some(texture_bytes.len() as u32 - 1)
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        textures[idx] = tex_fn(vk, &glb, image);
+                    }
+                    Some(idx as u32)
                 }
                 None => { None }
             };
@@ -903,6 +926,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
     let mut output_file = OpenOptions::new().write(true).create(true).open(output_location).unwrap();
     output_file.write(&materials.len().to_le_bytes()).unwrap();
     output_file.write(&primitives.len().to_le_bytes()).unwrap();
+    output_file.write(&textures.len().to_le_bytes()).unwrap();
     for material in materials.iter() {
         output_file.write(slice_to_bytes(&material.base_color)).unwrap();
         output_file.write(slice_to_bytes(&material.emissive_factor)).unwrap();
@@ -935,8 +959,12 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
         output_file.write(&count.to_le_bytes()).unwrap();
         output_file.write(vec_to_bytes(&primitive.vertex_uvs)).unwrap();
     }
-
-
+    for texture in textures {
+        //Images are written out as width, height, then bc7_bytes
+        output_file.write(&texture.width.to_le_bytes()).unwrap();
+        output_file.write(&texture.height.to_le_bytes()).unwrap();
+        output_file.write(&texture.bc7_bytes).unwrap();
+    }
 }
 
 fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, out_primitive_array: &mut Vec<GLTFPrimitive>, texture_bytes: &mut [Vec<u8>]) {
