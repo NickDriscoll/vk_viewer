@@ -6,6 +6,50 @@ use crate::*;
 
 use crate::routines::*;
 
+//Returns the uncompressed bytes of a png image to RGBA
+pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
+    use png::BitDepth;
+    use png::ColorType;
+
+    let info = reader.info().clone();
+
+    //We're given a depth in bits, so we set up an integer divide
+    let byte_size_divisor = match info.bit_depth {
+        BitDepth::One => { 8 }
+        BitDepth::Two => { 4 }
+        BitDepth::Four => { 2 }
+        BitDepth::Eight => { 1 }
+        _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
+    };
+
+    let width = info.width;
+    let height = info.height;
+    let pixel_count = (width * height / byte_size_divisor) as usize;
+    match info.color_type {
+        ColorType::Rgb => {
+            let mut raw_bytes = vec![0u8; 3 * pixel_count];
+            reader.next_frame(&mut raw_bytes).unwrap();
+
+            //Convert to RGBA by adding an alpha of 1.0 to each pixel
+            let mut bytes = vec![0xFFu8; 4 * pixel_count];
+            for i in 0..pixel_count {
+                let idx = 4 * i;
+                let r_idx = 3 * i;
+                bytes[idx] = raw_bytes[r_idx];
+                bytes[idx + 1] = raw_bytes[r_idx + 1];
+                bytes[idx + 2] = raw_bytes[r_idx + 2];
+            }
+            bytes
+        }
+        ColorType::Rgba => {
+            let mut bytes = vec![0xFFu8; 4 * pixel_count];
+            reader.next_frame(&mut bytes).unwrap();
+            bytes
+        }
+        t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
+    }
+}
+
 pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::ImageCreateInfo, sampler: vk::Sampler, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
@@ -320,50 +364,6 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
     staging_buffer.free(vk);
 }
 
-//Returns the uncompressed bytes of a png image to RGBA
-pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
-    use png::BitDepth;
-    use png::ColorType;
-
-    let info = reader.info().clone();
-
-    //We're given a depth in bits, so we set up an integer divide
-    let byte_size_divisor = match info.bit_depth {
-        BitDepth::One => { 8 }
-        BitDepth::Two => { 4 }
-        BitDepth::Four => { 2 }
-        BitDepth::Eight => { 1 }
-        _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
-    };
-
-    let width = info.width;
-    let height = info.height;
-    let pixel_count = (width * height / byte_size_divisor) as usize;
-    match info.color_type {
-        ColorType::Rgb => {
-            let mut raw_bytes = vec![0u8; 3 * pixel_count];
-            reader.next_frame(&mut raw_bytes).unwrap();
-
-            //Convert to RGBA by adding an alpha of 1.0 to each pixel
-            let mut bytes = vec![0xFFu8; 4 * pixel_count];
-            for i in 0..pixel_count {
-                let idx = 4 * i;
-                let r_idx = 3 * i;
-                bytes[idx] = raw_bytes[r_idx];
-                bytes[idx + 1] = raw_bytes[r_idx + 1];
-                bytes[idx + 2] = raw_bytes[r_idx + 2];
-            }
-            bytes
-        }
-        ColorType::Rgba => {
-            let mut bytes = vec![0xFFu8; 4 * pixel_count];
-            reader.next_frame(&mut bytes).unwrap();
-            bytes
-        }
-        t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
-    }
-}
-
 pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Vec<u8> {
     //Extract metadata and decode to raw RGBA bytes
     let decoder = png::Decoder::new(png_bytes);
@@ -377,8 +377,6 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
         None => { vk::Format::R8G8B8A8_UNORM }
     };
     let bytes = decode_png(read_info);
-    println!("png bytes: {}", png_bytes.len());
-    println!("raw bytes: {}", bytes.len());
 
     //After decoding, upload to GPU for mipmap creation
     let mip_levels = calculate_miplevels(width, height);
@@ -469,7 +467,6 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
             }
             total
         };
-        println!("BC7 output size: {}", bc7_output_size);
         let mut bc7_bytes = vec![0u8; bc7_output_size];
         let mut uncompressed_byte_offset = 0;
         let mut bc7_offset = 0;

@@ -203,15 +203,10 @@ float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D 
 }
 
 float determine_shadowed(float3 f_shadow_pos, float3 normal, float3 light_direction, Sampler2DArray shadow_map, int cascade) {
-    bool front_facing : SV_IsFrontFace;
     float bias;
-    if (front_facing) {
-        bias = 0.0;
-    } else {
-        // bias = 0.00125;
-        // bias = 0.0;
-        bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.00125;
-    }
+    // bias = 0.00125;
+    // bias = 0.0;
+    bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.00125;
 
     float3 sample_uv = float3(f_shadow_pos.xy, (float)cascade);    
     //float2 sample_uv = f_shadow_pos.xy;    
