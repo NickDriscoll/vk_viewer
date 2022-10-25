@@ -662,8 +662,21 @@ fn main() {
         }
 
         match dev_gui.do_props_window(&imgui_ui, &mut simulation_state.static_props, focused_prop) {
-            PropsWindowResponse::LoadModel(mesh_data) => {
+            PropsWindowResponse::LoadGLTF(mesh_data) => {
                 let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
+                let s = StaticProp {
+                    name: mesh_data.name,
+                    model,
+                    position: camera.position,
+                    pitch: 0.0,
+                    yaw: 0.0,
+                    roll: 0.0,
+                    scale: 1.0
+                };
+                simulation_state.static_props.insert(s);
+            }
+            PropsWindowResponse::LoadOzyMesh(mesh_data) => {
+                let model = renderer.upload_ozymesh(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
                 let s = StaticProp {
                     name: mesh_data.name,
                     model,

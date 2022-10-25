@@ -1,5 +1,6 @@
 use ash::vk;
 use imgui::{DrawCmd, Ui, TreeNodeId};
+use ozy::io::OzyMesh;
 use slotmap::DefaultKey;
 use crate::render::Renderer;
 use crate::structs::{TerrainSpec, StaticPropKey};
@@ -12,7 +13,8 @@ pub enum AssetWindowResponse {
 }
 
 pub enum PropsWindowResponse {
-    LoadModel(GLTFMeshData),
+    LoadGLTF(GLTFMeshData),
+    LoadOzyMesh(OzyMesh),
     FocusCamera(Option<StaticPropKey>),
     Interacted,
     None
@@ -154,9 +156,15 @@ impl DevGui {
                 props.remove(key);
             }
             
-            if Self::do_standard_button(ui, "Load static prop") {
+            if Self::do_standard_button(ui, "Load glTF") {
                 if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                    out = PropsWindowResponse::LoadModel(asset::gltf_meshdata(&path));
+                    out = PropsWindowResponse::LoadGLTF(asset::gltf_meshdata(&path));
+                }
+            }
+            
+            if Self::do_standard_button(ui, "Load OzyMesh") {
+                if let Some(path) = tfd::open_file_dialog("Choose OzyMesh", "./data/models/.optimized", Some((&["*.ozy"], ".ozy (Optimized model)"))) {
+                    out = PropsWindowResponse::LoadOzyMesh(OzyMesh::from_file(&path));
                 }
             }
 

@@ -1,6 +1,7 @@
 use core::slice::Iter;
 use std::cmp::Ordering;
 use std::{convert::TryInto, ffi::c_void, hash::{Hash, Hasher}, collections::hash_map::DefaultHasher};
+use ozy::io::OzyMesh;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::*;
@@ -1287,7 +1288,97 @@ impl Renderer {
             };
             let material_idx = self.global_materials.insert(material) as u32;
 
-            let offsets = upload_primitive_vertices(vk, self, &prim);
+            let offsets = upload_primitive_vertices(vk, self, prim);
+
+            let index_buffer = make_index_buffer(vk, &prim.indices);
+            let model_idx = self.register_primitive(Primitive {
+                shadow_type: ShadowType::OpaqueCaster,
+                index_buffer,
+                index_count: prim.indices.len().try_into().unwrap(),
+                position_offset: offsets.position_offset,
+                tangent_offset: offsets.tangent_offset,
+                normal_offset: offsets.normal_offset,
+                uv_offset: offsets.uv_offset,
+                material_idx
+            });
+            primitive_keys.push(model_idx);
+        }
+        let model_key = self.new_model(id, primitive_keys);
+        
+        model_key
+    }
+
+    pub fn upload_ozymesh(&mut self, vk: &mut VulkanAPI, data: &OzyMesh, pipeline: vk::Pipeline) -> ModelKey {
+        fn load_prim_bc7(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &OzyMesh, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize, format: vk::Format) -> u32 {
+            match tex_id_map.get(&prim_tex_idx) {
+                Some(id) => { *id }
+                None => {
+                    let width = data.textures[prim_tex_idx].width;
+                    let height = data.textures[prim_tex_idx].height;
+                    let mipmap_count = data.textures[prim_tex_idx].mipmap_count;
+                    let raw_bytes = &data.textures[prim_tex_idx].bc7_bytes;
+                    let image = GPUImage::from_bc7_bytes(vk, raw_bytes, renderer.material_sampler, width, height, mipmap_count, format);
+                    let global_tex_id = renderer.global_images.insert(image) as u32;
+                    tex_id_map.insert(prim_tex_idx, global_tex_id);
+                    global_tex_id
+                }
+            }
+        }
+
+        //Compute this model's id
+        let mut hasher = DefaultHasher::new();
+        data.name.hash(&mut hasher);
+        let id = hasher.finish();
+
+        //Check if this model is already loaded
+        let mut i = 0;
+        for model in self.models.iter() {
+            if model.1.id == id {
+                self.model_counters[i] += 1;
+                return model.0;
+            }
+            i += 1;
+        }
+        
+        let mut primitive_keys = vec![];
+        let mut tex_id_map = HashMap::new();
+        for prim in &data.primitives {
+            let material = &data.materials[prim.material_idx as usize];
+            let prim_tex_indices = [
+                material.color_bc7_idx,
+                material.normal_bc7_idx,
+                material.arm_bc7_idx,
+                material.emissive_bc7_idx
+            ];
+            let mut inds = [
+                self.default_diffuse_idx,
+                self.default_normal_idx,
+                self.default_metal_roughness_idx,
+                self.default_emissive_idx,
+            ];
+            for i in 0..prim_tex_indices.len() {
+                if let Some(idx) = prim_tex_indices[i] {
+                    let format = if i == 0 {
+                        vk::Format::BC7_SRGB_BLOCK
+                    } else {
+                        vk::Format::BC7_UNORM_BLOCK
+                    };
+                    inds[i] = load_prim_bc7(vk, self, data, &mut tex_id_map, idx as usize, format);
+                }
+            }
+
+            let material = Material {
+                pipeline,
+                base_color: material.base_color,
+                base_roughness: material.base_roughness,
+                color_idx: inds[0],
+                normal_idx: inds[1],
+                metal_roughness_idx: inds[2],
+                emissive_idx: inds[3]
+            };
+            let material_idx = self.global_materials.insert(material) as u32;
+
+            let offsets = upload_primitive_vertices(vk, self, prim);
 
             let index_buffer = make_index_buffer(vk, &prim.indices);
             let model_idx = self.register_primitive(Primitive {

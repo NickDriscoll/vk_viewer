@@ -956,6 +956,7 @@ dependencies = [
  "gl",
  "glyph_brush",
  "image 0.24.4",
+ "ispc-texcomp",
  "nalgebra-glm",
  "noise",
 ]

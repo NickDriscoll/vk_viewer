@@ -1,6 +1,8 @@
 use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
+use ozy::io;
 use ozy::io::{OzyMaterial, OzyPrimitive, OzyMesh, OzyImage};
+use ozy::render::PositionNormalTangentUvPrimitive;
 use std::ptr;
 use crate::*;
 
@@ -117,7 +119,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: v
     let mut cumulative_offset = 0;
     let mut copy_regions = vec![vk::BufferImageCopy::default(); gpu_image.mip_count as usize];
     for i in 0..gpu_image.mip_count {
-        let (w, h) = mip_resolution(gpu_image.width, gpu_image.height, i);
+        let (w, h) = ozy::routines::mip_resolution(gpu_image.width, gpu_image.height, i);
         let subresource_layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: i,
@@ -304,7 +306,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
     let mut cumulative_offset = 0;
     let mut copy_regions = vec![vk::BufferImageCopy::default(); image.mip_count as usize];
     for i in 0..image.mip_count {
-        let (w, h) = mip_resolution(image.width, image.height, i);
+        let (w, h) = ozy::routines::mip_resolution(image.width, image.height, i);
         let subresource_layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: i,
@@ -412,7 +414,7 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
         let mut regions = Vec::with_capacity(mip_levels as usize);
         let mut current_offset = 0;
         for i in 0..mip_levels {
-            let (w, h) = mip_resolution(width, height, i);
+            let (w, h) = ozy::routines::mip_resolution(width, height, i);
             let image_subresource = vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: i as u32,
@@ -462,7 +464,7 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
         let bc7_output_size = {
             let mut total = 0;
             for i in 0..mip_levels {
-                let (w, h) = mip_resolution(width, height, i);
+                let (w, h) = ozy::routines::mip_resolution(width, height, i);
                 total += ispc::bc7::calc_output_size(w, h);
             }
             total
@@ -471,7 +473,7 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
         let mut uncompressed_byte_offset = 0;
         let mut bc7_offset = 0;
         for j in 0..mip_levels {
-            let (w2, h2) = mip_resolution(width, height, j as u32);
+            let (w2, h2) = ozy::routines::mip_resolution(width, height, j as u32);
             let w2 = w2 as usize;
             let h2 = h2 as usize;
             let data = &uncompressed_bytes[uncompressed_byte_offset..(uncompressed_byte_offset + w2 * h2 * 4)];
@@ -556,7 +558,7 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanAPI, path: &str) {
         let mut regions = Vec::with_capacity(mip_levels as usize);
         let mut current_offset = 0;
         for i in 0..mip_levels {
-            let (w, h) = mip_resolution(width, height, i);
+            let (w, h) = ozy::routines::mip_resolution(width, height, i);
             let image_subresource = vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: i as u32,
@@ -593,13 +595,14 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanAPI, path: &str) {
         vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
         vk.command_buffer_indices.remove(cb_idx);
         vk.device.destroy_sampler(sampler, vkutil::MEMORY_ALLOCATOR);
+        vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
 
         let uncompressed_bytes = readback_buffer.read_buffer_bytes();
         let mut bc7_bytes = vec![0u8; uncompressed_bytes.len() / 4];  //BC7 images are one byte per pixel
         let mut uncompressed_byte_offset = 0;
         let mut bc7_offset = 0;
         for j in 0..mip_levels {
-            let (w2, h2) = mip_resolution(def_image.final_image.width, def_image.final_image.height, j as u32);
+            let (w2, h2) = ozy::routines::mip_resolution(def_image.final_image.width, def_image.final_image.height, j as u32);
             let w2 = w2 as usize;
             let h2 = h2 as usize;
             let data = &uncompressed_bytes[uncompressed_byte_offset..(uncompressed_byte_offset + w2 * h2 * 4)];
@@ -676,6 +679,24 @@ pub struct GLTFPrimitive {
     pub vertex_uvs: Vec<f32>,
     pub indices: Vec<u32>,
     pub material: GLTFMaterial
+}
+
+impl PositionNormalTangentUvPrimitive for GLTFPrimitive {
+    fn vertex_positions(&self) -> &[f32] {
+        &self.vertex_positions
+    }
+
+    fn vertex_normals(&self) -> &[f32] {
+        &self.vertex_normals
+    }
+
+    fn vertex_tangents(&self) -> &[f32] {
+        &self.vertex_tangents
+    }
+
+    fn vertex_uvs(&self) -> &[f32] {
+        &self.vertex_uvs
+    }
 }
 
 #[derive(Debug)]
@@ -836,10 +857,12 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
                 let info = decoder.info();
                 let width = info.width;
                 let height = info.height;
+                let mipmap_count = ozy::routines::calculate_miplevels(width, height);
                 let bc7_bytes = compress_png_bytes_synchronous(vk, &png_bytes);
                 OzyImage {
                     width,
                     height,
+                    mipmap_count,
                     bc7_bytes
                 }
             }

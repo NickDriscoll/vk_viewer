@@ -332,34 +332,7 @@ impl GPUImage {
         }
     }
 
-    pub unsafe fn from_bc7_file(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> Self {
-        use ozy::io::DXGI_FORMAT;
-
-        let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
-        let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
-
-        let width = dds_header.width;
-        let height = dds_header.height;
-        let mipmap_count = dds_header.mipmap_count;
-
-        let mut bytes_size = 0;
-        for i in 0..mipmap_count {
-            let w = width / (1 << i);
-            let h = height / (1 << i);
-            bytes_size += w * h;
-
-            bytes_size = size_to_alignment!(bytes_size, 16);
-        }
-
-        let mut raw_bytes = vec![0u8; bytes_size as usize];
-        file.read_exact(&mut raw_bytes).unwrap();
-        
-        let format = match dds_header.dx10_header.dxgi_format {
-            DXGI_FORMAT::BC7_UNORM => { vk::Format::BC7_UNORM_BLOCK }
-            DXGI_FORMAT::BC7_UNORM_SRGB => { vk::Format::BC7_SRGB_BLOCK }
-            _ => { crash_with_error_dialog("Unreachable statement reached in GPUImage::from_bc7_file()"); }
-        };
-
+    pub fn from_bc7_bytes(vk: &mut VulkanAPI, raw_bytes: &[u8], sampler: vk::Sampler, width: u32, height: u32, mipmap_count: u32, format: vk::Format) -> Self {
         let image_extent = vk::Extent3D {
             width,
             height,
@@ -380,40 +353,74 @@ impl GPUImage {
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
-        let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
-        let allocation = allocate_image_memory(vk, image);
 
-        let mut vim = GPUImage {
-            image,
-            view: None,
-            width,
-            height,
-            mip_count: mipmap_count,
-            format,
-            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            sampler,
-            allocation
-        };
-        asset::upload_image(vk, &vim, &raw_bytes);
+        unsafe {
+            let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
+            let allocation = allocate_image_memory(vk, image);
+
+            let mut vim = GPUImage {
+                image,
+                view: None,
+                width,
+                height,
+                mip_count: mipmap_count,
+                format,
+                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                sampler,
+                allocation
+            };
+            asset::upload_image(vk, &vim, &raw_bytes);
+            
+            let view_info = vk::ImageViewCreateInfo {
+                image: image,
+                format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: COMPONENT_MAPPING_DEFAULT,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: mipmap_count,
+                    base_array_layer: 0,
+                    layer_count: 1
+                },
+                ..Default::default()
+            };
+            let view = vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
+
+            vim.view = Some(view);
+            vim
+        }
+    }
+
+    pub unsafe fn from_bc7_file(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> Self {
+        use ozy::io::DXGI_FORMAT;
+
+        let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
+        let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
+
+        let width = dds_header.width;
+        let height = dds_header.height;
+        let mipmap_count = dds_header.mipmap_count;
         
-        let view_info = vk::ImageViewCreateInfo {
-            image: image,
-            format,
-            view_type: vk::ImageViewType::TYPE_2D,
-            components: COMPONENT_MAPPING_DEFAULT,
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: mipmap_count,
-                base_array_layer: 0,
-                layer_count: 1
-            },
-            ..Default::default()
-        };
-        let view = vk.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
+        let mut bytes_size = 0;
+        for i in 0..mipmap_count {
+            let w = width / (1 << i);
+            let h = height / (1 << i);
+            bytes_size += w * h;
 
-        vim.view = Some(view);
-        vim
+            bytes_size = size_to_alignment!(bytes_size, 16);
+        }
+
+        let mut raw_bytes = vec![0u8; bytes_size as usize];
+        file.read_exact(&mut raw_bytes).unwrap();
+        
+        let format = match dds_header.dx10_header.dxgi_format {
+            DXGI_FORMAT::BC7_UNORM => { vk::Format::BC7_UNORM_BLOCK }
+            DXGI_FORMAT::BC7_UNORM_SRGB => { vk::Format::BC7_SRGB_BLOCK }
+            _ => { crash_with_error_dialog("Unreachable statement reached in GPUImage::from_bc7_file()"); }
+        };
+
+        Self::from_bc7_bytes(vk, &raw_bytes, sampler, width, height, mipmap_count, format)
     }
 }
 
