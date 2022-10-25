@@ -44,7 +44,7 @@ impl InputSystem {
         }
     }
 
-    pub fn do_thing(&mut self, timer: &FrameTimer, imgui_io: &mut Io) -> UserInput {
+    pub fn poll(&mut self, timer: &FrameTimer, imgui_io: &mut Io) -> UserInput {
         use sdl2::controller::Button;
         use sdl2::event::WindowEvent;
         use sdl2::keyboard::{Scancode};

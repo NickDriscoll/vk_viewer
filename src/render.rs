@@ -107,6 +107,7 @@ pub struct Primitive {
 #[derive(Clone)]
 pub struct Model {
     pub id: u64,            //Just the hash of the asset's name
+    pub count_idx: usize,
     pub primitive_keys: Vec<PrimitiveKey>
 }
 
@@ -1358,11 +1359,7 @@ impl Renderer {
             ];
             for i in 0..prim_tex_indices.len() {
                 if let Some(idx) = prim_tex_indices[i] {
-                    let format = if i == 0 {
-                        vk::Format::BC7_SRGB_BLOCK
-                    } else {
-                        vk::Format::BC7_UNORM_BLOCK
-                    };
+                    let format = vk::Format::BC7_UNORM_BLOCK;
                     inds[i] = load_prim_bc7(vk, self, data, &mut tex_id_map, idx as usize, format);
                 }
             }
@@ -1400,11 +1397,22 @@ impl Renderer {
 
     pub fn new_model(&mut self, id: u64, primitive_keys: Vec<PrimitiveKey>) -> ModelKey {
         self.model_counters.push(1);
+        let count_idx = self.model_counters.len() - 1;
         let model = Model {
             id,
+            count_idx,
             primitive_keys
         };
         self.models.insert(model)
+    }
+
+    pub fn delete_model(&mut self, key: ModelKey) {
+        if let Some(model) = self.models.get(key) {
+            self.model_counters[model.count_idx] -= 1;
+            if self.model_counters[model.count_idx] == 0 {
+                
+            }
+        }
     }
 
     fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {

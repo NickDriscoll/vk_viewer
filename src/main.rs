@@ -478,7 +478,7 @@ fn main() {
 
         //Input sampling
         let imgui_io = imgui_context.io_mut();
-        let input_output = match input_system.do_thing(&timer, imgui_io) {
+        let input_output = match input_system.poll(&timer, imgui_io) {
             UserInput::Output(o) => { o }
             UserInput::ExitProgram => { break 'running; }
         };
@@ -687,6 +687,12 @@ fn main() {
                     scale: 1.0
                 };
                 simulation_state.static_props.insert(s);
+            }
+            PropsWindowResponse::DeleteProp(prop_key) => {
+                if let Some(prop) = simulation_state.static_props.get(prop_key) {
+                    renderer.delete_model(prop.model);
+                    simulation_state.static_props.remove(prop_key);
+                }
             }
             PropsWindowResponse::FocusCamera(k) => { focused_prop = k; }
             PropsWindowResponse::Interacted => {}

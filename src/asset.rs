@@ -806,7 +806,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
     let name = Path::new(path).file_stem().unwrap().to_string_lossy();
     let output_location = format!("{}/.optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
     let mut textures = vec![OzyImage::default(); glb.images().count()];
-    let mut materials = Vec::with_capacity(glb.materials().count());
+    let mut materials = vec![OzyMaterial::default(); glb.materials().count()];
     let mut primitives = Vec::with_capacity(64);
     for mesh in glb.meshes() {
         for prim in mesh.primitives() {
@@ -868,65 +868,68 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
             }
 
             let mat = prim.material();
-            let pbr = mat.pbr_metallic_roughness();            
-            let color_bc7_idx = match pbr.base_color_texture() {
-                Some(t) => {
-                    let image = t.texture().source();
-                    let idx = image.index();
-                    if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = tex_fn(vk, &glb, image);
+            let mat_idx = mat.index().unwrap();
+            if materials[mat_idx].base_color[0] > 68.0 {
+                let pbr = mat.pbr_metallic_roughness();            
+                let color_bc7_idx = match pbr.base_color_texture() {
+                    Some(t) => {
+                        let image = t.texture().source();
+                        let idx = image.index();
+                        if textures[idx].bc7_bytes.len() == 0 {
+                            textures[idx] = tex_fn(vk, &glb, image);
+                        }
+                        Some(idx as u32)
                     }
-                    Some(idx as u32)
-                }
-                None => { None }
-            };
+                    None => { None }
+                };
 
-            let normal_bc7_idx = match mat.normal_texture() {
-                Some(t) => {
-                    let image = t.texture().source();
-                    let idx = image.index();
-                    if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = tex_fn(vk, &glb, image);
+                let normal_bc7_idx = match mat.normal_texture() {
+                    Some(t) => {
+                        let image = t.texture().source();
+                        let idx = image.index();
+                        if textures[idx].bc7_bytes.len() == 0 {
+                            textures[idx] = tex_fn(vk, &glb, image);
+                        }
+                        Some(idx as u32)
                     }
-                    Some(idx as u32)
-                }
-                None => { None }
-            };
+                    None => { None }
+                };
 
-            let arm_bc7_idx = match pbr.metallic_roughness_texture() {
-                Some(t) => {
-                    let image = t.texture().source();
-                    let idx = image.index();
-                    if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = tex_fn(vk, &glb, image);
+                let arm_bc7_idx = match pbr.metallic_roughness_texture() {
+                    Some(t) => {
+                        let image = t.texture().source();
+                        let idx = image.index();
+                        if textures[idx].bc7_bytes.len() == 0 {
+                            textures[idx] = tex_fn(vk, &glb, image);
+                        }
+                        Some(idx as u32)
                     }
-                    Some(idx as u32)
-                }
-                None => { None }
-            };
+                    None => { None }
+                };
 
-            let emissive_bc7_idx = match mat.emissive_texture() {
-                Some(t) => {
-                    let image = t.texture().source();
-                    let idx = image.index();
-                    if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = tex_fn(vk, &glb, image);
+                let emissive_bc7_idx = match mat.emissive_texture() {
+                    Some(t) => {
+                        let image = t.texture().source();
+                        let idx = image.index();
+                        if textures[idx].bc7_bytes.len() == 0 {
+                            textures[idx] = tex_fn(vk, &glb, image);
+                        }
+                        Some(idx as u32)
                     }
-                    Some(idx as u32)
-                }
-                None => { None }
-            };
+                    None => { None }
+                };
 
-            let ozy_mat = OzyMaterial {
-                base_color: pbr.base_color_factor(),
-                emissive_factor: mat.emissive_factor(),
-                base_roughness: pbr.roughness_factor(),
-                color_bc7_idx,
-                normal_bc7_idx,
-                arm_bc7_idx,
-                emissive_bc7_idx
-            };
-            materials.push(ozy_mat);
+                let ozy_mat = OzyMaterial {
+                    base_color: pbr.base_color_factor(),
+                    emissive_factor: mat.emissive_factor(),
+                    base_roughness: pbr.roughness_factor(),
+                    color_bc7_idx,
+                    normal_bc7_idx,
+                    arm_bc7_idx,
+                    emissive_bc7_idx
+                };
+                materials[mat_idx] = ozy_mat;
+            }
 
             let indices = load_primitive_index_buffer(&glb, &prim);
 
@@ -936,7 +939,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
                 vertex_normals,
                 vertex_tangents,
                 vertex_uvs,
-                material_idx: (materials.len() - 1) as u32
+                material_idx: mat_idx as u32
             };
             primitives.push(ozy_prim);
         }
@@ -944,9 +947,12 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
 
     //File header is gonna be material count + primitive count
     let mut output_file = OpenOptions::new().write(true).create(true).open(output_location).unwrap();
-    output_file.write(&materials.len().to_le_bytes()).unwrap();
-    output_file.write(&primitives.len().to_le_bytes()).unwrap();
-    output_file.write(&textures.len().to_le_bytes()).unwrap();
+    let material_count = materials.len() as u32;
+    let primitive_count = primitives.len() as u32;
+    let texture_count = textures.len() as u32;
+    output_file.write(&material_count.to_le_bytes()).unwrap();
+    output_file.write(&primitive_count.to_le_bytes()).unwrap();
+    output_file.write(&texture_count.to_le_bytes()).unwrap();
     for material in materials.iter() {
         output_file.write(slice_to_bytes(&material.base_color)).unwrap();
         output_file.write(slice_to_bytes(&material.emissive_factor)).unwrap();

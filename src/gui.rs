@@ -1,8 +1,7 @@
 use ash::vk;
 use imgui::{DrawCmd, Ui, TreeNodeId};
 use ozy::io::OzyMesh;
-use slotmap::DefaultKey;
-use crate::render::Renderer;
+use crate::render::{Renderer};
 use crate::structs::{TerrainSpec, StaticPropKey};
 use crate::vkutil::*;
 use crate::*;
@@ -13,6 +12,7 @@ pub enum AssetWindowResponse {
 }
 
 pub enum PropsWindowResponse {
+    DeleteProp(StaticPropKey),
     LoadGLTF(GLTFMeshData),
     LoadOzyMesh(OzyMesh),
     FocusCamera(Option<StaticPropKey>),
@@ -109,7 +109,8 @@ impl DevGui {
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
             let mut i = 0;
             let mut add_list = vec![];
-            let mut delete_list = vec![];
+            //let mut delete_list = vec![];
+            let mut deleted_item = None;
             for prop in props.iter_mut() {
                 let prop_key = prop.0;
                 let prop = prop.1;
@@ -137,7 +138,7 @@ impl DevGui {
                     }
                     ui.same_line();
                     if Self::do_standard_button(ui, "Delete") {
-                        delete_list.push(prop_key);
+                        deleted_item = Some(prop_key);
                     }
                     ui.separator();
                     token.pop();
@@ -152,8 +153,8 @@ impl DevGui {
                 props.insert(add);
             }
 
-            for key in delete_list {
-                props.remove(key);
+            if let Some(key) = deleted_item {
+                out = PropsWindowResponse::DeleteProp(key);
             }
             
             if Self::do_standard_button(ui, "Load glTF") {
