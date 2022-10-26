@@ -22,6 +22,9 @@ pub fn vec_to_bytes<'a, T>(vec: &Vec<T>) -> &'a [u8] {
 #[inline]
 pub fn calculate_miplevels(width: u32, height: u32) -> u32 {
     (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32 + 1
+
+    //We want the smallest miplevel to be 4x4
+    //(f32::floor(f32::log2(u32::max(width, height) as f32))) as u32 - 1
 }
 
 pub fn crash_with_error_dialog(message: &str) -> ! {

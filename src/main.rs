@@ -600,14 +600,18 @@ fn main() {
                         }
                         if imgui::MenuItem::new("Quit").build(&imgui_ui) { break 'running; }
                         mt.end();
+                    
                     }
-                    if let Some(mt) = imgui_ui.begin_menu("Debug") {
-                        if imgui::MenuItem::new("Active material list").build(&imgui_ui) { dev_gui.do_mat_list = true; }
+                    if let Some(mt) = imgui_ui.begin_menu("View") {
+                        if imgui::MenuItem::new("Asset window").build(&imgui_ui) { dev_gui.do_asset_window = true; }
+                        if imgui::MenuItem::new("Props window").build(&imgui_ui) { dev_gui.do_props_window = true; }
+                        mt.end();
+                    }
+                    if let Some(mt) = imgui_ui.begin_menu("Cheats") {
+                        if imgui::MenuItem::new("Made you look").build(&imgui_ui) {}
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Environment") {
-                        if imgui::MenuItem::new("Asset window").build(&imgui_ui) { dev_gui.do_asset_window = true; }
-                        if imgui::MenuItem::new("Props window").build(&imgui_ui) { dev_gui.do_props_window = true; }
                         if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) { dev_gui.do_terrain_window = true; }
                         mt.end();
                     }

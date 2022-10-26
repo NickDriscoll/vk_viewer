@@ -366,7 +366,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
     staging_buffer.free(vk);
 }
 
-pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Vec<u8> {
+pub fn png2bc7_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Vec<u8> {
     //Extract metadata and decode to raw RGBA bytes
     let decoder = png::Decoder::new(png_bytes);
     let read_info = decoder.read_info().unwrap();
@@ -476,18 +476,19 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
             let (w2, h2) = ozy::routines::mip_resolution(width, height, j as u32);
             let w2 = w2 as usize;
             let h2 = h2 as usize;
-            let data = &uncompressed_bytes[uncompressed_byte_offset..(uncompressed_byte_offset + w2 * h2 * 4)];
+            let mip_byte_stride = w2 * h2 * 4;
+            let data = &uncompressed_bytes[uncompressed_byte_offset..(uncompressed_byte_offset + mip_byte_stride)];
             let surface = ispc::RgbaSurface {
                 data,
                 width: w2 as u32,
                 height: h2 as u32,
                 stride: 4 * w2 as u32
             };
-            let settings = ispc::bc7::opaque_slow_settings();
-            let bc7_range = usize::max(w2 * h2, 16);    //BC7 blocks are 16 bytes at minimum
+            let settings = ispc::bc7::opaque_ultra_fast_settings();
+            let bc7_range = ispc::bc7::calc_output_size(w2 as u32, h2 as u32);
             ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[bc7_offset..(bc7_offset + bc7_range)]);
 
-            uncompressed_byte_offset += bc7_range * 4;
+            uncompressed_byte_offset += mip_byte_stride;
             bc7_offset += bc7_range;
         }
         bc7_bytes
@@ -496,158 +497,58 @@ pub fn compress_png_bytes_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> V
 
 #[named]
 pub fn compress_png_file_synchronous(vk: &mut VulkanAPI, path: &str) {
-    unsafe {
-        use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
+    use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
 
-        //Read png bytes out of file
-        let mut file = unwrap_result(File::open(path), &format!("Error opening png with {}", function_name!()));
-        let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
-        file.read_exact(&mut png_bytes).unwrap();
+    //Read png bytes out of file
+    let mut file = unwrap_result(File::open(path), &format!("Error opening png with {}", function_name!()));
+    let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
+    file.read_exact(&mut png_bytes).unwrap();
+    let decoder = png::Decoder::new(png_bytes.as_slice());
+    let read_info = decoder.read_info().unwrap();
+    let info = read_info.info();
+    let width = info.width;
+    let height = info.height;
+    let mip_levels = ozy::routines::calculate_miplevels(width, height);
+    let rgb_bitcount = info.bit_depth as u32;
+    let uncompressed_format = match info.srgb {
+        Some(_) => { vk::Format::R8G8B8A8_SRGB }
+        None => { vk::Format::R8G8B8A8_UNORM }
+    };
+    let dxgi_format = match uncompressed_format {
+        vk::Format::R8G8B8A8_SRGB => { DXGI_FORMAT::BC7_UNORM_SRGB }
+        vk::Format::R8G8B8A8_UNORM => { DXGI_FORMAT::BC7_UNORM }
+        _ => { crash_with_error_dialog(&format!("Unreachable statement reached in {}", function_name!())); }
+    };
 
-        //Extract metadata and decode to raw RGBA bytes
-        let decoder = png::Decoder::new(png_bytes.as_slice());
-        let read_info = decoder.read_info().unwrap();
-        let info = read_info.info();
-        let width = info.width;
-        let height = info.height;
-        let rgb_bitcount = info.bit_depth as u32;
-        let uncompressed_format = match info.srgb {
-            Some(_) => { vk::Format::R8G8B8A8_SRGB }
-            None => { vk::Format::R8G8B8A8_UNORM }
-        };
-        let dxgi_format = match info.srgb {
-            Some(_) => { DXGI_FORMAT::BC7_UNORM_SRGB }
-            None => { DXGI_FORMAT::BC7_UNORM }
-        };
-        let bytes = decode_png(read_info);
+    let bc7_bytes = png2bc7_synchronous(vk, &png_bytes);
 
-        //After decoding, upload to GPU for mipmap creation
-        let mip_levels = calculate_miplevels(width, height);
-        let image_create_info = vk::ImageCreateInfo {
-            image_type: vk::ImageType::TYPE_2D,
-            format: uncompressed_format,
-            extent: vk::Extent3D {
-                width,
-                height,
-                depth: 1
-            },
-            mip_levels,
-            array_layers: 1,
-            samples: vk::SampleCountFlags::TYPE_1,
-            tiling: vk::ImageTiling::OPTIMAL,
-            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            queue_family_index_count: 1,
-            p_queue_family_indices: &vk.queue_family_index,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            ..Default::default()
-        };
+    let dds_pixelformat = DDS_PixelFormat {
+        rgb_bitcount,
+        flags: DDS_PixelFormat::DDPF_FOURCC,        //We just always wanna use this
+        ..Default::default()
+    };
+    let dx10_header = DDSHeader_DXT10 {
+        dxgi_format,
+        resource_dimension: D3D10_RESOURCE_DIMENSION::TEXTURE2D,
+        array_size: 1,
+        ..Default::default()
+    };
+    let dds_header = DDSHeader {
+        flags: DDSHeader::DDSD_CAPS | DDSHeader::DDSD_WIDTH | DDSHeader::DDSD_HEIGHT | DDSHeader::DDSD_PIXELFORMAT | DDSHeader::DDSD_LINEARSIZE,
+        height,
+        width,
+        pitch_or_linear_size: compute_pitch_bc(width, 16),
+        mipmap_count: mip_levels,
+        spf: dds_pixelformat,
+        dx10_header,
+        ..Default::default()
+    };
 
-        let sampler = vk.device.create_sampler(&vk::SamplerCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
-        let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        let def_image = upload_image_deferred(vk, &image_create_info, sampler, gpu_image_layout, &bytes);
-        let def_image = &DeferredImage::synchronize(vk, vec![def_image])[0];
-
-        //Get the GPU image back into system RAM
-        let finished_image_reqs = vk.device.get_image_memory_requirements(def_image.final_image.image);
-        let readback_buffer = GPUBuffer::allocate(vk, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::CpuToGpu);
-        let cb_idx = vk.command_buffer_indices.insert(0);
-        let command_buffer = vk.command_buffers[cb_idx];
-        vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-
-        let mut regions = Vec::with_capacity(mip_levels as usize);
-        let mut current_offset = 0;
-        for i in 0..mip_levels {
-            let (w, h) = ozy::routines::mip_resolution(width, height, i);
-            let image_subresource = vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: i as u32,
-                base_array_layer: 0,
-                layer_count: 1
-            };
-            let copy = vk::BufferImageCopy {
-                buffer_offset: current_offset,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_extent: vk::Extent3D {
-                    width: w,
-                    height: h,
-                    depth: 1
-                },
-                image_subresource,
-                image_offset: vk::Offset3D::default()
-            };
-            regions.push(copy);
-            current_offset += (w * h * 4) as u64;
-        }
-        vk.device.cmd_copy_image_to_buffer(command_buffer, def_image.final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
-
-        vk.device.end_command_buffer(command_buffer).unwrap();
-
-        let submit_info = vk::SubmitInfo {
-            command_buffer_count: 1,
-            p_command_buffers: &command_buffer,
-            ..Default::default()
-        };
-        let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-        let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
-        vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
-        vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-        vk.command_buffer_indices.remove(cb_idx);
-        vk.device.destroy_sampler(sampler, vkutil::MEMORY_ALLOCATOR);
-        vk.device.destroy_fence(fence, vkutil::MEMORY_ALLOCATOR);
-
-        let uncompressed_bytes = readback_buffer.read_buffer_bytes();
-        let mut bc7_bytes = vec![0u8; uncompressed_bytes.len() / 4];  //BC7 images are one byte per pixel
-        let mut uncompressed_byte_offset = 0;
-        let mut bc7_offset = 0;
-        for j in 0..mip_levels {
-            let (w2, h2) = ozy::routines::mip_resolution(def_image.final_image.width, def_image.final_image.height, j as u32);
-            let w2 = w2 as usize;
-            let h2 = h2 as usize;
-            let data = &uncompressed_bytes[uncompressed_byte_offset..(uncompressed_byte_offset + w2 * h2 * 4)];
-            let surface = ispc::RgbaSurface {
-                data,
-                width: w2 as u32,
-                height: h2 as u32,
-                stride: 4 * w2 as u32
-            };
-            let settings = ispc::bc7::opaque_slow_settings();
-            let bc7_range = usize::max(w2 * h2, 16);    //BC7 blocks are 16 bytes at minimum
-            ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[bc7_offset..(bc7_offset + bc7_range)]);
-
-            uncompressed_byte_offset += w2 * h2 * 4;
-            bc7_offset += bc7_range;
-        }
-
-        let dds_pixelformat = DDS_PixelFormat {
-            rgb_bitcount,
-            flags: DDS_PixelFormat::DDPF_FOURCC,        //We just always wanna use the 
-            ..Default::default()
-        };
-        let dx10_header = DDSHeader_DXT10 {
-            dxgi_format,
-            resource_dimension: D3D10_RESOURCE_DIMENSION::TEXTURE2D,
-            array_size: 1,
-            ..Default::default()
-        };
-        let dds_header = DDSHeader {
-            flags: DDSHeader::DDSD_CAPS | DDSHeader::DDSD_WIDTH | DDSHeader::DDSD_HEIGHT | DDSHeader::DDSD_PIXELFORMAT | DDSHeader::DDSD_LINEARSIZE,
-            height,
-            width,
-            pitch_or_linear_size: compute_pitch_bc(width, 16),
-            mipmap_count: mip_levels,
-            spf: dds_pixelformat,
-            dx10_header,
-            ..Default::default()
-        };
-
-        let path = Path::new(path);
-        let out_path = format!("{}/{}.dds", path.parent().unwrap().display(), path.file_stem().unwrap().to_str().unwrap());
-        let mut out_file = OpenOptions::new().write(true).create(true).open(out_path).unwrap();
-        out_file.write(struct_to_bytes(&dds_header)).unwrap();
-        out_file.write(&bc7_bytes).unwrap();
-    }
+    let path = Path::new(path);
+    let out_path = format!("{}/{}.dds", path.parent().unwrap().display(), path.file_stem().unwrap().to_str().unwrap());
+    let mut out_file = OpenOptions::new().write(true).create(true).open(out_path).unwrap();
+    out_file.write(struct_to_bytes(&dds_header)).unwrap();
+    out_file.write(&bc7_bytes).unwrap();
 }
 
 #[derive(Debug)]
@@ -858,7 +759,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
                 let width = info.width;
                 let height = info.height;
                 let mipmap_count = ozy::routines::calculate_miplevels(width, height);
-                let bc7_bytes = compress_png_bytes_synchronous(vk, &png_bytes);
+                let bc7_bytes = png2bc7_synchronous(vk, &png_bytes);
                 OzyImage {
                     width,
                     height,
