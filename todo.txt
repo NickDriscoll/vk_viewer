@@ -11,3 +11,5 @@ Texture compression
 Fix Imgui flickering bugs
 Optimize glTFs to custom format
     Move this off the main thread
+Treat yourself by implementing the borrowed realistic sky shader
+    I'm trying

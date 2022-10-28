@@ -49,6 +49,13 @@ struct ImguiVertexOutput {
     float4 color;
 }
 
+struct AtmosphereUniforms {
+    float3 sun_direction;
+    float stars_exposure;
+    float3 sun_radiance;
+    float stars_threshold;
+}
+
 //Variables that are constant for a given frame
 struct FrameUniforms {
     float4x4 clip_from_world;
@@ -72,7 +79,7 @@ struct FrameUniforms {
     float sun_intensity;
     float ambient_factor;
     float _pad0;
-    float4 sun_shadow_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS];
+    float4 sun_shadow_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4 + 1];
 }
 
 struct Material {
