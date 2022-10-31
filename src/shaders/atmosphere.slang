@@ -68,27 +68,25 @@ AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
 float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     float3 view_direction = normalize(input.view_direction);
 
-    float3 fake_sky_sample = sample_fake_sky(
-        uniforms,
-        view_direction,
-        global_textures[uniforms.sunzenith_idx],
-        global_textures[uniforms.viewzenith_idx],
-        global_textures[uniforms.sunview_idx]
-    );
-
-    float3 real_sky_sample;
-    {
+    float3 sky_sample;
+    if (uniforms.real_sky) {
         ray_t ray = {
-            float3(0.0, 0.0, earth_radius),
+            float3(0.0, 0.0, earth_radius + 1.0),
             view_direction
         };
-
-        if (dot(ray.direction, float3(0.0, 0.0, 1.0)) > .0) {
-            real_sky_sample = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_intensity);
-        } else {
-            real_sky_sample = float3(0.333);
-        }
+        sky_sample = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_intensity);
+    } else {
+        sky_sample = sample_fake_sky(
+            uniforms,
+            view_direction,
+            global_textures[uniforms.sunzenith_idx],
+            global_textures[uniforms.viewzenith_idx],
+            global_textures[uniforms.sunview_idx]
+        );
     }
 
-    return float4(real_sky_sample, 1.0);
+    float3 stars_color = sample_sky_stars(uniforms, view_direction);
+    float3 final_color = sky_sample + stars_color;
+
+    return float4(final_color, 1.0);
 }

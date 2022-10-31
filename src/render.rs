@@ -180,7 +180,7 @@ pub struct EnvironmentUniforms {
     pub exposure: f32,
     pub sun_intensity: f32,
     pub ambient_factor: f32,
-    pub _pad0: f32,
+    pub real_sky: f32,
     pub sun_shadow_distances: [f32; CascadedShadowMap::CASCADE_COUNT + 1],
 }
 
@@ -1410,7 +1410,12 @@ impl Renderer {
         if let Some(model) = self.models.get(key) {
             self.model_counters[model.count_idx] -= 1;
             if self.model_counters[model.count_idx] == 0 {
-                
+                for prim_key in model.primitive_keys.iter() {
+                    if let Some(primitive) = self.primitives.get(*prim_key) {
+                        let mat = self.global_materials.get_element(primitive.material_idx as usize).unwrap();
+                        
+                    }
+                }
             }
         }
     }

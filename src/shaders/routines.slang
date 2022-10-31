@@ -168,6 +168,22 @@ float3 Unity_Blackbody_float(float Temperature) {
     return color;
 }
 
+float3 sample_sky_stars(FrameUniforms uniforms, float3 view_direction) {
+    float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
+
+    // Stars computation
+    float stars = pow(clamp(noise(view_direction * 200.0f), 0.0f, 1.0f), uniforms.stars_threshold) * uniforms.stars_exposure;
+    float star_fact = lerp(0.4, 1.4, noise(view_direction * 100.0f + float3(uniforms.time)));
+    stars *= clamp(star_fact, 0.1, 1.4); // time based flickering
+
+    // star color by randomized temperature
+    float stars_temperature = noise(view_direction * 150.0) * 0.5 + 0.5;
+    float3 stars_color = stars * Unity_Blackbody_float(lerp(1500.0, 65000.0, pow(stars_temperature, 4.0)));
+    stars_color *= 1.0 - nighttime_factor;
+
+    return stars_color;
+}
+
 float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D sun_zenith, Sampler2D view_zenith, Sampler2D sun_view) {
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
     float sunview_dot = dot(uniforms.sun_direction.xyz, view_direction) * 0.5 + 0.5;
@@ -181,20 +197,8 @@ float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D 
     float3 sunview_color = sun_view.Sample(float2(sunzenith_dot, 0.5)).rgb;
     sunview_color *= pow(sunview_dot, 6.0);
 
-    // Used to bring out the stars/dim the sun
     float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
-
-    // Stars computation
-    float stars = pow(clamp(noise(view_direction * 200.0f), 0.0f, 1.0f), uniforms.stars_threshold) * uniforms.stars_exposure;
-    float star_fact = lerp(0.4, 1.4, noise(view_direction * 100.0f + float3(uniforms.time)));
-    stars *= clamp(star_fact, 0.1, 1.4); // time based flickering
-
-    // star color by randomized temperature
-    float stars_temperature = noise(view_direction * 150.0) * 0.5 + 0.5;
-    float3 stars_color = stars * Unity_Blackbody_float(lerp(1500.0, 65000.0, pow(stars_temperature, 4.0)));
-    stars_color *= 1.0 - nighttime_factor;
-
-    float3 final_color = base_color + viewzenith_color + sunview_color + stars_color;
+    float3 final_color = base_color + viewzenith_color + sunview_color;
 
     final_color += nighttime_factor * smoothstep(lerp(1.0, 0.99, 0.25), 1.0, sunview_dot);
 
@@ -351,9 +355,9 @@ static const float g = 0.76;
 float henyey_greenstein_phase_func(float mu)
 {
     return
-                        (1. - g * g)
+                        (1.0 - g * g)
     / //---------------------------------------------
-           ((4. * PI) * pow(1. + g * g - 2. * g * mu, 1.5));
+           ((4.0 * PI) * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
 }
 
 // Schlick Phase Function factor
@@ -362,16 +366,13 @@ static const float k = 1.55 * g - 0.55 * (g * g * g);
 float schlick_phase_func(float mu)
 {
     return
-                    (1. - k * k)
+                    (1.0 - k * k)
     / //-------------------------------------------
-           (4. * PI * (1. + k * mu) * (1. + k * mu));
+           (4.0 * PI * (1.0 + k * mu) * (1.0 + k * mu));
 }
 
 static const float earth_radius = 6360e3;             // (m)
 static const float atmosphere_radius = 6420e3; // (m)
-
-//float3 sun_dir = float3(0, 1, 0);
-//const float sun_power = 20.0;
 
 static const sphere_t atmosphere = {
     float3(0.0, 0.0, 0.0),
@@ -379,20 +380,7 @@ static const sphere_t atmosphere = {
     0
 };
 
-float isect_sphere(ray_t ray, sphere_t sphere) {
-    float3 rc = sphere.origin - ray.origin;
-    float radius2 = sphere.radius * sphere.radius;
-    float tca = dot(rc, ray.direction);
-    float d2 = dot(rc, rc) - tca * tca;
-    if (d2 > radius2) return 0.0/0.0;
-    float thc = sqrt(radius2 - d2);
-    //t0 = tca - thc;
-    //t1 = tca + thc;
-
-    return tca + thc;
-}
-
-bool isect_sphereOBS(ray_t ray, sphere_t sphere, out float t0, out float t1)
+bool isect_sphere(ray_t ray, sphere_t sphere, out float t0, out float t1)
 {
     float3 rc = sphere.origin - ray.origin;
     float radius2 = sphere.radius * sphere.radius;
@@ -408,19 +396,20 @@ bool isect_sphereOBS(ray_t ray, sphere_t sphere, out float t0, out float t1)
 
 bool get_sun_light(
     ray_t ray,
-    out float optical_depthR,
-    out float optical_depthM
+    in out float optical_depthR,
+    in out float optical_depthM
 ) {
     const int num_samples = 8;
-    float t1 = isect_sphere(ray, atmosphere);
+    float t0, t1;
+    isect_sphere(ray, atmosphere, t0, t1);
 
-    float march_pos = 0.;
+    float march_pos = 0.0;
     float march_step = t1 / float(num_samples);
 
     for (int i = 0; i < num_samples; i++) {
         float3 s = ray.origin + ray.direction * (march_pos + 0.5 * march_step);
         float height = length(s) - earth_radius;
-        if (height < 0.)
+        if (height < 0.0)
             return false;
 
         optical_depthR += exp(-height / hR) * march_step;
@@ -432,13 +421,13 @@ bool get_sun_light(
     return true;
 }
 
-float3 get_incident_light(ray_t ray, float3 sun_dir, float sun_power)
-{
+float3 get_incident_light(ray_t ray, float3 sun_dir, float sun_power) {
     const int num_samples = 16;
 
     // "pierce" the atmosphere with the viewing ray
-    float t1 = isect_sphere(ray, atmosphere);
-    if (isnan(t1)) {
+    float t0, t1;
+    bool did_isect = isect_sphere(ray, atmosphere, t0, t1);
+    if (!did_isect) {
         return float3(0.6);
     }
 
@@ -459,17 +448,15 @@ float3 get_incident_light(ray_t ray, float3 sun_dir, float sun_power)
     // optical depth (or "average density")
     // represents the accumulated extinction coefficients
     // along the path, multiplied by the length of that path
-    float optical_depthR = 0.;
-    float optical_depthM = 0.;
+    float optical_depthR = 0.0;
+    float optical_depthM = 0.0;
 
     float3 sumR = float3(0.0);
     float3 sumM = float3(0.0);
     float march_pos = 0.0;
 
     for (int i = 0; i < num_samples; i++) {
-        float3 s =
-            ray.origin +
-            ray.direction * (march_pos + 0.5 * march_step);
+        float3 s = ray.origin + ray.direction * (march_pos + 0.5 * march_step);
         float height = length(s) - earth_radius;
 
         // integrate the height scale
@@ -485,9 +472,9 @@ float3 get_incident_light(ray_t ray, float3 sun_dir, float sun_power)
         };
         float optical_depth_lightR = 0.0;
         float optical_depth_lightM = 0.0;
-        bool underground = get_sun_light(light_ray, optical_depth_lightR, optical_depth_lightM);
+        bool overground = get_sun_light(light_ray, optical_depth_lightR, optical_depth_lightM);
 
-        if (!underground) {
+        if (overground) {
             float3 tau =
                 betaR * (optical_depthR + optical_depth_lightR) +
                 betaM * 1.1 * (optical_depthM + optical_depth_lightM);
@@ -500,6 +487,5 @@ float3 get_incident_light(ray_t ray, float3 sun_dir, float sun_power)
         march_pos += march_step;
     }
 
-    // return sun_power * (sumR * phaseR * betaR + sumM * phaseM * betaM);
-    return float3(sumR);
+    return 20.0 * (sumR * phaseR * betaR + sumM * phaseM * betaM);
 }

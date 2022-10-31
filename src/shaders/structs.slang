@@ -78,7 +78,7 @@ struct FrameUniforms {
     float exposure;
     float sun_intensity;
     float ambient_factor;
-    float _pad0;
+    bool real_sky;
     float4 sun_shadow_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4 + 1];
 }
 

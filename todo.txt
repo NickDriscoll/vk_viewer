@@ -9,7 +9,5 @@ Deferred/Batched GPU uploading
 Texture compression
     Figure out why images smaller than the BC7 block size don't compress correctly
 Fix Imgui flickering bugs
-Optimize glTFs to custom format
-    Move this off the main thread
-Treat yourself by implementing the borrowed realistic sky shader
-    I'm trying
+Move glTF optimization off of main thread
+Rewrite the HLSL multiview shader in the new version of Slang

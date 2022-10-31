@@ -652,6 +652,15 @@ fn main() {
                         totoro_list.delete(i);
                     }
                 }
+
+                let mut state = renderer.uniform_data.real_sky != 0.0;
+                if imgui_ui.checkbox("Realistic sky", &mut state) {
+                    renderer.uniform_data.real_sky = if state {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                }
     
                 t.end();
             }

@@ -1042,6 +1042,14 @@ impl<T> FreeList<T> {
         self.list.delete(idx);
     }
 
+	pub fn get_element(&mut self, index: usize) -> Option<&T> {
+		self.list.get_element(index)
+	}
+
+	pub fn get_mut_element(&mut self, index: usize) -> Option<&mut T> {
+		self.list.get_mut_element(index)
+	}
+
     pub fn was_updated(&mut self) -> bool {
         let r = self.updated;
         self.updated = false;
