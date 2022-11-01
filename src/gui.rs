@@ -80,7 +80,6 @@ impl DevGui {
                 let name = e_path.file_stem().unwrap().to_string_lossy();
                 if metadata.is_file() {
                     ui.text(entry.file_name().to_string_lossy());
-                    ui.same_line();
                     let parent_dir = p.parent().unwrap();
                     let opt_path = format!("{}/.optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
                     let opt_dir = Path::new(&opt_path);

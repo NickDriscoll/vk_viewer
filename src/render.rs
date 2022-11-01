@@ -595,6 +595,7 @@ pub struct Renderer {
     models: SlotMap<ModelKey, Model>,
     model_counters: Vec<u64>,
     primitives: SlotMap<PrimitiveKey, Primitive>,
+    primitive_counters: Vec<u64>,
     instance_data: Vec<InstanceData>,
     raw_draws: Vec<DesiredDraw>,
     drawstream: Vec<DrawCall>,
@@ -620,8 +621,10 @@ pub struct Renderer {
     pub material_buffer: GPUBuffer,
 
     pub global_images: FreeList<GPUImage>,
+    image_counters: Vec<u64>,
     pub default_texture_idx: u32,
     pub global_materials: FreeList<Material>,
+    material_counters: Vec<u64>,
 
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
@@ -988,6 +991,7 @@ impl Renderer {
 
         let mut uniforms = EnvironmentUniforms::default();
         uniforms.exposure = 1.0;
+        uniforms.real_sky = 1.0;
 
         //Load environment textures
         {
@@ -1061,14 +1065,17 @@ impl Renderer {
             models: SlotMap::with_key(),
             model_counters: Vec::new(),
             primitives: SlotMap::with_key(),
+            primitive_counters: Vec::new(),
             raw_draws: Vec::new(),
             drawstream: Vec::new(),
             instance_data: Vec::new(),
             window_manager,
             uniform_data: uniforms,
             global_images,
+            image_counters: Vec::new(),
             default_texture_idx: 0,
             global_materials,
+            material_counters: Vec::new(),
             descriptor_set_layout,
             bindless_descriptor_set,
             position_buffer,
