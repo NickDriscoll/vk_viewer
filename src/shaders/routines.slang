@@ -487,5 +487,5 @@ float3 get_incident_light(ray_t ray, float3 sun_dir, float sun_power) {
         march_pos += march_step;
     }
 
-    return 20.0 * (sumR * phaseR * betaR + sumM * phaseM * betaM);
+    return sun_power * (sumR * phaseR * betaR + sumM * phaseM * betaM);
 }

@@ -50,8 +50,8 @@ use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLi
 
 use crate::routines::*;
 use crate::asset::GLTFMeshData;
-use crate::gui::{DevGui, PropsWindowResponse};
-use crate::structs::StaticProp;
+use crate::gui::{DevGui, EntityWindowResponse};
+use crate::structs::Entity;
 
 //Entry point
 fn main() {
@@ -439,7 +439,7 @@ fn main() {
     };
 
     let mut simulation_state = SimulationSOA::new();
-    let mut focused_prop = None;
+    let mut focused_entity = None;
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
@@ -674,10 +674,10 @@ fn main() {
             AssetWindowResponse::None => {}
         }
 
-        match dev_gui.do_props_window(&imgui_ui, &mut simulation_state.static_props, focused_prop) {
-            PropsWindowResponse::LoadGLTF(mesh_data) => {
+        match dev_gui.do_entity_window(&imgui_ui, &mut simulation_state.entities, focused_entity) {
+            EntityWindowResponse::LoadGLTF(mesh_data) => {
                 let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
-                let s = StaticProp {
+                let s = Entity {
                     name: mesh_data.name,
                     model,
                     position: camera.position,
@@ -686,11 +686,11 @@ fn main() {
                     roll: 0.0,
                     scale: 1.0
                 };
-                simulation_state.static_props.insert(s);
+                simulation_state.entities.insert(s);
             }
-            PropsWindowResponse::LoadOzyMesh(mesh_data) => {
+            EntityWindowResponse::LoadOzyMesh(mesh_data) => {
                 let model = renderer.upload_ozymesh(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
-                let s = StaticProp {
+                let s = Entity {
                     name: mesh_data.name,
                     model,
                     position: camera.position,
@@ -699,17 +699,17 @@ fn main() {
                     roll: 0.0,
                     scale: 1.0
                 };
-                simulation_state.static_props.insert(s);
+                simulation_state.entities.insert(s);
             }
-            PropsWindowResponse::DeleteProp(prop_key) => {
-                if let Some(prop) = simulation_state.static_props.get(prop_key) {
-                    renderer.delete_model(prop.model);
-                    simulation_state.static_props.remove(prop_key);
+            EntityWindowResponse::DeleteEntity(key) => {
+                if let Some(entity) = simulation_state.entities.get(key) {
+                    renderer.delete_model(entity.model);
+                    simulation_state.entities.remove(key);
                 }
             }
-            PropsWindowResponse::FocusCamera(k) => { focused_prop = k; }
-            PropsWindowResponse::Interacted => {}
-            PropsWindowResponse::None => {}
+            EntityWindowResponse::FocusCamera(k) => { focused_entity = k; }
+            EntityWindowResponse::Interacted => {}
+            EntityWindowResponse::None => {}
         }
         
         dev_gui.do_material_list(&imgui_ui, &mut renderer);
@@ -744,9 +744,9 @@ fn main() {
         renderer.queue_drawcall(totoro_model, matrices);
 
         //Compute this frame's view matrix
-        let view_from_world = match focused_prop {
+        let view_from_world = match focused_entity {
             Some(key) => {
-                match simulation_state.static_props.get(key) {
+                match simulation_state.entities.get(key) {
                     Some(prop) => {
                         let min = 3.0;
                         let max = 200.0;
@@ -815,7 +815,7 @@ fn main() {
         renderer.uniform_data.view_from_world = view_from_world;
 
         //Push drawcalls for static props
-        for (_, prop) in simulation_state.static_props.iter() {
+        for (_, prop) in simulation_state.entities.iter() {
             let mm = glm::translation(&prop.position) *
                      glm::rotation(prop.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
                      glm::rotation(prop.yaw, &glm::vec3(0.0, 0.0, 1.0)) *

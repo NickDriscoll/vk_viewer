@@ -105,7 +105,7 @@ pub struct PhysicsProp {
 }
 
 #[derive(Clone)]
-pub struct StaticProp {
+pub struct Entity {
     pub name: String,
     pub model: ModelKey,
     pub position: glm::TVec3<f32>,
@@ -117,11 +117,11 @@ pub struct StaticProp {
 
 new_key_type! { pub struct ModelMatrixKey; }
 new_key_type! { pub struct ModelIndexKey; }
-new_key_type! { pub struct StaticPropKey; }
+new_key_type! { pub struct EntityKey; }
 pub struct SimulationSOA {
     pub model_matrices: DenseSlotMap<ModelMatrixKey, glm::TMat4<f32>>,
     pub model_indices: DenseSlotMap<ModelIndexKey, Vec<usize>>,
-    pub static_props: DenseSlotMap<StaticPropKey, StaticProp>
+    pub entities: DenseSlotMap<EntityKey, Entity>
 }
 
 impl SimulationSOA {
@@ -129,7 +129,7 @@ impl SimulationSOA {
         SimulationSOA{
             model_matrices: DenseSlotMap::with_key(),
             model_indices: DenseSlotMap::with_key(),
-            static_props: DenseSlotMap::with_key()
+            entities: DenseSlotMap::with_key()
         }
     }
 }

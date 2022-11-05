@@ -65,7 +65,6 @@ impl PartialEq for DrawCall {
         self.pipeline == other.pipeline
     }
 }
-
 impl Eq for DrawCall {}
 
 impl PartialOrd for DrawCall {
@@ -107,8 +106,13 @@ pub struct Primitive {
 #[derive(Clone)]
 pub struct Model {
     pub id: u64,            //Just the hash of the asset's name
-    pub count_idx: usize,
     pub primitive_keys: Vec<PrimitiveKey>
+}
+
+impl HashedID for Model {
+    fn id(&self) -> u64 {
+        self.id
+    }
 }
 
 #[repr(C)]
@@ -578,6 +582,83 @@ struct BufferBlock {
     pub length: u64              //In f32s
 }
 
+pub trait HashedID {
+    fn id(&self) -> u64;
+}
+
+pub struct InstancedFreeList<V: HashedID> {
+    list: FreeList<V>,
+    counts: Vec<u32>
+}
+
+impl<V: HashedID> InstancedFreeList<V> {
+    pub fn new() -> Self {
+        InstancedFreeList {
+            list: FreeList::new(),
+            counts: Vec::new()
+        }
+    }
+
+    
+}
+
+pub struct InstancedSlotMap<K: slotmap::Key, V: HashedID> {
+    items: SlotMap<K, V>,
+    counts: HashMap<K, u32>
+}
+
+impl<K: slotmap::Key, V: HashedID> InstancedSlotMap<K, V> {
+    pub fn with_key() -> Self {
+        InstancedSlotMap {
+            items: SlotMap::with_key(),
+            counts: HashMap::new()
+        }
+    }
+
+    pub fn get(&self, key: K) -> Option<&V> {
+        self.items.get(key)
+    }
+
+    pub fn id_exists(&self, id: u64) -> Option<K> {
+        let mut res = None;
+        for item in self.items.iter() {
+            if item.1.id() == id {
+                res = Some(item.0);
+                break;
+            }
+        }
+        res
+    }
+
+    //This is to insert a brand new value
+    pub fn insert(&mut self, value: V) -> K {
+        let key = self.items.insert(value);
+        self.counts.insert(key, 1);
+        key
+    }
+
+    pub fn increment_instance(&mut self, key: K) {
+        if let Some(count) = self.counts.get_mut(&key) {
+            *count += 1;
+        }
+    }
+
+    //Returns true if the last instance was deleted
+    pub fn delete_instance(&mut self, key: K) -> Option<V> {
+        let mut last_one = None;
+        if let Some(count) = self.counts.get_mut(&key) {
+            *count -= 1;
+            if *count == 0 {
+                self.counts.remove(&key);
+                last_one = self.items.remove(key);
+            }
+        }
+
+        last_one
+    }
+}
+
+//SlotMap key types used by Renderer
 new_key_type! { pub struct ModelKey; }
 new_key_type! { pub struct PrimitiveKey; }
 new_key_type! { pub struct PositionBufferBlockKey; }
@@ -587,15 +668,14 @@ pub struct Renderer {
     pub default_normal_idx: u32,
     pub default_metal_roughness_idx: u32,
     pub default_emissive_idx: u32,
+    pub default_texture_idx: u32,
 
     pub material_sampler: vk::Sampler,
     pub point_sampler: vk::Sampler,
     pub shadow_sampler: vk::Sampler,
 
-    models: SlotMap<ModelKey, Model>,
-    model_counters: Vec<u64>,
+    models: InstancedSlotMap<ModelKey, Model>,
     primitives: SlotMap<PrimitiveKey, Primitive>,
-    primitive_counters: Vec<u64>,
     instance_data: Vec<InstanceData>,
     raw_draws: Vec<DesiredDraw>,
     drawstream: Vec<DrawCall>,
@@ -622,7 +702,6 @@ pub struct Renderer {
 
     pub global_images: FreeList<GPUImage>,
     image_counters: Vec<u64>,
-    pub default_texture_idx: u32,
     pub global_materials: FreeList<Material>,
     material_counters: Vec<u64>,
 
@@ -751,7 +830,7 @@ impl Renderer {
         );
             
         //Maintain free list for texture allocation
-        let mut global_images = FreeList::new(1024);
+        let mut global_images = FreeList::with_capacity(1024);
 
         //Set up global bindless descriptor set
         let descriptor_set_layout;
@@ -987,7 +1066,7 @@ impl Renderer {
         let default_normal_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
         //Create free list for materials
-        let global_materials = FreeList::new(256);
+        let global_materials = FreeList::with_capacity(256);
 
         let mut uniforms = EnvironmentUniforms::default();
         uniforms.exposure = 1.0;
@@ -1062,10 +1141,8 @@ impl Renderer {
             material_sampler,
             point_sampler,
             shadow_sampler,
-            models: SlotMap::with_key(),
-            model_counters: Vec::new(),
+            models: InstancedSlotMap::with_key(),
             primitives: SlotMap::with_key(),
-            primitive_counters: Vec::new(),
             raw_draws: Vec::new(),
             drawstream: Vec::new(),
             instance_data: Vec::new(),
@@ -1254,13 +1331,9 @@ impl Renderer {
         let id = hasher.finish();
 
         //Check if this model is already loaded
-        let mut i = 0;
-        for model in self.models.iter() {
-            if model.1.id == id {
-                self.model_counters[i] += 1;
-                return model.0;
-            }
-            i += 1;
+        if let Some(key) = self.models.id_exists(id) {
+            self.models.increment_instance(key);
+            return key;
         }
 
         //let mut loading_images = vec![];
@@ -1339,13 +1412,9 @@ impl Renderer {
         let id = hasher.finish();
 
         //Check if this model is already loaded
-        let mut i = 0;
-        for model in self.models.iter() {
-            if model.1.id == id {
-                self.model_counters[i] += 1;
-                return model.0;
-            }
-            i += 1;
+        if let Some(key) = self.models.id_exists(id) {
+            self.models.increment_instance(key);
+            return key;
         }
         
         let mut primitive_keys = vec![];
@@ -1403,28 +1472,34 @@ impl Renderer {
     }
 
     pub fn new_model(&mut self, id: u64, primitive_keys: Vec<PrimitiveKey>) -> ModelKey {
-        self.model_counters.push(1);
-        let count_idx = self.model_counters.len() - 1;
         let model = Model {
             id,
-            count_idx,
             primitive_keys
         };
         self.models.insert(model)
     }
 
     pub fn delete_model(&mut self, key: ModelKey) {
-        if let Some(model) = self.models.get(key) {
-            self.model_counters[model.count_idx] -= 1;
-            if self.model_counters[model.count_idx] == 0 {
-                for prim_key in model.primitive_keys.iter() {
-                    if let Some(primitive) = self.primitives.get(*prim_key) {
-                        let mat = self.global_materials.get_element(primitive.material_idx as usize).unwrap();
-                        
-                    }
-                }
+        if let Some(model) = self.models.delete_instance(key) {
+            for prim_key in model.primitive_keys {
+
             }
         }
+
+
+
+
+        // if let Some(model) = self.models.get(key) {
+        //     self.model_counters[model.count_idx] -= 1;
+        //     if self.model_counters[model.count_idx] == 0 {
+        //         for prim_key in model.primitive_keys.iter() {
+        //             if let Some(primitive) = self.primitives.get(*prim_key) {
+        //                 let mat = self.global_materials.get_element(primitive.material_idx as usize).unwrap();
+                        
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {

@@ -2,7 +2,7 @@ use ash::vk;
 use imgui::{DrawCmd, Ui, TreeNodeId};
 use ozy::io::OzyMesh;
 use crate::render::{Renderer};
-use crate::structs::{TerrainSpec, StaticPropKey};
+use crate::structs::{TerrainSpec, EntityKey};
 use crate::vkutil::*;
 use crate::*;
 
@@ -11,11 +11,11 @@ pub enum AssetWindowResponse {
     None
 }
 
-pub enum PropsWindowResponse {
-    DeleteProp(StaticPropKey),
+pub enum EntityWindowResponse {
+    DeleteEntity(EntityKey),
     LoadGLTF(GLTFMeshData),
     LoadOzyMesh(OzyMesh),
-    FocusCamera(Option<StaticPropKey>),
+    FocusCamera(Option<EntityKey>),
     Interacted,
     None
 }
@@ -101,8 +101,8 @@ impl DevGui {
         response
     }
 
-    pub fn do_props_window(&mut self, ui: &Ui, props: &mut DenseSlotMap<StaticPropKey, StaticProp>, focused_prop: Option<StaticPropKey>) -> PropsWindowResponse {
-        let mut out = PropsWindowResponse::None;
+    pub fn do_entity_window(&mut self, ui: &Ui, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>) -> EntityWindowResponse {
+        let mut out = EntityWindowResponse::None;
         if !self.do_props_window { return out; }
         let mut interacted = false;
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
@@ -110,7 +110,7 @@ impl DevGui {
             let mut add_list = vec![];
             //let mut delete_list = vec![];
             let mut deleted_item = None;
-            for prop in props.iter_mut() {
+            for prop in entities.iter_mut() {
                 let prop_key = prop.0;
                 let prop = prop.1;
 
@@ -124,12 +124,12 @@ impl DevGui {
                     interacted |= imgui::Drag::new("Scale").speed(0.05).build(ui, &mut prop.scale);
 
                     let mut b = false;
-                    if let Some(key) = focused_prop {
+                    if let Some(key) = focused_entity {
                         b = prop_key == key;
                     }
                     if ui.checkbox("Focus camera", &mut b) {
-                        out = if !b { PropsWindowResponse::FocusCamera(None) }
-                              else { PropsWindowResponse::FocusCamera(Some(prop_key)) };
+                        out = if !b { EntityWindowResponse::FocusCamera(None) }
+                              else { EntityWindowResponse::FocusCamera(Some(prop_key)) };
                     }
 
                     if Self::do_standard_button(ui, "Clone") {
@@ -149,29 +149,29 @@ impl DevGui {
 
             for mut add in add_list {
                 add.position += glm::vec3(5.0, 0.0, 0.0);
-                props.insert(add);
+                entities.insert(add);
             }
 
             if let Some(key) = deleted_item {
-                out = PropsWindowResponse::DeleteProp(key);
+                out = EntityWindowResponse::DeleteEntity(key);
             }
             
             if Self::do_standard_button(ui, "Load glTF") {
                 if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                    out = PropsWindowResponse::LoadGLTF(asset::gltf_meshdata(&path));
+                    out = EntityWindowResponse::LoadGLTF(asset::gltf_meshdata(&path));
                 }
             }
             
             if Self::do_standard_button(ui, "Load OzyMesh") {
                 if let Some(path) = tfd::open_file_dialog("Choose OzyMesh", "./data/models/.optimized", Some((&["*.ozy"], ".ozy (Optimized model)"))) {
-                    out = PropsWindowResponse::LoadOzyMesh(OzyMesh::from_file(&path));
+                    out = EntityWindowResponse::LoadOzyMesh(OzyMesh::from_file(&path));
                 }
             }
 
             if DevGui::do_standard_button(ui, "Close") { self.do_props_window = false; }
             win_token.end();
         }
-        if interacted { out = PropsWindowResponse::Interacted; }
+        if interacted { out = EntityWindowResponse::Interacted; }
 
         out
     }

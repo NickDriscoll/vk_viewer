@@ -700,7 +700,7 @@ impl VulkanAPI {
             ext_swapchain: vk_ext_swapchain,
             queue_family_index,
             command_pool,
-            command_buffer_indices: FreeList::new(command_buffer_count),
+            command_buffer_indices: FreeList::with_capacity(command_buffer_count),
             command_buffers: general_command_buffers,
             command_buffer_fence: graphics_command_buffer_fence
         }
@@ -1020,7 +1020,15 @@ pub struct FreeList<T> {
 }
 
 impl<T> FreeList<T> {
-    pub fn new(size: usize) -> Self {
+    pub fn new() -> Self {
+        FreeList {
+            list: OptionVec::new(),
+            size: 0,
+            updated: false
+        }
+    }
+
+    pub fn with_capacity(size: usize) -> Self {
         FreeList {
             list: OptionVec::with_capacity(size),
             size: size as u64,
