@@ -1,6 +1,7 @@
 use std::{ffi::c_void, io::Read, ops::Index};
 
 use ash::vk;
+use ash::vk::Handle;
 use gpu_allocator::vulkan;
 use gpu_allocator::vulkan::*;
 use gpu_allocator::MemoryLocation;
@@ -8,6 +9,7 @@ use ozy::io::DDSHeader;
 use sdl2::libc::c_char;
 use std::ptr;
 use crate::*;
+use crate::render::UniqueID;
 
 pub const MEMORY_ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
 
@@ -1045,9 +1047,9 @@ impl<T> FreeList<T> {
         self.list.insert(item)
     }
 
-    pub fn remove(&mut self, idx: usize) {
+    pub fn remove(&mut self, idx: usize) -> Option<T> {
         self.updated = true;
-        self.list.delete(idx);
+        self.list.delete(idx)
     }
 
 	pub fn get_element(&mut self, index: usize) -> Option<&T> {

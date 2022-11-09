@@ -226,8 +226,8 @@ fn main() {
             let atlas_texture = atlas.build_alpha8_texture();
             let atlas_format = vk::Format::R8_UNORM;
             let atlas_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-            let descriptor_info = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
-            let index = renderer.global_images.insert(descriptor_info);
+            let gpu_image = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
+            let index = renderer.global_images.insert(gpu_image);
             renderer.default_texture_idx = index as u32;
             
             atlas.clear_tex_data();  //Free atlas memory CPU-side
@@ -360,7 +360,7 @@ fn main() {
         "./data/textures/rocky_ground/normal.png",
         "./data/textures/rocky_ground/ao_roughness_metallic.png"
     ];
-    let mut terrain_image_indices = [0; 6];
+    let mut terrain_image_indices = [None; 6];
     for i in 0..terrain_image_paths.len() {
         let path = terrain_image_paths[i];
         let pathp = Path::new(path);
@@ -368,7 +368,7 @@ fn main() {
         if !pathp.with_extension("dds").is_file() {
             asset::compress_png_file_synchronous(&mut vk, path);
         }
-        terrain_image_indices[i] = vkutil::load_bc7_texture(&mut vk, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap());
+        terrain_image_indices[i] = Some(vkutil::load_bc7_texture(&mut vk, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap()));
     }
     let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
 
@@ -380,7 +380,7 @@ fn main() {
             color_idx: grass_color_index,
             normal_idx: grass_normal_index,
             metal_roughness_idx: grass_arm_index,
-            emissive_idx: renderer.default_emissive_idx
+            emissive_idx: None
         }
     ) as u32;
     let terrain_rock_matidx = renderer.global_materials.insert(
@@ -391,7 +391,7 @@ fn main() {
             color_idx: rock_color_index,
             normal_idx: rock_normal_index,
             metal_roughness_idx: rock_arm_index,
-            emissive_idx: renderer.default_emissive_idx
+            emissive_idx: None
         }
     ) as u32;
     

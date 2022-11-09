@@ -26,21 +26,38 @@ pub struct Material {
     pub pipeline: vk::Pipeline,
     pub base_color: [f32; 4],
     pub base_roughness: f32,
-    pub color_idx: u32,
-    pub normal_idx: u32,
-    pub metal_roughness_idx: u32,
-    pub emissive_idx: u32
+    pub color_idx: Option<u32>,
+    pub normal_idx: Option<u32>,
+    pub metal_roughness_idx: Option<u32>,
+    pub emissive_idx: Option<u32>
 }
 
 impl Material {
-    pub fn data(&self) -> MaterialData {
+    pub fn data(&self, renderer: &Renderer) -> MaterialData {
+        let color_idx = match self.color_idx {
+            Some(idx) => { idx }
+            None => { renderer.default_color_idx }
+        };
+        let normal_idx = match self.normal_idx {
+            Some(idx) => { idx }
+            None => { renderer.default_normal_idx }
+        };
+        let metal_roughness_idx = match self.metal_roughness_idx {
+            Some(idx) => { idx }
+            None => { renderer.default_metal_roughness_idx }
+        };
+        let emissive_idx = match self.emissive_idx {
+            Some(idx) => { idx }
+            None => { renderer.default_emissive_idx }
+        };
+
         MaterialData {
             base_color: self.base_color,
             base_roughness: self.base_roughness,
-            color_idx: self.color_idx,
-            normal_idx: self.normal_idx,
-            metal_roughness_idx: self.metal_roughness_idx,
-            emissive_idx: self.emissive_idx,
+            color_idx,
+            normal_idx,
+            metal_roughness_idx,
+            emissive_idx,
             pad0: 0,
             pad1: 0,
             pad2: 0
@@ -109,7 +126,7 @@ pub struct Model {
     pub primitive_keys: Vec<PrimitiveKey>
 }
 
-impl HashedID for Model {
+impl UniqueID for Model {
     fn id(&self) -> u64 {
         self.id
     }
@@ -582,36 +599,27 @@ struct BufferBlock {
     pub length: u64              //In f32s
 }
 
-pub trait HashedID {
+pub trait UniqueID {
     fn id(&self) -> u64;
 }
 
-pub struct InstancedFreeList<V: HashedID> {
-    list: FreeList<V>,
-    counts: Vec<u32>
-}
-
-impl<V: HashedID> InstancedFreeList<V> {
-    pub fn new() -> Self {
-        InstancedFreeList {
-            list: FreeList::new(),
-            counts: Vec::new()
-        }
-    }
-
-    
-}
-
-pub struct InstancedSlotMap<K: slotmap::Key, V: HashedID> {
+pub struct InstancedSlotMap<K: slotmap::Key, V: UniqueID> {
     items: SlotMap<K, V>,
     counts: HashMap<K, u32>
 }
 
-impl<K: slotmap::Key, V: HashedID> InstancedSlotMap<K, V> {
+impl<K: slotmap::Key, V: UniqueID> InstancedSlotMap<K, V> {
     pub fn with_key() -> Self {
         InstancedSlotMap {
             items: SlotMap::with_key(),
             counts: HashMap::new()
+        }
+    }
+
+    pub fn with_capacity_and_key(capacity: usize) -> Self {
+        InstancedSlotMap {
+            items: SlotMap::with_capacity_and_key(capacity),
+            counts: HashMap::with_capacity(capacity)
         }
     }
 
@@ -643,7 +651,7 @@ impl<K: slotmap::Key, V: HashedID> InstancedSlotMap<K, V> {
         }
     }
 
-    //Returns true if the last instance was deleted
+    //Returns the deleted value if the last instance was deleted
     pub fn delete_instance(&mut self, key: K) -> Option<V> {
         let mut last_one = None;
         if let Some(count) = self.counts.get_mut(&key) {
@@ -658,13 +666,19 @@ impl<K: slotmap::Key, V: HashedID> InstancedSlotMap<K, V> {
     }
 }
 
+pub struct RenderDelete {
+    key: PrimitiveKey,
+    frames_til_deletion: u32
+}
+
 //SlotMap key types used by Renderer
 new_key_type! { pub struct ModelKey; }
 new_key_type! { pub struct PrimitiveKey; }
+new_key_type! { pub struct ImageKey; }
 new_key_type! { pub struct PositionBufferBlockKey; }
 
 pub struct Renderer {
-    pub default_diffuse_idx: u32,
+    pub default_color_idx: u32,
     pub default_normal_idx: u32,
     pub default_metal_roughness_idx: u32,
     pub default_emissive_idx: u32,
@@ -676,6 +690,7 @@ pub struct Renderer {
 
     models: InstancedSlotMap<ModelKey, Model>,
     primitives: SlotMap<PrimitiveKey, Primitive>,
+    delete_queue: Vec<RenderDelete>,
     instance_data: Vec<InstanceData>,
     raw_draws: Vec<DesiredDraw>,
     drawstream: Vec<DrawCall>,
@@ -701,9 +716,7 @@ pub struct Renderer {
     pub material_buffer: GPUBuffer,
 
     pub global_images: FreeList<GPUImage>,
-    image_counters: Vec<u64>,
     pub global_materials: FreeList<Material>,
-    material_counters: Vec<u64>,
 
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
@@ -1134,7 +1147,7 @@ impl Renderer {
         };
 
         Renderer {
-            default_diffuse_idx: default_color_idx,
+            default_color_idx,
             default_normal_idx,
             default_metal_roughness_idx: default_metalrough_idx,
             default_emissive_idx,
@@ -1143,16 +1156,15 @@ impl Renderer {
             shadow_sampler,
             models: InstancedSlotMap::with_key(),
             primitives: SlotMap::with_key(),
+            delete_queue: Vec::new(),
             raw_draws: Vec::new(),
             drawstream: Vec::new(),
             instance_data: Vec::new(),
             window_manager,
             uniform_data: uniforms,
             global_images,
-            image_counters: Vec::new(),
             default_texture_idx: 0,
             global_materials,
-            material_counters: Vec::new(),
             descriptor_set_layout,
             bindless_descriptor_set,
             position_buffer,
@@ -1346,15 +1358,10 @@ impl Renderer {
                 prim.material.metallic_roughness_index,
                 prim.material.emissive_index
             ];
-            let mut inds = [
-                self.default_diffuse_idx,
-                self.default_normal_idx,
-                self.default_metal_roughness_idx,
-                self.default_emissive_idx,
-            ];
+            let mut inds = [None; 4];
             for i in 0..prim_tex_indices.len() {
                 if let Some(idx) = prim_tex_indices[i] {
-                    inds[i] = load_prim_png(vk, self, data, &mut tex_id_map, idx);
+                    inds[i] = Some(load_prim_png(vk, self, data, &mut tex_id_map, idx));
                 }
             }
 
@@ -1427,16 +1434,11 @@ impl Renderer {
                 material.arm_bc7_idx,
                 material.emissive_bc7_idx
             ];
-            let mut inds = [
-                self.default_diffuse_idx,
-                self.default_normal_idx,
-                self.default_metal_roughness_idx,
-                self.default_emissive_idx,
-            ];
+            let mut inds = [None; 4];
             for i in 0..prim_tex_indices.len() {
                 if let Some(idx) = prim_tex_indices[i] {
                     let format = vk::Format::BC7_UNORM_BLOCK;
-                    inds[i] = load_prim_bc7(vk, self, data, &mut tex_id_map, idx as usize, format);
+                    inds[i] = Some(load_prim_bc7(vk, self, data, &mut tex_id_map, idx as usize, format));
                 }
             }
 
@@ -1481,25 +1483,13 @@ impl Renderer {
 
     pub fn delete_model(&mut self, key: ModelKey) {
         if let Some(model) = self.models.delete_instance(key) {
-            for prim_key in model.primitive_keys {
-
+            for key in model.primitive_keys {
+                self.delete_queue.push(RenderDelete {
+                    key,
+                    frames_til_deletion: Self::FRAMES_IN_FLIGHT as u32
+                });
             }
         }
-
-
-
-
-        // if let Some(model) = self.models.get(key) {
-        //     self.model_counters[model.count_idx] -= 1;
-        //     if self.model_counters[model.count_idx] == 0 {
-        //         for prim_key in model.primitive_keys.iter() {
-        //             if let Some(primitive) = self.primitives.get(*prim_key) {
-        //                 let mat = self.global_materials.get_element(primitive.material_idx as usize).unwrap();
-                        
-        //             }
-        //         }
-        //     }
-        // }
     }
 
     fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {
@@ -1635,6 +1625,34 @@ impl Renderer {
             self.drawstream.sort_unstable();
         }
 
+        //Process delete queue
+        let mut i = 0;
+        while i < self.delete_queue.len() {
+            let item = &mut self.delete_queue[i];
+            if item.frames_til_deletion == 0 {
+                if let Some(primitive) = self.primitives.get(item.key) {
+                    if let Some(material) = self.global_materials.get_element(primitive.material_idx.try_into().unwrap()) {
+                        fn free_tex(vk: &mut VulkanAPI, global_images: &mut FreeList<GPUImage>, index: Option<u32>) {
+                            if let Some(idx) = index {
+                                if let Some(image) = global_images.remove(idx.try_into().unwrap()) {
+                                    image.free(vk);
+                                }
+                            }
+                        }
+                        free_tex(vk, &mut self.global_images, material.color_idx);
+                        free_tex(vk, &mut self.global_images, material.normal_idx);
+                        free_tex(vk, &mut self.global_images, material.metal_roughness_idx);
+                        free_tex(vk, &mut self.global_images, material.emissive_idx);
+                    }
+                }
+
+                self.delete_queue.remove(i);
+            } else {
+                item.frames_til_deletion -= 1;
+                i += 1;
+            }
+        }
+
         //Wait for LRU frame to finish
         let frame_info = self.next_frame(vk);
 
@@ -1681,7 +1699,7 @@ impl Renderer {
             let mut upload_mats = Vec::with_capacity(self.global_materials.len());
             for i in 0..self.global_materials.len() {
                 if let Some(mat) = &self.global_materials[i] {
-                    upload_mats.push(mat.data());
+                    upload_mats.push(mat.data(self));
                 }
             }
 

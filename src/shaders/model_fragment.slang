@@ -37,15 +37,16 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     // Compute sun color
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
     float3 halo_color;
+    float3 sky_color;
     float3 sun_color;
     if (uniforms.real_sky) {
         float3 pos = input.position;
         pos.z += earth_radius;
         ray_t ray = {
             pos,
-            float3(0.0, 0.0, 0.05)
+            uniforms.sun_direction.xyz * float3(-1.0, 1.0, 1.0)
         };
-        sun_color = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_intensity);
+        sky_color = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_intensity);
 
         ray = {
             pos,
@@ -53,10 +54,10 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         };
         halo_color = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_intensity);
     } else {
-        float3 sky_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
+        sky_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
         halo_color = global_textures[uniforms.viewzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
-        sun_color = lerp(sky_color, halo_color, 0.2);
     }
+    sun_color = lerp(sky_color, halo_color, 0.2);
 
     // Get normal vector at this point
     float3 sampled_normal = 2.0 * global_textures[my_mat.normal_map_index].Sample(input.uv).xyz - 1.0;
