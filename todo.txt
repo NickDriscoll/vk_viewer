@@ -11,3 +11,6 @@ Texture compression
 Fix Imgui flickering bugs
 Move glTF optimization off of main thread
 Rewrite the HLSL multiview shader in the new version of Slang
+Add UserConfiguration struct
+    Window size
+    

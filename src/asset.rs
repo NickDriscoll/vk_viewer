@@ -52,7 +52,7 @@ pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
     }
 }
 
-pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::ImageCreateInfo, sampler: vk::Sampler, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
+pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler: vk::Sampler, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
@@ -98,7 +98,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanAPI, image_create_info: &vk::
 }
 
 //staging_buffer already has the image bytes uploaded to it
-pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, gpu_image: &GPUImage, layout: vk::ImageLayout, staging_buffer: &GPUBuffer) {
+pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, gpu_image: &GPUImage, layout: vk::ImageLayout, staging_buffer: &GPUBuffer) {
     let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
@@ -275,7 +275,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanAPI, command_buffer: v
 
 }
 
-pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8]) {
+pub unsafe fn upload_image(vk: &mut VulkanGraphicsDevice, image: &GPUImage, raw_bytes: &[u8]) {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
@@ -366,7 +366,7 @@ pub unsafe fn upload_image(vk: &mut VulkanAPI, image: &GPUImage, raw_bytes: &[u8
     staging_buffer.free(vk);
 }
 
-pub fn png2bc7_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Vec<u8> {
+pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> Vec<u8> {
     //Extract metadata and decode to raw RGBA bytes
     let decoder = png::Decoder::new(png_bytes);
     let read_info = decoder.read_info().unwrap();
@@ -496,7 +496,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanAPI, png_bytes: &[u8]) -> Vec<u8> {
 }
 
 #[named]
-pub fn compress_png_file_synchronous(vk: &mut VulkanAPI, path: &str) {
+pub fn compress_png_file_synchronous(vk: &mut VulkanGraphicsDevice, path: &str) {
     use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
 
     //Read png bytes out of file
@@ -700,7 +700,7 @@ fn load_primitive_index_buffer(glb: &Gltf, prim: &gltf::Primitive) -> Vec<u32> {
     }
 }
 
-pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
+pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
     let glb = Gltf::open(path).unwrap();
 
     let parent_dir = Path::new(path).parent().unwrap();
@@ -751,7 +751,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanAPI, path: &str) {
                 None => { vec![0.0; vertex_positions.len() / 3 * 2] }
             };
 
-            fn tex_fn(vk: &mut VulkanAPI, glb: &Gltf, image: gltf::Image) -> OzyImage {
+            fn tex_fn(vk: &mut VulkanGraphicsDevice, glb: &Gltf, image: gltf::Image) -> OzyImage {
                 let source = image.source();
                 let png_bytes = png_bytes_from_source(glb, source);
                 let decoder = png::Decoder::new(png_bytes.as_slice()).read_info().unwrap();

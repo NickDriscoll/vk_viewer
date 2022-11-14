@@ -38,17 +38,18 @@ pub struct TerrainSpec {
     pub gain: f64,
     pub amplitude: f64,
     pub exponent: f64,
+    pub scale: f32,
     pub seed: u128,
     pub interactive_generation: bool,
     pub fixed_seed: bool
 }
 
 impl TerrainSpec {
-    pub fn generate_vertices(&self, scale: f32) -> UninterleavedVertexArrays {
+    pub fn generate_vertices(&self) -> UninterleavedVertexArrays {
         use noise::Seedable;
     
         let simplex_generator = noise::OpenSimplex::new().set_seed(self.seed as u32);
-        ozy::prims::perturbed_plane_vertex_buffer(self.vertex_width, self.vertex_height, scale, move |x, y| {
+        ozy::prims::perturbed_plane_vertex_buffer(self.vertex_width, self.vertex_height, self.scale, move |x, y| {
             use noise::NoiseFn;
     
             let mut z = 0.0;
@@ -92,6 +93,7 @@ impl Default for TerrainSpec {
             gain: 0.5,
             amplitude: 2.0,
             exponent: 2.2,
+            scale: 1.0,
             seed: 0,
             interactive_generation: false,
             fixed_seed: false            
@@ -113,6 +115,20 @@ pub struct Entity {
     pub yaw: f32,
     pub roll: f32,
     pub scale: f32
+}
+
+impl Entity {
+    pub fn new(name: String, model: ModelKey) -> Self {
+        Entity {
+            name,
+            model,
+            position: glm::zero(),
+            pitch: 0.0,
+            yaw: 0.0,
+            roll: 0.0,
+            scale: 1.0
+        }
+    }
 }
 
 new_key_type! { pub struct ModelMatrixKey; }

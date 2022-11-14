@@ -7,7 +7,7 @@ use slotmap::{SlotMap, new_key_type};
 use crate::*;
 
 //1:1 with shader struct
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 #[repr(C)]
 pub struct MaterialData {
     pub base_color: [f32; 4],
@@ -237,7 +237,7 @@ impl CascadedShadowMap {
     pub fn view(&self) -> vk::ImageView { self.image_view }
 
     pub fn new(
-        vk: &mut VulkanAPI,
+        vk: &mut VulkanGraphicsDevice,
         renderer: &mut Renderer,
         resolution: u32,
         clipping_from_view: &glm::TMat4<f32>,
@@ -441,7 +441,7 @@ pub struct WindowManager {
 }
 
 impl WindowManager {
-    pub fn init(vk: &mut VulkanAPI, sdl_window: &sdl2::video::Window, render_pass: vk::RenderPass) -> Self {
+    pub fn init(vk: &mut VulkanGraphicsDevice, sdl_window: &sdl2::video::Window, render_pass: vk::RenderPass) -> Self {
         //Use SDL to create the Vulkan surface
         let vk_surface = {
             use ash::vk::Handle;
@@ -752,11 +752,11 @@ impl Renderer {
         self.models.get(key)
     }
 
-    pub unsafe fn cleanup(&mut self, vk: &mut VulkanAPI) {
+    pub unsafe fn cleanup(&mut self, vk: &mut VulkanGraphicsDevice) {
         vk.device.wait_for_fences(&self.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
     }
 
-    pub fn init(vk: &mut VulkanAPI, window: &sdl2::video::Window, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
+    pub fn init(vk: &mut VulkanGraphicsDevice, window: &sdl2::video::Window, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
         //Allocate buffer for frame-constant uniforms
         let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
         let uniform_buffer_size = Self::FRAMES_IN_FLIGHT as u64 * size_to_alignment!(size_of::<EnvironmentUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
@@ -1187,7 +1187,7 @@ impl Renderer {
         }
     }
 
-    fn create_hdr_framebuffers(vk: &mut VulkanAPI, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler: vk::Sampler, global_images: &mut FreeList<GPUImage>) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
+    fn create_hdr_framebuffers(vk: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler: vk::Sampler, global_images: &mut FreeList<GPUImage>) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
         let hdr_color_format = vk::Format::R16G16B16A16_SFLOAT;
         let vk_depth_format = vk::Format::D32_SFLOAT;
 
@@ -1324,8 +1324,8 @@ impl Renderer {
         framebuffers
     }
 
-    pub fn upload_gltf_model(&mut self, vk: &mut VulkanAPI, data: &GLTFMeshData, pipeline: vk::Pipeline) -> ModelKey {
-        fn load_prim_png(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &GLTFMeshData, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize) -> u32 {
+    pub fn upload_gltf_model(&mut self, vk: &mut VulkanGraphicsDevice, data: &GLTFMeshData, pipeline: vk::Pipeline) -> ModelKey {
+        fn load_prim_png(vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &GLTFMeshData, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize) -> u32 {
             match tex_id_map.get(&prim_tex_idx) {
                 Some(id) => { *id }
                 None => {
@@ -1396,8 +1396,8 @@ impl Renderer {
         model_key
     }
 
-    pub fn upload_ozymesh(&mut self, vk: &mut VulkanAPI, data: &OzyMesh, pipeline: vk::Pipeline) -> ModelKey {
-        fn load_prim_bc7(vk: &mut VulkanAPI, renderer: &mut Renderer, data: &OzyMesh, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize, format: vk::Format) -> u32 {
+    pub fn upload_ozymesh(&mut self, vk: &mut VulkanGraphicsDevice, data: &OzyMesh, pipeline: vk::Pipeline) -> ModelKey {
+        fn load_prim_bc7(vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &OzyMesh, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize, format: vk::Format) -> u32 {
             match tex_id_map.get(&prim_tex_idx) {
                 Some(id) => { *id }
                 None => {
@@ -1492,7 +1492,7 @@ impl Renderer {
         }
     }
 
-    fn next_frame(&mut self, vk: &mut VulkanAPI) -> InFlightFrameData {
+    fn next_frame(&mut self, vk: &mut VulkanGraphicsDevice) -> InFlightFrameData {
         let cb = self.frames_in_flight[self.in_flight_frame];
         unsafe { vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap(); }
         self.in_flight_frame += 1;
@@ -1500,7 +1500,7 @@ impl Renderer {
         cb
     }
 
-    pub unsafe fn resize_hdr_framebuffers(&mut self, vk: &mut VulkanAPI, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
+    pub unsafe fn resize_hdr_framebuffers(&mut self, vk: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
         let fbs = self.framebuffers();
         for framebuffer in &fbs {
             vk.device.destroy_framebuffer(framebuffer.framebuffer_object, vkutil::MEMORY_ALLOCATOR);
@@ -1521,7 +1521,7 @@ impl Renderer {
         self.primitives.insert(data)
     }
 
-    fn upload_vertex_attribute(vk: &mut VulkanAPI, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
+    fn upload_vertex_attribute(vk: &mut VulkanGraphicsDevice, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
         let old_offset = *offset;
         let new_offset = old_offset + data.len() as u64;
         buffer.write_subbuffer_elements(vk, data, old_offset);
@@ -1529,7 +1529,7 @@ impl Renderer {
         old_offset.try_into().unwrap()
     }
     
-    pub fn append_vertex_positions(&mut self, vk: &mut VulkanAPI, positions: &[f32]) -> u32 {
+    pub fn append_vertex_positions(&mut self, vk: &mut VulkanGraphicsDevice, positions: &[f32]) -> u32 {
         let buffer_block = BufferBlock {
             start_offset: self.position_offset,
             length: positions.len() as u64
@@ -1538,39 +1538,39 @@ impl Renderer {
         Self::upload_vertex_attribute(vk, positions, &self.position_buffer, &mut self.position_offset) / 4
     }
     
-    pub fn append_vertex_tangents(&mut self, vk: &mut VulkanAPI, tangents: &[f32]) -> u32 {
+    pub fn append_vertex_tangents(&mut self, vk: &mut VulkanGraphicsDevice, tangents: &[f32]) -> u32 {
         Self::upload_vertex_attribute(vk, tangents, &self.tangent_buffer, &mut self.tangent_offset) / 4
     }
     
-    pub fn append_vertex_normals(&mut self, vk: &mut VulkanAPI, normals: &[f32]) -> u32 {
+    pub fn append_vertex_normals(&mut self, vk: &mut VulkanGraphicsDevice, normals: &[f32]) -> u32 {
         Self::upload_vertex_attribute(vk, normals, &self.normal_buffer, &mut self.normal_offset) / 4
     }
     
-    pub fn append_vertex_uvs(&mut self, vk: &mut VulkanAPI, uvs: &[f32]) -> u32 {
+    pub fn append_vertex_uvs(&mut self, vk: &mut VulkanGraphicsDevice, uvs: &[f32]) -> u32 {
         Self::upload_vertex_attribute(vk, uvs, &self.uv_buffer, &mut self.uv_offset) / 2
     }
 
-    pub fn replace_vertex_positions(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+    pub fn replace_vertex_positions(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * 4;
         Self::upload_vertex_attribute(vk, data, &self.position_buffer, &mut my_offset);
     }
 
-    pub fn replace_vertex_tangents(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+    pub fn replace_vertex_tangents(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * 4;
         Self::upload_vertex_attribute(vk, data, &self.tangent_buffer, &mut my_offset);
     }
 
-    pub fn replace_vertex_normals(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+    pub fn replace_vertex_normals(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * 4;
         Self::upload_vertex_attribute(vk, data, &self.normal_buffer, &mut my_offset);
     }
 
-    pub fn replace_vertex_uvs(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+    pub fn replace_vertex_uvs(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * 2;
         Self::upload_vertex_attribute(vk, data, &self.uv_buffer, &mut my_offset);
     }
 
-    pub fn replace_imgui_vertices(&mut self, vk: &mut VulkanAPI, data: &[f32], offset: u64) {
+    pub fn replace_imgui_vertices(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * DevGui::FLOATS_PER_VERTEX as u64;
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
@@ -1579,7 +1579,7 @@ impl Renderer {
         self.primitives.get(key)
     }
 
-    pub fn prepare_frame(&mut self, vk: &mut VulkanAPI, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) -> InFlightFrameData {
+    pub fn prepare_frame(&mut self, vk: &mut VulkanGraphicsDevice, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) -> InFlightFrameData {
         //Process raw draw calls into draw stream
         {
             //Create map of ModelKeys to the instance data for all instances of that model
@@ -1631,8 +1631,9 @@ impl Renderer {
             let item = &mut self.delete_queue[i];
             if item.frames_til_deletion == 0 {
                 if let Some(primitive) = self.primitives.get(item.key) {
-                    if let Some(material) = self.global_materials.get_element(primitive.material_idx.try_into().unwrap()) {
-                        fn free_tex(vk: &mut VulkanAPI, global_images: &mut FreeList<GPUImage>, index: Option<u32>) {
+                    let mat_idx = primitive.material_idx.try_into().unwrap();
+                    if let Some(material) = self.global_materials.remove(mat_idx) {
+                        fn free_tex(vk: &mut VulkanGraphicsDevice, global_images: &mut FreeList<GPUImage>, index: Option<u32>) {
                             if let Some(idx) = index {
                                 if let Some(image) = global_images.remove(idx.try_into().unwrap()) {
                                     image.free(vk);
@@ -1696,10 +1697,10 @@ impl Renderer {
 
         //Update bindless material definitions
         if self.global_materials.was_updated() {
-            let mut upload_mats = Vec::with_capacity(self.global_materials.len());
+            let mut upload_mats = vec![MaterialData::default(); self.global_materials.len()];
             for i in 0..self.global_materials.len() {
                 if let Some(mat) = &self.global_materials[i] {
-                    upload_mats.push(mat.data(self));
+                    upload_mats[i] = mat.data(self);
                 }
             }
 

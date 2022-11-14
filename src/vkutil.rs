@@ -80,8 +80,8 @@ pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::Shader
     }
 }
 
-pub unsafe fn allocate_image_memory(vk: &mut VulkanAPI, image: vk::Image) -> Allocation { allocate_named_image_memory(vk, image, "") }
-pub unsafe fn allocate_named_image_memory(vk: &mut VulkanAPI, image: vk::Image, name: &str) -> Allocation {
+pub unsafe fn allocate_image_memory(vk: &mut VulkanGraphicsDevice, image: vk::Image) -> Allocation { allocate_named_image_memory(vk, image, "") }
+pub unsafe fn allocate_named_image_memory(vk: &mut VulkanGraphicsDevice, image: vk::Image, name: &str) -> Allocation {
     let requirements = vk.device.get_image_memory_requirements(image);
     let alloc = vk.allocator.allocate(&AllocationCreateDesc {
         name,
@@ -94,14 +94,14 @@ pub unsafe fn allocate_named_image_memory(vk: &mut VulkanAPI, image: vk::Image, 
     alloc
 }
 
-pub fn load_bc7_texture(vk: &mut VulkanAPI, global_textures: &mut FreeList<GPUImage>, sampler: vk::Sampler, path: &str) -> u32 {
+pub fn load_bc7_texture(vk: &mut VulkanGraphicsDevice, global_textures: &mut FreeList<GPUImage>, sampler: vk::Sampler, path: &str) -> u32 {
     unsafe {
         let vim = GPUImage::from_bc7_file(vk, sampler, path);
         global_textures.insert(vim) as u32
     }
 }
 
-pub unsafe fn upload_raw_image(vk: &mut VulkanAPI, sampler: vk::Sampler, format: vk::Format, layout: vk::ImageLayout, width: u32, height: u32, rgba: &[u8]) -> GPUImage {
+pub unsafe fn upload_raw_image(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, format: vk::Format, layout: vk::ImageLayout, width: u32, height: u32, rgba: &[u8]) -> GPUImage {
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
         format,
@@ -170,24 +170,30 @@ pub struct GPUImage {
 }
 
 impl GPUImage {
-    pub fn free(self, vk: &mut VulkanAPI) {
+    pub fn free(self, vk: &mut VulkanGraphicsDevice) {
         vk.allocator.free(self.allocation).unwrap();
+        unsafe {
+            if let Some(view) = self.view {
+                vk.device.destroy_image_view(view, MEMORY_ALLOCATOR);
+            }
+            vk.device.destroy_image(self.image, MEMORY_ALLOCATOR);
+        }
     }
 
-    pub fn from_png_file(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> Self {
+    pub fn from_png_file(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, path: &str) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
         file.read_exact(&mut png_bytes).unwrap();
         Self::from_png_bytes(vk, sampler, &png_bytes)
     }
 
-    pub fn from_png_file_deferred(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> DeferredImage {
+    pub fn from_png_file_deferred(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, path: &str) -> DeferredImage {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
         file.read_exact(&mut png_bytes).unwrap();
         Self::from_png_bytes_deferred(vk, sampler, &png_bytes)
     }
-    pub fn from_png_bytes_deferred(vk: &mut VulkanAPI, sampler: vk::Sampler, png_bytes: &[u8]) -> DeferredImage {
+    pub fn from_png_bytes_deferred(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, png_bytes: &[u8]) -> DeferredImage {
         let decoder = png::Decoder::new(png_bytes);
         let read_info = decoder.read_info().unwrap();
         let info = read_info.info();
@@ -242,7 +248,7 @@ impl GPUImage {
         }
     }
 
-    pub fn from_png_bytes(vk: &mut VulkanAPI, sampler: vk::Sampler, png_bytes: &[u8]) -> Self {
+    pub fn from_png_bytes(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, png_bytes: &[u8]) -> Self {
         let decoder = png::Decoder::new(png_bytes);
         let read_info = decoder.read_info().unwrap();
         let info = read_info.info();
@@ -334,7 +340,7 @@ impl GPUImage {
         }
     }
 
-    pub fn from_bc7_bytes(vk: &mut VulkanAPI, raw_bytes: &[u8], sampler: vk::Sampler, width: u32, height: u32, mipmap_count: u32, format: vk::Format) -> Self {
+    pub fn from_bc7_bytes(vk: &mut VulkanGraphicsDevice, raw_bytes: &[u8], sampler: vk::Sampler, width: u32, height: u32, mipmap_count: u32, format: vk::Format) -> Self {
         let image_extent = vk::Extent3D {
             width,
             height,
@@ -394,7 +400,7 @@ impl GPUImage {
         }
     }
 
-    pub unsafe fn from_bc7_file(vk: &mut VulkanAPI, sampler: vk::Sampler, path: &str) -> Self {
+    pub unsafe fn from_bc7_file(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, path: &str) -> Self {
         use ozy::io::DXGI_FORMAT;
 
         let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
@@ -426,7 +432,7 @@ impl GPUImage {
     }
 }
 
-pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanAPI, dst_buffer: vk::Buffer, offset: u64, raw_data: &[T]) {
+pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanGraphicsDevice, dst_buffer: vk::Buffer, offset: u64, raw_data: &[T]) {
     //Create staging buffer and upload raw buffer data
     let bytes_size = (raw_data.len() * size_of::<T>()) as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
@@ -479,7 +485,7 @@ pub struct DeferredImage {
 }
 
 impl DeferredImage {
-    pub fn synchronize(vk: &mut VulkanAPI, images: Vec<Self>) -> Vec<Self> {
+    pub fn synchronize(vk: &mut VulkanGraphicsDevice, images: Vec<Self>) -> Vec<Self> {
         unsafe {
             let mut fences = Vec::with_capacity(images.len());
             for image in images.iter() {
@@ -501,7 +507,7 @@ impl DeferredImage {
 }
 
 //All the variables that Vulkan needs
-pub struct VulkanAPI {
+pub struct VulkanGraphicsDevice {
     pub instance: ash::Instance,
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
@@ -516,7 +522,7 @@ pub struct VulkanAPI {
     pub command_buffer_fence: vk::Fence
 }
 
-impl VulkanAPI {
+impl VulkanGraphicsDevice {
     pub fn init() -> Self {
         let vk_entry = ash::Entry::linked();
         let vk_instance = {
@@ -692,7 +698,7 @@ impl VulkanAPI {
             vk_device.create_fence(&create_info, MEMORY_ALLOCATOR).unwrap()
         };
 
-        VulkanAPI {
+        VulkanGraphicsDevice {
             instance: vk_instance,
             physical_device: vk_physical_device,
             physical_device_properties: vk_physical_device_properties,
@@ -720,7 +726,7 @@ impl GPUBuffer {
     pub fn backing_buffer(&self) -> vk::Buffer { self.buffer }
     pub fn length(&self) -> vk::DeviceSize { self.length }
 
-    pub fn allocate(vk: &mut VulkanAPI, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags, memory_location: MemoryLocation) -> Self {
+    pub fn allocate(vk: &mut VulkanGraphicsDevice, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags, memory_location: MemoryLocation) -> Self {
         let vk_buffer;
         let actual_size = size_to_alignment!(size, alignment);
         let allocation = unsafe {
@@ -750,7 +756,7 @@ impl GPUBuffer {
         }
     }
 
-    pub fn free(self, vk: &mut VulkanAPI) {
+    pub fn free(self, vk: &mut VulkanGraphicsDevice) {
         vk.allocator.free(self.allocation).unwrap();
         unsafe { vk.device.destroy_buffer(self.buffer, MEMORY_ALLOCATOR); }
     }
@@ -767,17 +773,17 @@ impl GPUBuffer {
         }
     }
 
-    pub fn write_buffer<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T]) {
+    pub fn write_buffer<T>(&self, vk: &mut VulkanGraphicsDevice, in_buffer: &[T]) {
         self.write_subbuffer_elements(vk, in_buffer, 0);
     }
 
-    pub fn write_subbuffer_elements<T>(&self, vk: &mut VulkanAPI, in_buffer: &[T], offset: u64) {
+    pub fn write_subbuffer_elements<T>(&self, vk: &mut VulkanGraphicsDevice, in_buffer: &[T], offset: u64) {
         let byte_buffer = slice_to_bytes(in_buffer);
         let byte_offset = offset * size_of::<T>() as u64;
         self.write_subbuffer_bytes(vk, byte_buffer, byte_offset as u64);
     }
 
-    pub fn write_subbuffer_bytes(&self, vk: &mut VulkanAPI, in_buffer: &[u8], offset: u64) {
+    pub fn write_subbuffer_bytes(&self, vk: &mut VulkanGraphicsDevice, in_buffer: &[u8], offset: u64) {
         let end_in_bytes = in_buffer.len() + offset as usize;
         if end_in_bytes as u64 > self.length {
             crash_with_error_dialog("OVERRAN BUFFER AAAAA");
@@ -955,7 +961,7 @@ impl GraphicsPipelineBuilder {
         }
     }
 
-    pub unsafe fn create_pipelines(vk: &mut VulkanAPI, infos: &[PipelineCreateInfo]) -> Vec<vk::Pipeline> {
+    pub unsafe fn create_pipelines(vk: &mut VulkanGraphicsDevice, infos: &[PipelineCreateInfo]) -> Vec<vk::Pipeline> {
         let mut vertex_input_configs = Vec::with_capacity(infos.len());
         let mut vertex_input_states = Vec::with_capacity(infos.len());
         let mut dynamic_states = Vec::with_capacity(infos.len());

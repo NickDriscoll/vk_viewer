@@ -43,7 +43,7 @@ use std::time::SystemTime;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
-use vkutil::{FreeList, GPUBuffer, GPUImage, VulkanAPI, DeferredImage};
+use vkutil::{FreeList, GPUBuffer, GPUImage, VulkanGraphicsDevice, DeferredImage};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp, SimulationSOA};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, Model};
@@ -77,7 +77,7 @@ fn main() {
     }
 
     //Initialize the Vulkan API
-    let mut vk = vkutil::VulkanAPI::init();
+    let mut vk = vkutil::VulkanGraphicsDevice::init();
 
     //Initialize the physics engine
     let mut physics_engine = PhysicsEngine::new();
@@ -334,7 +334,7 @@ fn main() {
     };
 
     let mut timescale_factor = 1.0;
-    let terrain_generation_scale = 20.0;
+    let mut simulation_state = SimulationSOA::new();
 
     //Define terrain
     let mut terrain = TerrainSpec {
@@ -343,10 +343,11 @@ fn main() {
         amplitude: 2.0,
         exponent: 2.2,
         seed: unix_epoch_ms(),
+        scale: 20.0,
         ..Default::default()
     };
 
-    let terrain_vertices = terrain.generate_vertices(terrain_generation_scale);
+    let terrain_vertices = terrain.generate_vertices();
     let terrain_indices = ozy::prims::plane_index_buffer(terrain.vertex_width, terrain.vertex_height);
 
     let mut terrain_collider_handle = physics_engine.make_terrain_collider(&terrain_vertices.positions, terrain.vertex_width, terrain.vertex_height);
@@ -396,7 +397,7 @@ fn main() {
     ) as u32;
     
     //Upload terrain geometry
-    let terrain_model_key = {
+    let terrain_key = {
         let terrain_offsets = upload_vertex_attributes(&mut vk, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = routines::make_index_buffer(&mut vk, &terrain_indices);
@@ -410,7 +411,10 @@ fn main() {
             uv_offset: terrain_offsets.uv_offset,
             material_idx: terrain_grass_matidx,
         });
-        renderer.new_model(0, vec![prim_key])
+        let model_key = renderer.new_model(0, vec![prim_key]);
+
+        let e = Entity::new(String::from("main_terrain"), model_key);
+        simulation_state.entities.insert(e)
     };
 
     let mut lookat_dist = 7.5;
@@ -438,7 +442,6 @@ fn main() {
         })
     };
 
-    let mut simulation_state = SimulationSOA::new();
     let mut focused_entity = None;
 
     //Create semaphore used to wait on swapchain image
@@ -488,17 +491,18 @@ fn main() {
             dev_gui.do_gui = !dev_gui.do_gui
         }
         if input_output.regen_terrain {
-            if let Some(model) = renderer.get_model(terrain_model_key) {
-                let p_key = model.primitive_keys[0];
-                regenerate_terrain(
-                    &mut vk,
-                    &mut renderer,
-                    &mut physics_engine,
-                    &mut terrain_collider_handle,
-                    p_key,
-                    &mut terrain,
-                    terrain_generation_scale
-                );
+            if let Some(entity) = simulation_state.entities.get(terrain_key) {
+                if let Some(model) = renderer.get_model(entity.model) {
+                    let p_key = model.primitive_keys[0];
+                    regenerate_terrain(
+                        &mut vk,
+                        &mut renderer,
+                        &mut physics_engine,
+                        &mut terrain_collider_handle,
+                        p_key,
+                        &mut terrain
+                    );
+                }
             }
         }
         if input_output.reset_totoro {
@@ -573,17 +577,18 @@ fn main() {
 
         //Terrain generation window
         if dev_gui.do_terrain_window(&imgui_ui, &mut terrain) {
-            if let Some(model) = renderer.get_model(terrain_model_key) {
-                let p_key = model.primitive_keys[0];
-                regenerate_terrain(
-                    &mut vk,
-                    &mut renderer,
-                    &mut physics_engine,
-                    &mut terrain_collider_handle,
-                    p_key,
-                    &mut terrain,
-                    terrain_generation_scale
-                );
+            if let Some(entity) = simulation_state.entities.get(terrain_key) {
+                if let Some(model) = renderer.get_model(entity.model) {
+                    let p_key = model.primitive_keys[0];
+                    regenerate_terrain(
+                        &mut vk,
+                        &mut renderer,
+                        &mut physics_engine,
+                        &mut terrain_collider_handle,
+                        p_key,
+                        &mut terrain
+                    );
+                }
             }
         }
 
@@ -718,9 +723,6 @@ fn main() {
         physics_engine.integration_parameters.dt = scaled_delta_time;
         physics_engine.step();
 
-        let plane_model_matrix = glm::identity();
-        renderer.queue_drawcall(terrain_model_key, vec![plane_model_matrix]);
-
         let view_movement_vector = glm::mat4(
             1.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 1.0, 0.0,
@@ -814,15 +816,15 @@ fn main() {
         last_view_from_world = view_from_world;
         renderer.uniform_data.view_from_world = view_from_world;
 
-        //Push drawcalls for static props
-        for (_, prop) in simulation_state.entities.iter() {
-            let mm = glm::translation(&prop.position) *
-                     glm::rotation(prop.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
-                     glm::rotation(prop.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-                     glm::rotation(prop.roll, &glm::vec3(0.0, 1.0, 0.0)) * 
-                     ozy::routines::uniform_scale(prop.scale);
+        //Push drawcalls for entities
+        for (_, entity) in simulation_state.entities.iter() {
+            let mm = glm::translation(&entity.position) *
+                     glm::rotation(entity.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
+                     glm::rotation(entity.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+                     glm::rotation(entity.roll, &glm::vec3(0.0, 1.0, 0.0)) * 
+                     ozy::routines::uniform_scale(entity.scale);
 
-            renderer.queue_drawcall(prop.model, vec![mm]);
+            renderer.queue_drawcall(entity.model, vec![mm]);
         }
         
         //Update sun

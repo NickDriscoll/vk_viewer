@@ -39,7 +39,7 @@ impl DevGui {
 
     pub fn do_standard_button<S: AsRef<str>>(ui: &Ui, label: S) -> bool { ui.button_with_size(label, [0.0, 32.0]) }
 
-    pub fn new(vk: &mut VulkanAPI, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
+    pub fn new(vk: &mut VulkanGraphicsDevice, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
         let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
         for _ in 0..Self::FRAMES_IN_FLIGHT {
             frames.push(DevGuiFrame::default());
@@ -203,6 +203,7 @@ impl DevGui {
                 parameters_changed |= imgui::Slider::new("Octaves", 1, 16).build(&imgui_ui, &mut terrain.octaves);
                 parameters_changed |= imgui::Slider::new("Lacunarity", 0.0, 5.0).build(&imgui_ui, &mut terrain.lacunarity);
                 parameters_changed |= imgui::Slider::new("Gain", 0.0, 2.0).build(&imgui_ui, &mut terrain.gain);
+                parameters_changed |= imgui::Slider::new("Scale", 1.0, 50.0).build(&imgui_ui, &mut terrain.scale);
                 imgui_ui.separator();
 
                 imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
@@ -222,7 +223,7 @@ impl DevGui {
     }
 
     //This is where we upload the Dear Imgui geometry for the current frame
-    pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanAPI, renderer: &mut Renderer, ui: imgui::Ui) {
+    pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, ui: imgui::Ui) {
         let mut index_buffers = Vec::with_capacity(16);
         let mut draw_cmd_lists = Vec::with_capacity(16);
         let mut offsets = Vec::with_capacity(16);
@@ -286,7 +287,7 @@ impl DevGui {
         };
     }
 
-    pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanAPI, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
+    pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
         //Early exit if the gui is deactivated
         if !self.do_gui { return; }
         
