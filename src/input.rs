@@ -119,7 +119,9 @@ impl InputSystem {
                 Event::MouseWheel { x, y, .. } => {
                     imgui_io.mouse_wheel_h = x as f32;
                     imgui_io.mouse_wheel = y as f32;
-                    out.scroll_amount = imgui_io.mouse_wheel;
+                    if !imgui_io.want_capture_mouse {
+                        out.scroll_amount = imgui_io.mouse_wheel;
+                    }
                 }
                 _ => {  }
             }

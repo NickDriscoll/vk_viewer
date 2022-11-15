@@ -641,6 +641,7 @@ fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic
         None => { return None; }
     };
     let view = acc.view().unwrap();
+    println!("Semantic {:?} at index {}", semantic, acc.index());
 
     let byte_stride = match view.stride() {
         Some(s) => { s }
