@@ -23,7 +23,7 @@ use asset::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
 use gui::AssetWindowResponse;
 use imgui::{FontAtlasRefMut};
-use ozy::io::{DDSHeader, DDSHeader_DXT10, DDS_PixelFormat};
+use ozy::io::{DDSHeader, DDSHeader_DXT10, DDS_PixelFormat, OzyMesh};
 use rapier3d::prelude::*;
 use routines::struct_to_bytes;
 use sdl2::event::Event;
@@ -230,7 +230,7 @@ fn main() {
             let index = renderer.global_images.insert(gpu_image);
             renderer.default_texture_idx = index as u32;
             
-            atlas.clear_tex_data();  //Free atlas memory CPU-side
+            atlas.clear_tex_data();                         //Free atlas memory CPU-side
             atlas.tex_id = imgui::TextureId::new(index);    //Giving Dear Imgui a reference to the font atlas GPU texture
             index as u32
         }
@@ -422,9 +422,11 @@ fn main() {
 
     //Load totoro as glb
     let totoro_data = asset::gltf_meshdata("./data/models/totoro_backup.glb");
+    //let totoro_data = OzyMesh::from_file("./data/models/.optimized/totoro_backup.ozy");
 
     //Register each primitive with the renderer
     let totoro_model = renderer.upload_gltf_model(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
+    //let totoro_model = renderer.upload_ozymesh(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
     let mut totoro_list = OptionVec::new();
@@ -680,7 +682,8 @@ fn main() {
         }
 
         match dev_gui.do_entity_window(&imgui_ui, &mut simulation_state.entities, focused_entity) {
-            EntityWindowResponse::LoadGLTF(mesh_data) => {
+            EntityWindowResponse::LoadGLTF(path) => {
+                let mesh_data = asset::gltf_meshdata(&path);
                 let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
                 let s = Entity {
                     name: mesh_data.name,
@@ -693,7 +696,8 @@ fn main() {
                 };
                 simulation_state.entities.insert(s);
             }
-            EntityWindowResponse::LoadOzyMesh(mesh_data) => {
+            EntityWindowResponse::LoadOzyMesh(path) => {
+                let mesh_data = OzyMesh::from_file(&path);
                 let model = renderer.upload_ozymesh(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
                 let s = Entity {
                     name: mesh_data.name,

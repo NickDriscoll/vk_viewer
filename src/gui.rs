@@ -13,8 +13,8 @@ pub enum AssetWindowResponse {
 
 pub enum EntityWindowResponse {
     DeleteEntity(EntityKey),
-    LoadGLTF(GLTFMeshData),
-    LoadOzyMesh(OzyMesh),
+    LoadGLTF(String),
+    LoadOzyMesh(String),
     FocusCamera(Option<EntityKey>),
     Interacted,
     None
@@ -78,6 +78,11 @@ impl DevGui {
                 let metadata = entry.metadata().unwrap();
                 let e_path = entry.path();
                 let name = e_path.file_stem().unwrap().to_string_lossy();
+
+                // if let Some(tree_token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push(ui) {
+
+                // }
+
                 if metadata.is_file() {
                     ui.text(entry.file_name().to_string_lossy());
                     let parent_dir = p.parent().unwrap();
@@ -108,7 +113,6 @@ impl DevGui {
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
             let mut i = 0;
             let mut add_list = vec![];
-            //let mut delete_list = vec![];
             let mut deleted_item = None;
             for prop in entities.iter_mut() {
                 let prop_key = prop.0;
@@ -158,13 +162,13 @@ impl DevGui {
             
             if Self::do_standard_button(ui, "Load glTF") {
                 if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
-                    out = EntityWindowResponse::LoadGLTF(asset::gltf_meshdata(&path));
+                    out = EntityWindowResponse::LoadGLTF(path);
                 }
             }
             
             if Self::do_standard_button(ui, "Load OzyMesh") {
                 if let Some(path) = tfd::open_file_dialog("Choose OzyMesh", "./data/models/.optimized", Some((&["*.ozy"], ".ozy (Optimized model)"))) {
-                    out = EntityWindowResponse::LoadOzyMesh(OzyMesh::from_file(&path));
+                    out = EntityWindowResponse::LoadOzyMesh(path);
                 }
             }
 

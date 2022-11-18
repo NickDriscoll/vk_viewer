@@ -19,14 +19,6 @@ pub fn vec_to_bytes<'a, T>(vec: &Vec<T>) -> &'a [u8] {
     unsafe { core::slice::from_raw_parts(vec.as_ptr() as *const u8, vec.len() * size_of::<T>()) }
 }
 
-#[inline]
-pub fn calculate_miplevels(width: u32, height: u32) -> u32 {
-    (f32::floor(f32::log2(u32::max(width, height) as f32))) as u32 + 1
-
-    //We want the smallest miplevel to be 4x4
-    //(f32::floor(f32::log2(u32::max(width, height) as f32))) as u32 - 1
-}
-
 pub fn crash_with_error_dialog(message: &str) -> ! {
     crash_with_error_dialog_titled("Oops...", message);
 }

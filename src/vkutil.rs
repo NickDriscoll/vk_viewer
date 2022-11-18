@@ -206,7 +206,7 @@ impl GPUImage {
         let bytes = asset::decode_png(read_info);
 
         unsafe {
-            let mip_levels =  calculate_miplevels(width, height);
+            let mip_levels = ozy::routines::calculate_mipcount(width, height);
             let image_create_info = vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,
                 format,
@@ -266,7 +266,7 @@ impl GPUImage {
         staging_buffer.write_buffer(vk, &bytes);
 
         unsafe {
-            let mip_levels = calculate_miplevels(width, height);
+            let mip_levels = ozy::routines::calculate_mipcount(width, height);
 
             let image_create_info = vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,

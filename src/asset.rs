@@ -381,7 +381,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
     let bytes = decode_png(read_info);
 
     //After decoding, upload to GPU for mipmap creation
-    let mip_levels = calculate_miplevels(width, height);
+    let mip_levels = u32::clamp(ozy::routines::calculate_mipcount(width, height) - 2, 1, u32::MAX);
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
         format: uncompressed_format,
@@ -402,9 +402,8 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
         ..Default::default()
     };
     
-    let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-
     unsafe {
+        let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
         let sampler = vk.device.create_sampler(&vk::SamplerCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
         let def_image = upload_image_deferred(vk, &image_create_info, sampler, gpu_image_layout, &bytes);
         let mut def_images = DeferredImage::synchronize(vk, vec![def_image]);
@@ -484,7 +483,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
                 height: h2 as u32,
                 stride: 4 * w2 as u32
             };
-            let settings = ispc::bc7::opaque_ultra_fast_settings();
+            let settings = ispc::bc7::alpha_ultra_fast_settings();
             let bc7_range = ispc::bc7::calc_output_size(w2 as u32, h2 as u32);
             ispc::bc7::compress_blocks_into(&settings, &surface, &mut bc7_bytes[bc7_offset..(bc7_offset + bc7_range)]);
 
@@ -508,7 +507,7 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanGraphicsDevice, path: &str) 
     let info = read_info.info();
     let width = info.width;
     let height = info.height;
-    let mip_levels = ozy::routines::calculate_miplevels(width, height);
+    let mip_levels = ozy::routines::calculate_mipcount(width, height);
     let rgb_bitcount = info.bit_depth as u32;
     let uncompressed_format = match info.srgb {
         Some(_) => { vk::Format::R8G8B8A8_SRGB }
@@ -759,7 +758,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
                 let info = decoder.info();
                 let width = info.width;
                 let height = info.height;
-                let mipmap_count = ozy::routines::calculate_miplevels(width, height);
+                let mipmap_count = u32::clamp(ozy::routines::calculate_mipcount(width, height) - 2, 1, u32::MAX);
                 let bc7_bytes = png2bc7_synchronous(vk, &png_bytes);
                 OzyImage {
                     width,
@@ -888,9 +887,10 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
         output_file.write(vec_to_bytes(&primitive.vertex_uvs)).unwrap();
     }
     for texture in textures {
-        //Images are written out as width, height, then bc7_bytes
+        //Images are written out as width, height, mip_levels, then bc7_bytes
         output_file.write(&texture.width.to_le_bytes()).unwrap();
         output_file.write(&texture.height.to_le_bytes()).unwrap();
+        output_file.write(&texture.mipmap_count.to_le_bytes()).unwrap();
         output_file.write(&texture.bc7_bytes).unwrap();
     }
 }
