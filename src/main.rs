@@ -271,7 +271,8 @@ fn main() {
             yaw: 0.783,
             pitch_speed: 0.003,
             yaw_speed: 0.0,
-            intensity: 100000.0,
+            //intensity: 100000.0,
+            intensity: 3.0,
             shadow_map: sun_shadow_map
         }
     );
