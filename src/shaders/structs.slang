@@ -1,3 +1,4 @@
+
 static const float PI = acos(-1);
 
 static const uint SHADOW_CASCADE_COUNT = 6;

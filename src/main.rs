@@ -22,7 +22,7 @@ use ash::vk::{self, BufferImageCopy};
 use asset::GLTFPrimitive;
 use gpu_allocator::MemoryLocation;
 use gui::AssetWindowResponse;
-use imgui::{FontAtlasRefMut};
+use imgui::{FontAtlasRefMut, SliderFlags};
 use ozy::io::{DDSHeader, DDSHeader_DXT10, DDS_PixelFormat, OzyMesh};
 use rapier3d::prelude::*;
 use routines::struct_to_bytes;
@@ -58,7 +58,7 @@ fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
     let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
-    let mut window_size = glm::vec2(1280, 720);
+    let mut window_size = glm::vec2(1920, 1080);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
@@ -271,7 +271,7 @@ fn main() {
             yaw: 0.783,
             pitch_speed: 0.003,
             yaw_speed: 0.0,
-            intensity: 2.5,
+            intensity: 100000.0,
             shadow_map: sun_shadow_map
         }
     );
@@ -455,7 +455,7 @@ fn main() {
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
-    renderer.uniform_data.sun_luminance = glm::vec4(1.0, 1.0, 1.0, 0.0);
+    renderer.uniform_data.sun_color = glm::vec4(1.0, 0.891, 0.796, 0.0);
     renderer.uniform_data.ambient_factor = 0.1;
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
@@ -647,7 +647,7 @@ fn main() {
                 imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
                 imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
                 imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
-                imgui::Slider::new("Camera exposure", 0.0, 5.0).build(&imgui_ui, &mut renderer.uniform_data.exposure);
+                imgui::Slider::new("Camera exposure", 0.0, 0.001).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&imgui_ui, &mut renderer.uniform_data.exposure);
                 imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
     
                 if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }

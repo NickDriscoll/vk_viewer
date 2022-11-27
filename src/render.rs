@@ -189,7 +189,7 @@ pub struct EnvironmentUniforms {
     pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT],
     pub camera_position: glm::TVec4<f32>,
     pub sun_direction: glm::TVec4<f32>,
-    pub sun_luminance: glm::TVec4<f32>,
+    pub sun_color: glm::TVec4<f32>,
     pub sun_shadowmap_idx: u32,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible

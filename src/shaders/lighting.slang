@@ -39,38 +39,41 @@ float3 f_lambert(float3 color)
     return color / PI;
 }
 
-struct PBRParams
+struct PBRSurfaceParams
 {
     float3 albedo;
     float3 shading_normal;
     float3 geometry_normal;
     float3 view;
-    float3 light_direction;
-    float3 light_radiance;
     float roughness;
     float metalness;
 }
 
-float3 pbr_mettalic_roughness(PBRParams params)
+struct DirectionalLight {
+    float3 direction;
+    float3 radiance;
+}
+
+float3 pbr_mettalic_roughness(PBRSurfaceParams params, DirectionalLight light)
 {
-    float3 halfway = normalize(params.view + params.light_direction);
+    float3 halfway = normalize(params.view + light.direction);
     float3 ks = fresnel_schlick(float3(0.04), halfway, params.view);
     float3 kd = float3(1.0) - ks;
     kd *= 1.0 - params.metalness;
 
-    float shading_light_dot = max(dot(params.shading_normal, params.light_direction), 0.0);
+    float shading_light_dot = max(dot(params.shading_normal, light.direction), 0.0);
 
     // Cook-Torrence specular term evaluation
     float D = NDFggxtr(params.shading_normal, halfway, params.roughness);
     float3 F = ks;
-    float G = geometry_smith(params.shading_normal, params.view, params.light_direction, params.roughness);
+    float G = geometry_smith(params.shading_normal, params.view, light.direction, params.roughness);
     float3 numerator = D * F * G;
     float denominator = 4.0 * max(dot(params.shading_normal, params.view), 0.0) * shading_light_dot + 0.0001;
     float3 cook_torrence = numerator / denominator;
 
     // Luminance from the sun
-    float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * params.light_radiance * shading_light_dot;
-    float sun_contribution = 1.0 - smoothstep(0.0, -0.05, params.light_direction.z);
+    float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * light.radiance * shading_light_dot;
+    float sun_contribution = 1.0 - smoothstep(0.0, -0.05, light.direction.z);
     Lo *= sun_contribution;
 
     return Lo;

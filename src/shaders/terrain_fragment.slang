@@ -36,6 +36,7 @@ MaterialInfo info_from_material(Material mat, float2 uvs) {
     return out;
 }
 
+[shader("fragment")]
 float4 fragment_main(MeshVertexOutput input) : SV_Target0
 {
     float3 tangent = normalize(input.tangent);
@@ -61,38 +62,27 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     // Compute sun color
     float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
-    float3 halo_color;
-    float3 sky_color;
+    float3 halo_color = float3(1.0);
+    float3 sky_color = float3(1.0);
     float3 sun_color;
-    if (uniforms.real_sky) {
-        float3 pos = input.position;
-        pos.z += earth_radius;
-        ray_t ray = {
-            pos,
-            uniforms.sun_direction.xyz * float3(-1.0, 1.0, 1.0)
-        };
-        sky_color = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_intensity);
-
-        ray = {
-            pos,
-            uniforms.sun_direction.xyz
-        };
-        halo_color = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_intensity);
-    } else {
-        sky_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
+    if (!uniforms.real_sky) {
+        float3 sky_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
         halo_color = global_textures[uniforms.viewzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
     }
     sun_color = lerp(sky_color, halo_color, 0.2);
 
-    PBRParams params;
+    PBRSurfaceParams params;
     params.albedo = lerp(rock_info.albedo, grass_info.albedo, mix_factor);
     params.shading_normal = world_normal;
     params.geometry_normal = normal;
     params.view = view;
-    params.light_direction = uniforms.sun_direction.xyz;
-    params.light_radiance = uniforms.sun_intensity * lerp(uniforms.sun_radiance.rgb * halo_color, uniforms.sun_radiance.rgb, sunzenith_dot);
     params.roughness = roughness;
     params.metalness = metalness;
+
+    DirectionalLight sunlight = {
+        uniforms.sun_direction.xyz,
+        uniforms.sun_intensity * lerp(uniforms.sun_radiance.rgb, uniforms.sun_radiance.rgb, sunzenith_dot)
+    };
 
     float3 final_color = float3(0.0);
 
@@ -104,10 +94,12 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         uniforms.sun_shadow_distances,
         input.clip_space_z
     );
-    final_color = sun_shadowing.x * pbr_mettalic_roughness(params);
+    final_color = sun_shadowing.x * pbr_mettalic_roughness(params, sunlight);
 
-    // Apply fog like GL_EXP2
-    final_color = exp2_fog(uniforms, input.position, final_color, sun_color);
+    if (!uniforms.real_sky) {
+        // Apply fog like GL_EXP2
+        final_color = exp2_fog(uniforms, input.position, final_color, sun_color);
+    }
 
     //float3 ambient = float3(uniforms.ambient_factor) * params.albedo * ao;
     float3 ambient = float3(uniforms.ambient_factor) * params.albedo;
