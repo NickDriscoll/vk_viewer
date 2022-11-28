@@ -334,7 +334,6 @@ fn main() {
         ]
     };
 
-    let mut timescale_factor = 1.0;
     let mut simulation_state = SimulationSOA::new();
 
     //Define terrain
@@ -474,9 +473,9 @@ fn main() {
     'running: loop {
         timer.update(); //Update frame timer
         let scaled_delta_time = if timer.delta_time > 1.0 / 30.0 {
-            timescale_factor / 30.0
+            simulation_state.timescale / 30.0
         } else {
-            timer.delta_time * timescale_factor
+            timer.delta_time * simulation_state.timescale
         };
 
         //Reset renderer
@@ -596,7 +595,7 @@ fn main() {
         }
 
         if dev_gui.do_gui {
-            if let Some(t) = imgui::Window::new("Main control panel (press ESC to hide)").menu_bar(true).begin(&imgui_ui) {
+            if let Some(t) = imgui::Window::new("Main control panel (press ESC to hide/unhide)").menu_bar(true).begin(&imgui_ui) {
                 if let Some(mb) = imgui_ui.begin_menu_bar() {
                     if let Some(mt) = imgui_ui.begin_menu("File") {
                         if imgui::MenuItem::new("New").build(&imgui_ui) {}
@@ -649,7 +648,7 @@ fn main() {
                 imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
                 imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
                 imgui::Slider::new("Camera exposure", 0.0, 0.001).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&imgui_ui, &mut renderer.uniform_data.exposure);
-                imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut timescale_factor);
+                imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut simulation_state.timescale);
     
                 if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
     

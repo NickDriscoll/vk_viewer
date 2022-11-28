@@ -137,7 +137,8 @@ new_key_type! { pub struct EntityKey; }
 pub struct SimulationSOA {
     pub model_matrices: DenseSlotMap<ModelMatrixKey, glm::TMat4<f32>>,
     pub model_indices: DenseSlotMap<ModelIndexKey, Vec<usize>>,
-    pub entities: DenseSlotMap<EntityKey, Entity>
+    pub entities: DenseSlotMap<EntityKey, Entity>,
+    pub timescale: f32
 }
 
 impl SimulationSOA {
@@ -145,7 +146,8 @@ impl SimulationSOA {
         SimulationSOA{
             model_matrices: DenseSlotMap::with_key(),
             model_indices: DenseSlotMap::with_key(),
-            entities: DenseSlotMap::with_key()
+            entities: DenseSlotMap::with_key(),
+            timescale: 1.0
         }
     }
 }

@@ -381,7 +381,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
     let bytes = decode_png(read_info);
 
     //After decoding, upload to GPU for mipmap creation
-    let mip_levels = u32::clamp(ozy::routines::calculate_mipcount(width, height) - 2, 1, u32::MAX);
+    let mip_levels = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).clamp(1, u32::MAX);
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
         format: uncompressed_format,
@@ -751,13 +751,14 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
             };
 
             fn tex_fn(vk: &mut VulkanGraphicsDevice, glb: &Gltf, image: gltf::Image) -> OzyImage {
+                println!("{}", image.name().unwrap_or("IMAGE HAS NO NAME"));
                 let source = image.source();
                 let png_bytes = png_bytes_from_source(glb, source);
                 let decoder = png::Decoder::new(png_bytes.as_slice()).read_info().unwrap();
                 let info = decoder.info();
                 let width = info.width;
                 let height = info.height;
-                let mipmap_count = u32::clamp(ozy::routines::calculate_mipcount(width, height) - 2, 1, u32::MAX);
+                let mipmap_count = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).clamp(1, u32::MAX);
                 let bc7_bytes = png2bc7_synchronous(vk, &png_bytes);
                 OzyImage {
                     width,
