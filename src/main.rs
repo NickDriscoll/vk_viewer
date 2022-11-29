@@ -271,8 +271,7 @@ fn main() {
             yaw: 0.783,
             pitch_speed: 0.003,
             yaw_speed: 0.0,
-            //intensity: 100000.0,
-            intensity: 3.0,
+            irradiance: 790.0f32 * glm::vec3(1.0, 0.891, 0.796),
             shadow_map: sun_shadow_map
         }
     );
@@ -455,7 +454,7 @@ fn main() {
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
-    renderer.uniform_data.sun_color = glm::vec4(1.0, 0.891, 0.796, 0.0);
+    renderer.uniform_data.sun_irradiance = glm::vec4(1.0, 0.891, 0.796, 0.0);
     renderer.uniform_data.ambient_factor = 0.1;
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
@@ -640,14 +639,13 @@ fn main() {
                     imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.pitch);
                     imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
                     imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
-                    imgui::Slider::new("Sun intensity", 0.0, 20.0).build(&imgui_ui, &mut sun.intensity);
                 }
                 
-                imgui::Slider::new("Ambient factor", 0.0, 20.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);    
+                imgui::Slider::new("Ambient factor", 0.0, 500.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);    
                 imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
                 imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
                 imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
-                imgui::Slider::new("Camera exposure", 0.0, 0.001).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&imgui_ui, &mut renderer.uniform_data.exposure);
+                imgui::Slider::new("Camera exposure", 0.0, 1.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&imgui_ui, &mut renderer.uniform_data.exposure);
                 imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut simulation_state.timescale);
     
                 if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
@@ -866,7 +864,7 @@ fn main() {
             //Bindless descriptor setup for Shadow+HDR pass
             let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
             
-            //Shadow rendering
+            //Shadow render pass
             if let Some(sun) = &renderer.main_sun {
                 let sun_shadow_map = &sun.shadow_map;
                 let render_area = {

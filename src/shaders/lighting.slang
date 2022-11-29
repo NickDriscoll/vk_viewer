@@ -1,5 +1,7 @@
 import structs;
 
+// https://www.pbr-book.org/3ed-2018/Color_and_Radiometry/Radiometry
+
 // Everything is from https://learnopengl.com/PBR/Theory
 
 float3 fresnel_schlick(float3 base_reflectivity, float3 halfway, float3 view)
@@ -51,13 +53,14 @@ struct PBRSurfaceParams
 
 struct DirectionalLight {
     float3 direction;
-    float3 radiance;
+    float3 irradiance;
 }
 
-float3 pbr_mettalic_roughness(PBRSurfaceParams params, DirectionalLight light)
+float3 directional_lighting(PBRSurfaceParams params, DirectionalLight light)
 {
     float3 halfway = normalize(params.view + light.direction);
-    float3 ks = fresnel_schlick(float3(0.04), halfway, params.view);
+    float3 F0 = lerp(float3(0.04), params.albedo, params.metalness);
+    float3 ks = fresnel_schlick(F0, halfway, params.view);
     float3 kd = float3(1.0) - ks;
     kd *= 1.0 - params.metalness;
 
@@ -71,10 +74,12 @@ float3 pbr_mettalic_roughness(PBRSurfaceParams params, DirectionalLight light)
     float denominator = 4.0 * max(dot(params.shading_normal, params.view), 0.0) * shading_light_dot + 0.0001;
     float3 cook_torrence = numerator / denominator;
 
-    // Luminance from the sun
-    float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * light.radiance * shading_light_dot;
-    float sun_contribution = 1.0 - smoothstep(0.0, -0.05, light.direction.z);
-    Lo *= sun_contribution;
+    // Compute outgoing radiance
+    float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * light.irradiance * shading_light_dot;
+
+    //Directional lights can't contribute when they're under the world
+    float contribution = 1.0 - smoothstep(0.0, -0.05, light.direction.z);
+    Lo *= contribution;
 
     return Lo;
 }

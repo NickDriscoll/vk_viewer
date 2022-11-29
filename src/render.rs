@@ -189,7 +189,7 @@ pub struct EnvironmentUniforms {
     pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT],
     pub camera_position: glm::TVec4<f32>,
     pub sun_direction: glm::TVec4<f32>,
-    pub sun_color: glm::TVec4<f32>,
+    pub sun_irradiance: glm::TVec4<f32>,
     pub sun_shadowmap_idx: u32,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
@@ -199,9 +199,9 @@ pub struct EnvironmentUniforms {
     pub viewzenith_idx: u32,
     pub sunview_idx: u32,
     pub exposure: f32,
-    pub sun_intensity: f32,
     pub ambient_factor: f32,
     pub real_sky: f32,
+    pub pad0: f32,
     pub sun_shadow_distances: [f32; CascadedShadowMap::CASCADE_COUNT + 1],
 }
 
@@ -427,7 +427,7 @@ pub struct SunLight {
     pub yaw: f32,
     pub pitch_speed: f32,
     pub yaw_speed: f32,
-    pub intensity: f32,
+    pub irradiance: glm::TVec3<f32>,
     pub shadow_map: CascadedShadowMap
 }
 
@@ -1748,8 +1748,7 @@ impl Renderer {
                 );
 
                 uniforms.sun_shadow_distances = sunlight.shadow_map.clip_distances();
-                
-                uniforms.sun_intensity = sunlight.intensity;
+                uniforms.sun_irradiance = glm::vec3_to_vec4(&sunlight.irradiance);
             }
             
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)

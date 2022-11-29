@@ -34,11 +34,13 @@ float4 fragment_main(PostFXVertexOutput input) {
     float3 final_color = hdr_buffer.Sample(input.uv).xyz;
     final_color *= uniforms.exposure;
 
-    //Tonemapping step
+    // Tonemapping step
+    //final_color = final_color / (final_color + float3(1.0));
+    //final_color = pow(final_color, float3(1.0 / 2.2));
 
     // Narkowicz ACES
     final_color = (final_color * (2.51 * final_color + 0.03)) / (final_color * (2.43 * final_color + 0.59) + 0.14);
     final_color = saturate(final_color);
-
+    
     return float4(final_color, 1.0);
 }

@@ -57,10 +57,10 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     DirectionalLight sunlight = {
         uniforms.sun_direction.xyz,
-        uniforms.sun_intensity * lerp(uniforms.sun_radiance.rgb, uniforms.sun_radiance.rgb, sunzenith_dot)
+        uniforms.sun_irradiance.rgb
     };
 
-    float3 final_color = float3(0.0);
+    float3 final_radiance = float3(0.0);
 
     float2 sun_shadowing = compute_cascade_shadowing(
         global_array_textures[uniforms.sun_shadowmap_idx],
@@ -70,17 +70,17 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         uniforms.sun_shadow_distances,
         input.clip_space_z
     );
-    final_color = sun_shadowing.x * pbr_mettalic_roughness(params, sunlight);
-    final_color += global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
+    final_radiance = sun_shadowing.x * directional_lighting(params, sunlight);
+    final_radiance += global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
 
     if (!uniforms.real_sky) {
         // Apply fog like GL_EXP2
-        final_color = exp2_fog(uniforms, input.position, final_color, sun_color);
+        final_radiance = exp2_fog(uniforms, input.position, final_radiance, sun_color);
     }
 
     // float3 ambient = float3(uniforms.ambient_factor) * params.albedo * sampled_ao;
     float3 ambient = float3(uniforms.ambient_factor) * params.albedo;
-    final_color = final_color + ambient;
+    final_radiance = final_radiance + ambient;
     
-    return float4(final_color, 1.0);
+    return float4(final_radiance, 1.0);
 }

@@ -67,7 +67,7 @@ struct FrameUniforms {
     float4x4 sun_shadow_matrices[SHADOW_CASCADE_COUNT];
     float4 camera_position;
     float4 sun_direction;
-    float4 sun_radiance;
+    float4 sun_irradiance;
     uint sun_shadowmap_idx;
     float time;
     float stars_threshold;
@@ -77,9 +77,9 @@ struct FrameUniforms {
     uint viewzenith_idx;
     uint sunview_idx;
     float exposure;
-    float sun_intensity;
     float ambient_factor;
     bool real_sky;
+    float pad0;
     float4 sun_shadow_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4 + 1];
 }
 
