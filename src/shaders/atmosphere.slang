@@ -74,7 +74,7 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
             float3(0.0, 0.0, earth_radius + 1.0),
             view_direction
         };
-        sky_sample = get_incident_light(ray, uniforms.sun_direction.xyz, 10.0);
+        sky_sample = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_irradiance.r);
     } else {
         sky_sample = sample_fake_sky(
             uniforms,

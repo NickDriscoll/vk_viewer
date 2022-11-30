@@ -49,6 +49,7 @@ fn main() {
         ["fragment", "shadow.slang", "shadow_frag.spv"],
         ["vertex", "postfx.slang", "postfx_vert.spv"],
         ["fragment", "postfx.slang", "postfx_frag.spv"],
+        ["compute", "lum_binning.slang", "lum_binning.spv"],
     ];
     for shader in slang_shaders {
         let out = compile_slang_shader(shader[0], shader[1], shader[2]);

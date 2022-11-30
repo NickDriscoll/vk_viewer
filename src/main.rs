@@ -276,7 +276,7 @@ fn main() {
         }
     );
 
-    //Create pipelines
+    //Create graphics pipelines
     let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline, postfx_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
@@ -331,6 +331,17 @@ fn main() {
             pipelines[3],
             pipelines[4]
         ]
+    };
+
+    //Create compute pipelines
+    let lum_binning_pipeline = unsafe {
+        let stage = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/lum_binning.spv");
+        let create_info = vk::ComputePipelineCreateInfo {
+            stage,
+            layout: pipeline_layout,
+            ..Default::default()
+        };
+        vk.device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], vkutil::MEMORY_ALLOCATOR).unwrap()[0]
     };
 
     let mut simulation_state = SimulationSOA::new();
