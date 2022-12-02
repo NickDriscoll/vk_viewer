@@ -714,6 +714,8 @@ pub struct Renderer {
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
+    
+    pub compute_buffer: GPUBuffer,
 
     pub global_images: FreeList<GPUImage>,
     pub global_materials: FreeList<Material>,
@@ -841,6 +843,14 @@ impl Renderer {
             usage_flags,
             MemoryLocation::CpuToGpu
         );
+        
+        let compute_buffer = GPUBuffer::allocate(
+            vk,
+            (3840 * 2160 * size_of::<u32>()) as u64,
+            alignment,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::GpuOnly
+        );
             
         //Maintain free list for texture allocation
         let mut global_images = FreeList::with_capacity(1024);
@@ -923,6 +933,14 @@ impl Renderer {
                     buffer: imgui_buffer.backing_buffer(),
                     offset: 0,
                     length: imgui_buffer.length()
+                },
+                BufferDescriptorDesc {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::COMPUTE,
+                    count: 1,
+                    buffer: compute_buffer.backing_buffer(),
+                    offset: 0,
+                    length: compute_buffer.length()
                 }
             ];
             
@@ -1180,6 +1198,7 @@ impl Renderer {
             uniform_buffer,
             instance_buffer,
             material_buffer,
+            compute_buffer,
             samplers_descriptor_index,
             main_sun: None,
             frames_in_flight: in_flight_frame_data,

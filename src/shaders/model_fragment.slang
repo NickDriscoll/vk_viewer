@@ -78,8 +78,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         final_radiance = exp2_fog(uniforms, input.position, final_radiance, sun_color);
     }
 
-    // float3 ambient = float3(uniforms.ambient_factor) * params.albedo * sampled_ao;
-    float3 ambient = float3(uniforms.ambient_factor) * params.albedo;
+    float3 ambient = float3(uniforms.ambient_factor) * params.albedo * sampled_ao;
     final_radiance = final_radiance + ambient;
     
     return float4(final_radiance, 1.0);

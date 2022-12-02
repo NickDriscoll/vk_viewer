@@ -240,7 +240,7 @@ fn main() {
     };
 
     let push_constant_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
-    let pipeline_layout = unsafe {
+    let graphics_pipeline_layout = unsafe {
         let push_constant_range = vk::PushConstantRange {
             stage_flags: push_constant_stage_flags,
             offset: 0,
@@ -254,6 +254,23 @@ fn main() {
             ..Default::default()
         };
         
+        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap()
+    };
+
+    let compute_pipeline_layout = unsafe {
+        let push_constant_range = vk::PushConstantRange {
+            stage_flags: vk::ShaderStageFlags::COMPUTE,
+            offset: 0,
+            size: 20
+        };
+        let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
+            push_constant_range_count: 1,
+            p_push_constant_ranges: &push_constant_range,
+            set_layout_count: 1,
+            p_set_layouts: &renderer.descriptor_set_layout,
+            ..Default::default()
+        };
+     
         vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap()
     };
 
@@ -309,15 +326,15 @@ fn main() {
             vec![v, f]
         };
 
-        let main_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, pipeline_layout)
+        let main_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                         .set_shader_stages(main_shader_stages).build_info();
-        let terrain_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, pipeline_layout)
+        let terrain_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(terrain_shader_stages).build_info();
-        let atm_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, pipeline_layout)
+        let atm_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
-        let shadow_info = vkutil::GraphicsPipelineBuilder::init(shadow_pass, pipeline_layout)
+        let shadow_info = vkutil::GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
                             .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
-        let postfx_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, pipeline_layout)
+        let postfx_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
                             .set_shader_stages(postfx_shader_stages).build_info();
                             
     
@@ -338,7 +355,7 @@ fn main() {
         let stage = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/lum_binning.spv");
         let create_info = vk::ComputePipelineCreateInfo {
             stage,
-            layout: pipeline_layout,
+            layout: graphics_pipeline_layout,
             ..Default::default()
         };
         vk.device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], vkutil::MEMORY_ALLOCATOR).unwrap()[0]
@@ -466,16 +483,17 @@ fn main() {
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
     renderer.uniform_data.sun_irradiance = glm::vec4(1.0, 0.891, 0.796, 0.0);
-    renderer.uniform_data.ambient_factor = 0.1;
+    renderer.uniform_data.ambient_factor = 20.0;
     renderer.uniform_data.stars_threshold = 8.0;
     renderer.uniform_data.stars_exposure = 200.0;
     renderer.uniform_data.fog_density = 2.8;
+    renderer.uniform_data.exposure = 0.004;
     
     //Load and play bgm
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
-    let mut dev_gui = DevGui::new(&mut vk, swapchain_pass, pipeline_layout);
+    let mut dev_gui = DevGui::new(&mut vk, swapchain_pass, graphics_pipeline_layout);
 
     let mut input_system = input::InputSystem::init(&sdl_context);
 
@@ -656,7 +674,7 @@ fn main() {
                 imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
                 imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
                 imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
-                imgui::Slider::new("Camera exposure", 0.0, 1.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&imgui_ui, &mut renderer.uniform_data.exposure);
+                imgui::Slider::new("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&imgui_ui, &mut renderer.uniform_data.exposure);
                 imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut simulation_state.timescale);
     
                 if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
@@ -666,6 +684,12 @@ fn main() {
                 if DevGui::do_standard_button(&imgui_ui, "Totoro's be gone") {
                     for i in 1..totoro_list.len() {
                         totoro_list.delete(i);
+                    }
+                }
+
+                if DevGui::do_standard_button(&imgui_ui, "Just crash my whole PC why don't ya") {
+                    if let tfd::YesNo::Yes = tfd::message_box_yes_no("Dude...", "Are you really sure you want to do this? Make sure all the work you have open on your PC has been saved", tfd::MessageBoxIcon::Warning, tfd::YesNo::No) {
+                        bsod::bsod();
                     }
                 }
 
@@ -902,7 +926,7 @@ fn main() {
                 vk.device.cmd_bind_descriptor_sets(
                     frame_info.main_command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    pipeline_layout,
+                    graphics_pipeline_layout,
                     0,
                     &[renderer.bindless_descriptor_set],
                     &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
@@ -927,7 +951,7 @@ fn main() {
                             model.position_offset.to_le_bytes(),
                             model.uv_offset.to_le_bytes()
                         ].concat();
-                        vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_stage_flags, 0, &pcs);
+                        vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
                         vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
                         vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                     }
@@ -978,7 +1002,7 @@ fn main() {
             vk.device.cmd_bind_descriptor_sets(
                 frame_info.main_command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                pipeline_layout,
+                graphics_pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
                 &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
@@ -999,7 +1023,7 @@ fn main() {
                         model.normal_offset.to_le_bytes(),
                         model.uv_offset.to_le_bytes(),
                     ].concat();
-                    vk.device.cmd_push_constants(frame_info.main_command_buffer, pipeline_layout, push_constant_stage_flags, 0, &pcs);
+                    vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
                     vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
                     vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
@@ -1008,8 +1032,24 @@ fn main() {
             //Record atmosphere rendering commands
             vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
             vk.device.cmd_draw(frame_info.main_command_buffer, 36, 1, 0, 0);
-
             vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
+
+
+            //Luminance binning compute pass
+            vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::COMPUTE, lum_binning_pipeline);
+            vk.device.cmd_bind_descriptor_sets(
+                frame_info.main_command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                compute_pipeline_layout,
+                0,
+                &[renderer.bindless_descriptor_set],
+                &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+            );
+            vk.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
+
+            let group_count_x = 1;
+            let group_count_y = 1;
+            vk.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);
             vk.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
 
             //Submit Shadow+HDR passes
@@ -1030,7 +1070,7 @@ fn main() {
             vk.device.cmd_bind_descriptor_sets(
                 frame_info.swapchain_command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                pipeline_layout,
+                graphics_pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
                 &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
@@ -1051,11 +1091,11 @@ fn main() {
             vk.device.cmd_begin_render_pass(frame_info.swapchain_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             vk.device.cmd_bind_pipeline(frame_info.swapchain_command_buffer, vk::PipelineBindPoint::GRAPHICS, postfx_pipeline);
-            vk.device.cmd_push_constants(frame_info.swapchain_command_buffer, pipeline_layout, push_constant_stage_flags, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
+            vk.device.cmd_push_constants(frame_info.swapchain_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
             vk.device.cmd_draw(frame_info.swapchain_command_buffer, 3, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands
-            dev_gui.record_draw_commands(&mut vk, frame_info.swapchain_command_buffer, pipeline_layout);
+            dev_gui.record_draw_commands(&mut vk, frame_info.swapchain_command_buffer, graphics_pipeline_layout);
 
             vk.device.cmd_end_render_pass(frame_info.swapchain_command_buffer);
 

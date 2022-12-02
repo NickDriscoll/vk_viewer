@@ -1,8 +1,7 @@
 import structs;
 
-// https://www.pbr-book.org/3ed-2018/Color_and_Radiometry/Radiometry
-
 // Everything is from https://learnopengl.com/PBR/Theory
+// https://www.pbr-book.org/3ed-2018/Color_and_Radiometry/Radiometry
 
 float3 fresnel_schlick(float3 base_reflectivity, float3 halfway, float3 view)
 {
@@ -36,6 +35,7 @@ float geometry_smith(float3 normal, float3 view, float3 light_direction, float r
     return ggx1 * ggx2;
 }
 
+//Lambertian BRDF
 float3 f_lambert(float3 color)
 {
     return color / PI;
@@ -56,20 +56,24 @@ struct DirectionalLight {
     float3 irradiance;
 }
 
+//Returns the outgoing radiance caused by the directional light hitting the surface
 float3 directional_lighting(PBRSurfaceParams params, DirectionalLight light)
 {
     float3 halfway = normalize(params.view + light.direction);
-    float3 F0 = lerp(float3(0.04), params.albedo, params.metalness);
+    //float3 F0 = lerp(float3(0.04), params.albedo, params.metalness);
+    float3 F0 = float3(0.04);
     float3 ks = fresnel_schlick(F0, halfway, params.view);
     float3 kd = float3(1.0) - ks;
     kd *= 1.0 - params.metalness;
 
     float shading_light_dot = max(dot(params.shading_normal, light.direction), 0.0);
+    //float roughness = 1.0 - params.roughness;
+    float roughness = params.roughness;
 
     // Cook-Torrence specular term evaluation
-    float D = NDFggxtr(params.shading_normal, halfway, params.roughness);
+    float D = NDFggxtr(params.shading_normal, halfway, roughness);
     float3 F = ks;
-    float G = geometry_smith(params.shading_normal, params.view, light.direction, params.roughness);
+    float G = geometry_smith(params.shading_normal, params.view, light.direction, roughness);
     float3 numerator = D * F * G;
     float denominator = 4.0 * max(dot(params.shading_normal, params.view), 0.0) * shading_light_dot + 0.0001;
     float3 cook_torrence = numerator / denominator;
@@ -77,9 +81,8 @@ float3 directional_lighting(PBRSurfaceParams params, DirectionalLight light)
     // Compute outgoing radiance
     float3 Lo = (kd * f_lambert(params.albedo) + cook_torrence) * light.irradiance * shading_light_dot;
 
-    //Directional lights can't contribute when they're under the world
-    float contribution = 1.0 - smoothstep(0.0, -0.05, light.direction.z);
-    Lo *= contribution;
+    // Directional lights can't contribute when they're under the world
+    Lo *= 1.0 - smoothstep(0.0, -0.05, light.direction.z);
 
     return Lo;
 }

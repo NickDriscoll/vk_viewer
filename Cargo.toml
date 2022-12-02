@@ -36,6 +36,7 @@ rapier3d = "0.14.0"
 slotmap = "1.0"
 ispc-texcomp = "0.1.20"
 function_name = "0.3.0"
+bsod = "0.1.1"
 
 [dependencies.ash]
 version = "0.36.0"
