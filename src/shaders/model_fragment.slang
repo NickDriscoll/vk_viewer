@@ -47,7 +47,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3 sampled_normal = 2.0 * global_textures[my_mat.normal_map_index].Sample(input.uv).xyz - 1.0;
     float roughness = toksvigs_method(sampled_normal, my_mat.base_roughness * sampled_roughness);
 
-    PBRSurfaceParams params;
+    PBRSurface params;
     params.albedo = color_sample.rgb;
     params.shading_normal = normalize(mul(sampled_normal, TBN));
     params.geometry_normal = normal;

@@ -8,7 +8,9 @@ fn compile_slang_shader(stage: &str, src_file: &str, out_file: &str) -> String {
     let out = Command::new("slangc").args([
         "-stage", stage,
         "-entry", &format!("{}_main", stage),
-        "-g",
+        "-g3",
+        "-O0",
+        "-Xglslang", "gVS",
         "-o",
         &format!("{}/{}", SHADER_OUTPUT_DIR, out_file),
         &format!("{}/{}", SHADER_SRC_DIR, src_file)]

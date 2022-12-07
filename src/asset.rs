@@ -847,6 +847,10 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
     }
 
     //File header is gonna be material count + primitive count
+    let dir = Path::new(&output_location).parent().unwrap();
+    if !dir.exists() {
+        std::fs::create_dir(dir).unwrap();
+    }
     let mut output_file = OpenOptions::new().write(true).create(true).open(output_location).unwrap();
     let material_count = materials.len() as u32;
     let primitive_count = primitives.len() as u32;

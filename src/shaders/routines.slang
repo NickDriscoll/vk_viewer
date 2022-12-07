@@ -114,8 +114,6 @@ float3 Unity_Blackbody_float(float Temperature) {
 }
 
 float3 sample_sky_stars(FrameUniforms uniforms, float3 view_direction) {
-    float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
-
     // Stars computation
     float stars = pow(clamp(noise(view_direction * 200.0f), 0.0f, 1.0f), uniforms.stars_threshold) * uniforms.stars_exposure;
     float star_fact = lerp(0.4, 1.4, noise(view_direction * 100.0f + float3(uniforms.time)));
@@ -124,6 +122,8 @@ float3 sample_sky_stars(FrameUniforms uniforms, float3 view_direction) {
     // star color by randomized temperature
     float stars_temperature = noise(view_direction * 150.0) * 0.5 + 0.5;
     float3 stars_color = stars * Unity_Blackbody_float(lerp(1500.0, 65000.0, pow(stars_temperature, 4.0)));
+
+    float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
     stars_color *= 1.0 - nighttime_factor;
 
     return stars_color;

@@ -71,7 +71,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     }
     sun_color = lerp(sky_color, halo_color, 0.2);
 
-    PBRSurfaceParams params;
+    PBRSurface params;
     params.albedo = lerp(rock_info.albedo, grass_info.albedo, mix_factor);
     params.shading_normal = world_normal;
     params.geometry_normal = normal;

@@ -484,8 +484,8 @@ fn main() {
 
     renderer.uniform_data.sun_irradiance = glm::vec4(1.0, 0.891, 0.796, 0.0);
     renderer.uniform_data.ambient_factor = 20.0;
-    renderer.uniform_data.stars_threshold = 8.0;
-    renderer.uniform_data.stars_exposure = 200.0;
+    renderer.uniform_data.stars_threshold = 4.0;
+    renderer.uniform_data.stars_exposure = 2000.0;
     renderer.uniform_data.fog_density = 2.8;
     renderer.uniform_data.exposure = 0.004;
     
@@ -672,7 +672,7 @@ fn main() {
                 
                 imgui::Slider::new("Ambient factor", 0.0, 500.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);    
                 imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
-                imgui::Slider::new("Stars exposure", 0.0, 1000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
+                imgui::Slider::new("Stars exposure", 0.0, 5000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
                 imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
                 imgui::Slider::new("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&imgui_ui, &mut renderer.uniform_data.exposure);
                 imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut simulation_state.timescale);
