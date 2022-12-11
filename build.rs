@@ -5,16 +5,17 @@ const SHADER_SRC_DIR: &str = "./src/shaders";
 const SHADER_OUTPUT_DIR: &str = "./data/shaders";
 
 fn compile_slang_shader(stage: &str, src_file: &str, out_file: &str) -> String {
-    let out = Command::new("slangc").args([
-        "-stage", stage,
-        "-entry", &format!("{}_main", stage),
-        "-g3",
-        "-O0",
-        "-Xglslang", "gVS",
-        "-o",
-        &format!("{}/{}", SHADER_OUTPUT_DIR, out_file),
-        &format!("{}/{}", SHADER_SRC_DIR, src_file)]
-    ).output().unwrap();
+    let src_path = format!("{}/{}", SHADER_SRC_DIR, src_file);
+    let out_path = format!("{}/{}", SHADER_OUTPUT_DIR, out_file);
+
+    //#[cfg(debug_assertions)]
+    //let args = ["-stage", stage, "-entry", &format!("{}_main", stage), "-g3", "-O0", "-o", &out_path, &src_path];
+
+    //#[cfg(not(debug_assertions))]
+    //let args = ["-stage", stage, "-entry", &format!("{}_main", stage), "-o", &out_path, &src_path];
+
+    let args = ["-stage", stage, "-entry", &format!("{}_main", stage), "-g3", "-O0", "-o", &out_path, &src_path];
+    let out = Command::new("slangc").args(args).output().unwrap();
     unsafe { format!("{}\n{}\n", String::from_utf8_unchecked(out.stdout), String::from_utf8_unchecked(out.stderr)) }
 }
 

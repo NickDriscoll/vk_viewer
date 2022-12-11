@@ -45,7 +45,8 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     // Get normal vector at this point
     float3 sampled_normal = 2.0 * global_textures[my_mat.normal_map_index].Sample(input.uv).xyz - 1.0;
-    float roughness = toksvigs_method(sampled_normal, my_mat.base_roughness * sampled_roughness);
+    // float roughness = toksvigs_method(sampled_normal, my_mat.base_roughness * sampled_roughness);
+    float roughness = my_mat.base_roughness * sampled_roughness;
 
     PBRSurface params;
     params.albedo = color_sample.rgb;
@@ -71,7 +72,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         input.clip_space_z
     );
     final_radiance = sun_shadowing.x * directional_lighting(params, sunlight);
-    final_radiance += global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
+    final_radiance += 200.0 * global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
 
     if (!uniforms.real_sky) {
         // Apply fog like GL_EXP2

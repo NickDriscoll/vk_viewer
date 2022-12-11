@@ -14,7 +14,7 @@ static const uint GROUP_SIZE = THREADS_X * THREADS_Y;
 // Taken from RealTime-Rendering vol 4 pg. 278
 static const float3 RGB_TO_LUM = float3(0.2125, 0.7154, 0.0721);
 
-shared uint histogram_shared[GROUP_SIZE];
+static groupshared uint histogram_shared[GROUP_SIZE];
 
 // For a given color and luminance range, return the histogram bin index
 uint colorToBin(float3 hdrColor, float minLogLum, float inverseLogLumRange) {

@@ -70,7 +70,7 @@ float3 directional_lighting(PBRSurface surface, DirectionalLight light)
     float roughness = surface.roughness;
 
     // Cook-Torrence specular term evaluation
-    float D = NDFggxtr(surface.shading_normal, halfway, roughness);
+    float D = NDFggxtr(surface.shading_normal, halfway, roughness);    
     float3 F = ks;
     float G = geometry_smith(surface.shading_normal, surface.view, light.direction, roughness);
     float3 numerator = D * F * G;
