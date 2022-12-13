@@ -12,13 +12,13 @@ use crate::*;
 pub struct MaterialData {
     pub base_color: [f32; 4],
     pub base_roughness: f32,
+    pub base_metalness: f32,
     pub color_idx: u32,
     pub normal_idx: u32,
     pub metal_roughness_idx: u32,
     pub emissive_idx: u32,
     pad0: u32,
     pad1: u32,
-    pad2: u32,
 }
 
 #[derive(Debug)]
@@ -26,6 +26,7 @@ pub struct Material {
     pub pipeline: vk::Pipeline,
     pub base_color: [f32; 4],
     pub base_roughness: f32,
+    pub base_metalness: f32,
     pub color_idx: Option<u32>,
     pub normal_idx: Option<u32>,
     pub metal_roughness_idx: Option<u32>,
@@ -54,13 +55,13 @@ impl Material {
         MaterialData {
             base_color: self.base_color,
             base_roughness: self.base_roughness,
+            base_metalness: self.base_metalness,
             color_idx,
             normal_idx,
             metal_roughness_idx,
             emissive_idx,
             pad0: 0,
-            pad1: 0,
-            pad2: 0
+            pad1: 0
         }
     }
 }
@@ -1388,6 +1389,7 @@ impl Renderer {
                 pipeline,
                 base_color: prim.material.base_color,
                 base_roughness: prim.material.base_roughness,
+                base_metalness: prim.material.base_metalness,
                 color_idx: inds[0],
                 normal_idx: inds[1],
                 metal_roughness_idx: inds[2],
@@ -1446,12 +1448,12 @@ impl Renderer {
         let mut primitive_keys = vec![];
         let mut tex_id_map = HashMap::new();
         for prim in &data.primitives {
-            let material = &data.materials[prim.material_idx as usize];
+            let ozy_material = &data.materials[prim.material_idx as usize];
             let prim_tex_indices = [
-                material.color_bc7_idx,
-                material.normal_bc7_idx,
-                material.arm_bc7_idx,
-                material.emissive_bc7_idx
+                ozy_material.color_bc7_idx,
+                ozy_material.normal_bc7_idx,
+                ozy_material.arm_bc7_idx,
+                ozy_material.emissive_bc7_idx
             ];
             let mut inds = [None; 4];
             for i in 0..prim_tex_indices.len() {
@@ -1463,8 +1465,9 @@ impl Renderer {
 
             let material = Material {
                 pipeline,
-                base_color: material.base_color,
-                base_roughness: material.base_roughness,
+                base_color: ozy_material.base_color,
+                base_roughness: ozy_material.base_roughness,
+                base_metalness: ozy_material.base_metalness,
                 color_idx: inds[0],
                 normal_idx: inds[1],
                 metal_roughness_idx: inds[2],

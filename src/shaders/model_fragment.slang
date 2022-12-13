@@ -27,6 +27,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     if (color_sample.a < 0.1)
         discard;
 
+    //Ambient Occlusion in R, Roughness in G, Metalness in B
     float4 metal_roughness_sample = global_textures[my_mat.metal_roughness_index].Sample(input.uv);
     float sampled_ao = metal_roughness_sample.r;
     float sampled_roughness = metal_roughness_sample.g;
@@ -47,6 +48,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3 sampled_normal = 2.0 * global_textures[my_mat.normal_map_index].Sample(input.uv).xyz - 1.0;
     // float roughness = toksvigs_method(sampled_normal, my_mat.base_roughness * sampled_roughness);
     float roughness = my_mat.base_roughness * sampled_roughness;
+    float metalness = my_mat.base_metalness * sampled_metalness;
 
     PBRSurface params;
     params.albedo = color_sample.rgb;
@@ -54,7 +56,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.geometry_normal = normal;
     params.view = view;
     params.roughness = roughness;
-    params.metalness = sampled_metalness;
+    params.metalness = metalness;
 
     DirectionalLight sunlight = {
         uniforms.sun_direction.xyz,

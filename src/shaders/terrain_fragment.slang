@@ -31,7 +31,7 @@ MaterialInfo info_from_material(Material mat, float2 uvs) {
 
     // out.roughness = toksvigs_method(n_sample, mat.base_roughness * metal_roughness_sample.g);
     out.roughness = mat.base_roughness * metal_roughness_sample.g;
-    out.metalness = metal_roughness_sample.b;
+    out.metalness = mat.base_metalness * metal_roughness_sample.b;
     out.ao = metal_roughness_sample.r;
 
     return out;

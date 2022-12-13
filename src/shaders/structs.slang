@@ -86,11 +86,11 @@ struct FrameUniforms {
 struct Material {
     float4 base_color;
     float base_roughness;
+    float base_metalness;
     uint color_map_index;
     uint normal_map_index;
     uint metal_roughness_index;
     uint emissive_index;
     uint pad0;
     uint pad1;
-    uint pad2;
 };

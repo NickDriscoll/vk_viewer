@@ -560,6 +560,7 @@ pub enum GLTFImageType {
 pub struct GLTFMaterial {
     pub base_color: [f32; 4],
     pub base_roughness: f32,
+    pub base_metalness: f32,
     pub emissive_factor: [f32; 3],
     pub color_index: Option<usize>,
     pub color_imagetype: GLTFImageType,
@@ -824,6 +825,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
                     base_color: pbr.base_color_factor(),
                     emissive_factor: mat.emissive_factor(),
                     base_roughness: pbr.roughness_factor(),
+                    base_metalness: pbr.metallic_factor(),
                     color_bc7_idx,
                     normal_bc7_idx,
                     arm_bc7_idx,
@@ -862,6 +864,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
         output_file.write(slice_to_bytes(&material.base_color)).unwrap();
         output_file.write(slice_to_bytes(&material.emissive_factor)).unwrap();
         output_file.write(&material.base_roughness.to_le_bytes()).unwrap();
+        output_file.write(&material.base_metalness.to_le_bytes()).unwrap();
         output_file.write(&material.color_bc7_idx.unwrap_or(0xFFFFFFFF).to_le_bytes()).unwrap();
         output_file.write(&material.normal_bc7_idx.unwrap_or(0xFFFFFFFF).to_le_bytes()).unwrap();
         output_file.write(&material.arm_bc7_idx.unwrap_or(0xFFFFFFFF).to_le_bytes()).unwrap();
@@ -1012,6 +1015,7 @@ fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, out_primitive_array: &mut Vec<G
         let mat = GLTFMaterial {
             base_color: pbr_model.base_color_factor(),
             base_roughness: pbr_model.roughness_factor(),
+            base_metalness: pbr_model.metallic_factor(),
             emissive_factor,
             color_index,
             color_imagetype: GLTFImageType::PNG,
