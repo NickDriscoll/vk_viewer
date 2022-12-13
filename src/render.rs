@@ -1093,7 +1093,7 @@ impl Renderer {
         let format = vk::Format::R8G8B8A8_UNORM;
         let layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
         let default_color_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
-        let default_metalrough_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0x00, 0xFF])) as u32};
+        let default_metalrough_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
         let default_emissive_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x00, 0x00, 0x00, 0xFF])) as u32};
         let default_normal_idx = unsafe { global_images.insert(vkutil::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
