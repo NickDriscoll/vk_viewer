@@ -3,7 +3,7 @@ use imgui::{DrawCmd, Ui, TreeNodeId};
 use ozy::io::OzyMesh;
 use crate::render::{Renderer};
 use crate::structs::{TerrainSpec, EntityKey};
-use crate::vkutil::*;
+use render::vkdevice::*;
 use crate::*;
 
 pub enum AssetWindowResponse {

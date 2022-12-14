@@ -4,6 +4,7 @@ use ozy::io;
 use ozy::io::{OzyMaterial, OzyPrimitive, OzyMesh, OzyImage};
 use ozy::render::PositionNormalTangentUvPrimitive;
 use std::ptr;
+use render::vkdevice::*;
 use crate::*;
 
 use crate::routines::*;
@@ -59,8 +60,8 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_
     staging_buffer.write_buffer(vk, &raw_bytes);
 
     //Create image
-    let image = vk.device.create_image(image_create_info, vkutil::MEMORY_ALLOCATOR).unwrap();
-    let allocation = vkutil::allocate_image_memory(vk, image);
+    let image = vk.device.create_image(image_create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+    let allocation = vkdevice::allocate_image_memory(vk, image);
     let vim = GPUImage {
         image,
         view: None,
@@ -73,7 +74,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_
         allocation
     };
 
-    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
     let command_buffer_idx = vk.command_buffer_indices.insert(0);
 
     let command_buffer = vk.command_buffers[command_buffer_idx];
@@ -404,7 +405,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
     
     unsafe {
         let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        let sampler = vk.device.create_sampler(&vk::SamplerCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+        let sampler = vk.device.create_sampler(&vk::SamplerCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
         let def_image = upload_image_deferred(vk, &image_create_info, sampler, gpu_image_layout, &bytes);
         let mut def_images = DeferredImage::synchronize(vk, vec![def_image]);
         let finished_image_reqs = vk.device.get_image_memory_requirements(def_images[0].final_image.image);
@@ -448,14 +449,14 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
             ..Default::default()
         };
         let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-        let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap();
+        let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
         vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
         vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
         for im in def_images.drain(0..def_images.len()) {
             im.final_image.free(vk);
         }
         vk.command_buffer_indices.remove(cb_idx);
-        vk.device.destroy_sampler(sampler, vkutil::MEMORY_ALLOCATOR);
+        vk.device.destroy_sampler(sampler, vkdevice::MEMORY_ALLOCATOR);
 
         let uncompressed_bytes = readback_buffer.read_buffer_bytes();
         readback_buffer.free(vk);

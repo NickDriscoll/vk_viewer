@@ -31,15 +31,15 @@ fn main() {
     }
 
     //HLSL shader compilation
-    let out = Command::new("dxc").args([
-            "-Fo", &format!("{}/shadow_vert.spv", SHADER_OUTPUT_DIR),
-            "-E", "main",
-            "-T", "vs_6_6",
-            "-spirv", &format!("{}/shadow_vertex.hlsl", SHADER_SRC_DIR)
-        ]
-    ).output().unwrap();
-    let out = unsafe { format!("{}\n{}\n", String::from_utf8_unchecked(out.stdout), String::from_utf8_unchecked(out.stderr)) };
-    write!(build_log, "{}\n", out).unwrap();
+    // let out = Command::new("dxc").args([
+    //         "-Fo", &format!("{}/shadow_vert.spv", SHADER_OUTPUT_DIR),
+    //         "-E", "main",
+    //         "-T", "vs_6_6",
+    //         "-spirv", &format!("{}/shadow_vertex.hlsl", SHADER_SRC_DIR)
+    //     ]
+    // ).output().unwrap();
+    // let out = unsafe { format!("{}\n{}\n", String::from_utf8_unchecked(out.stdout), String::from_utf8_unchecked(out.stderr)) };
+    // write!(build_log, "{}\n", out).unwrap();
 
     //Slang shader compilation
     let slang_shaders = [
@@ -50,6 +50,7 @@ fn main() {
         ["fragment", "terrain_fragment.slang", "terrain.spv"],
         ["vertex", "imgui.slang", "imgui_vert.spv"],
         ["fragment", "imgui.slang", "imgui_frag.spv"],
+        ["vertex", "shadow.slang", "shadow_vert.spv"],
         ["fragment", "shadow.slang", "shadow_frag.spv"],
         ["vertex", "postfx.slang", "postfx_vert.spv"],
         ["fragment", "postfx.slang", "postfx_frag.spv"],

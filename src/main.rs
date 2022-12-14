@@ -10,12 +10,12 @@ mod asset;
 mod gui;
 mod input;
 mod physics;
-mod render;
 mod routines;
 mod structs;
 
 #[macro_use]
-mod vkutil;
+mod render;
+//mod vkdevice;
 
 use ::function_name::named;
 use ash::vk::{self, BufferImageCopy};
@@ -43,9 +43,9 @@ use std::time::SystemTime;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
-use vkutil::{FreeList, GPUBuffer, GPUImage, VulkanGraphicsDevice, DeferredImage};
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp, SimulationSOA};
+use render::vkdevice;
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, Model};
 
 use crate::routines::*;
@@ -77,7 +77,7 @@ fn main() {
     }
 
     //Initialize the Vulkan API
-    let mut vk = vkutil::VulkanGraphicsDevice::init();
+    let mut vk = vkdevice::VulkanGraphicsDevice::init();
 
     //Initialize the physics engine
     let mut physics_engine = PhysicsEngine::new();
@@ -125,7 +125,7 @@ fn main() {
             p_subpasses: &subpass,
             ..Default::default()
         };
-        vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let hdr_forward_pass = unsafe {
@@ -178,7 +178,7 @@ fn main() {
             p_subpasses: &subpass,
             ..Default::default()
         };
-        vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let swapchain_pass = unsafe {
@@ -214,7 +214,7 @@ fn main() {
             p_subpasses: &subpass,
             ..Default::default()
         };
-        vk.device.create_render_pass(&renderpass_info, vkutil::MEMORY_ALLOCATOR).unwrap()
+        vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     //Initialize the renderer
@@ -226,7 +226,7 @@ fn main() {
             let atlas_texture = atlas.build_alpha8_texture();
             let atlas_format = vk::Format::R8_UNORM;
             let atlas_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-            let gpu_image = vkutil::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
+            let gpu_image = vkdevice::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
             let index = renderer.global_images.insert(gpu_image);
             renderer.default_texture_idx = index as u32;
             
@@ -254,7 +254,7 @@ fn main() {
             ..Default::default()
         };
         
-        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap()
+        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let compute_pipeline_layout = unsafe {
@@ -271,7 +271,7 @@ fn main() {
             ..Default::default()
         };
      
-        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkutil::MEMORY_ALLOCATOR).unwrap()
+        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let sun_shadow_map = CascadedShadowMap::new(
@@ -297,49 +297,49 @@ fn main() {
     let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline, postfx_pipeline] = unsafe {
         //Load shaders
         let main_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/pbr_metallic_roughness.spv");
+            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
+            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/pbr_metallic_roughness.spv");
             vec![v, f]
         };
         
         let terrain_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/terrain.spv");
+            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
+            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/terrain.spv");
             vec![v, f]
         };
         
         let atm_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/atmosphere_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/atmosphere_frag.spv");
+            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/atmosphere_vert.spv");
+            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/atmosphere_frag.spv");
             vec![v, f]
         };
 
         let s_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/shadow_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/shadow_frag.spv");
+            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/shadow_vert.spv");
+            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/shadow_frag.spv");
             vec![v, f]
         };
 
         let postfx_shader_stages = {
-            let v = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/postfx_vert.spv");
-            let f = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/postfx_frag.spv");
+            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/postfx_vert.spv");
+            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/postfx_frag.spv");
             vec![v, f]
         };
 
-        let main_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
+        let main_info = vkdevice::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                         .set_shader_stages(main_shader_stages).build_info();
-        let terrain_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
+        let terrain_info = vkdevice::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(terrain_shader_stages).build_info();
-        let atm_info = vkutil::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
+        let atm_info = vkdevice::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
-        let shadow_info = vkutil::GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
+        let shadow_info = vkdevice::GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
                             .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
-        let postfx_info = vkutil::GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
+        let postfx_info = vkdevice::GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
                             .set_shader_stages(postfx_shader_stages).build_info();
                             
     
         let infos = [main_info, terrain_info, atm_info, shadow_info, postfx_info];
-        let pipelines = vkutil::GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
+        let pipelines = vkdevice::GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
 
         [
             pipelines[0],
@@ -352,13 +352,13 @@ fn main() {
 
     //Create compute pipelines
     let lum_binning_pipeline = unsafe {
-        let stage = vkutil::load_shader_stage(&vk.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/lum_binning.spv");
+        let stage = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/lum_binning.spv");
         let create_info = vk::ComputePipelineCreateInfo {
             stage,
             layout: graphics_pipeline_layout,
             ..Default::default()
         };
-        vk.device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], vkutil::MEMORY_ALLOCATOR).unwrap()[0]
+        vk.device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], vkdevice::MEMORY_ALLOCATOR).unwrap()[0]
     };
 
     let mut simulation_state = SimulationSOA::new();
@@ -396,7 +396,7 @@ fn main() {
         if !pathp.with_extension("dds").is_file() {
             asset::compress_png_file_synchronous(&mut vk, path);
         }
-        terrain_image_indices[i] = Some(vkutil::load_bc7_texture(&mut vk, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap()));
+        terrain_image_indices[i] = Some(vkdevice::load_bc7_texture(&mut vk, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap()));
     }
     let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
 
@@ -476,7 +476,7 @@ fn main() {
     let mut focused_entity = None;
 
     //Create semaphore used to wait on swapchain image
-    let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkutil::MEMORY_ALLOCATOR).unwrap() };
+    let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
@@ -571,12 +571,12 @@ fn main() {
 
                 //Free the now-invalid swapchain data
                 for framebuffer in renderer.window_manager.swapchain_framebuffers {
-                    vk.device.destroy_framebuffer(framebuffer, vkutil::MEMORY_ALLOCATOR);
+                    vk.device.destroy_framebuffer(framebuffer, vkdevice::MEMORY_ALLOCATOR);
                 }
                 for view in renderer.window_manager.swapchain_image_views {
-                    vk.device.destroy_image_view(view, vkutil::MEMORY_ALLOCATOR);
+                    vk.device.destroy_image_view(view, vkdevice::MEMORY_ALLOCATOR);
                 }
-                vk.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain, vkutil::MEMORY_ALLOCATOR);
+                vk.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain, vkdevice::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
                 renderer.window_manager = render::WindowManager::init(&mut vk, &window, swapchain_pass);
@@ -914,7 +914,7 @@ fn main() {
                     }
                 };
                 vk.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[render_area]);
-                let clear_values = [vkutil::DEPTH_STENCIL_CLEAR];
+                let clear_values = [vkdevice::DEPTH_STENCIL_CLEAR];
                 let rp_begin_info = vk::RenderPassBeginInfo {
                     render_pass: shadow_pass,
                     framebuffer: sun_shadow_map.framebuffer(),
@@ -989,7 +989,7 @@ fn main() {
             };
             vk.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[scissor_area]);
 
-            let vk_clear_values = [vkutil::COLOR_CLEAR, vkutil::DEPTH_STENCIL_CLEAR];
+            let vk_clear_values = [vkdevice::COLOR_CLEAR, vkdevice::DEPTH_STENCIL_CLEAR];
 
             //HDR render pass recording
             let rp_begin_info = vk::RenderPassBeginInfo {

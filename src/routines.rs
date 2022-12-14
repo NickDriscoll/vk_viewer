@@ -1,7 +1,7 @@
 use ozy::render::PositionNormalTangentUvPrimitive;
 use ozy::structs::UninterleavedVertexArrays;
-use crate::render::{Model, PrimitiveKey};
-use crate::vkutil::{DeferredImage, VertexFetchOffsets};
+use render::{Model, PrimitiveKey};
+use render::vkdevice::*;
 use crate::*;
 
 //Converts any data structure to a slice of bytes
