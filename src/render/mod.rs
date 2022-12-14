@@ -1,8 +1,9 @@
+#![allow(unused)]
+
 use core::slice::Iter;
-use std::cmp::Ordering;
 use std::{convert::TryInto, ffi::c_void, hash::{Hash, Hasher}, collections::hash_map::DefaultHasher};
 use ozy::io::OzyMesh;
-use slotmap::{SlotMap, new_key_type};
+use slotmap::SlotMap;
 use crate::*;
 pub use structs::*;
 use vkdevice::*;

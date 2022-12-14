@@ -1,7 +1,7 @@
 use ozy::structs::UninterleavedVertexArrays;
 use slotmap::new_key_type;
 
-use crate::{*, render::{Model, ModelKey}};
+use crate::{*, render::{ModelKey}};
 
 pub struct Camera {
     pub position: glm::TVec3<f32>,
@@ -21,6 +21,12 @@ impl Camera {
         glm::rotation(self.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
         glm::rotation(self.orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
         glm::translation(&-self.position)
+    }
+
+    pub fn look_direction(&self) -> glm::TVec3<f32> {
+        let view_mat = self.make_view_matrix();
+        let dir = glm::vec3(0.0, 0.0, -1.0);
+        glm::vec4_to_vec3(&(glm::affine_inverse(view_mat) * glm::vec3_to_vec4(&dir)))
     }
 }
 

@@ -129,9 +129,9 @@ float3 sample_sky_stars(FrameUniforms uniforms, float3 view_direction) {
     return stars_color;
 }
 
-float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D sun_zenith, Sampler2D view_zenith, Sampler2D sun_view) {
-    float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
-    float sunview_dot = dot(uniforms.sun_direction.xyz, view_direction) * 0.5 + 0.5;
+float3 sample_fake_sky(float3 sun_direction, float3 view_direction, Sampler2D sun_zenith, Sampler2D view_zenith, Sampler2D sun_view) {
+    float sunzenith_dot = sun_direction.z * 0.5 + 0.5;
+    float sunview_dot = dot(sun_direction.xyz, view_direction) * 0.5 + 0.5;
     float viewzenith_dot = view_direction.z * 0.5 + 0.5;
 
     float3 base_color = sun_zenith.Sample(float2(sunzenith_dot, 0.5)).rgb;
@@ -142,7 +142,7 @@ float3 sample_fake_sky(FrameUniforms uniforms, float3 view_direction, Sampler2D 
     float3 sunview_color = sun_view.Sample(float2(sunzenith_dot, 0.5)).rgb;
     sunview_color *= pow(sunview_dot, 6.0);
 
-    float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
+    float nighttime_factor = smoothstep(-0.1, 0.1, sun_direction.z);
     float3 final_color = base_color + viewzenith_color + sunview_color;
 
     final_color += nighttime_factor * smoothstep(lerp(1.0, 0.99, 0.25), 1.0, sunview_dot);
@@ -366,7 +366,7 @@ bool get_sun_light(
     return true;
 }
 
-float3 get_incident_light(ray_t ray, float3 sun_dir, float sun_power) {
+float3 get_incident_light(ray_t ray, float3 sun_dir, float3 sun_irradiance) {
     const int num_samples = 16;
 
     // "pierce" the atmosphere with the viewing ray
@@ -432,7 +432,7 @@ float3 get_incident_light(ray_t ray, float3 sun_dir, float sun_power) {
         march_pos += march_step;
     }
 
-    return sun_power * (sumR * phaseR * betaR + sumM * phaseM * betaM);
+    return sun_irradiance * (sumR * phaseR * betaR + sumM * phaseM * betaM);
 }
 
 void compute_sun_color(FrameUniforms uniforms, Sampler2D sun_zenith, Sampler2D view_zenith) {

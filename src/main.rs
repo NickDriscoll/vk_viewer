@@ -15,11 +15,9 @@ mod structs;
 
 #[macro_use]
 mod render;
-//mod vkdevice;
 
 use ::function_name::named;
-use ash::vk::{self, BufferImageCopy};
-use asset::GLTFPrimitive;
+use ash::vk::{self};
 use gpu_allocator::MemoryLocation;
 use gui::AssetWindowResponse;
 use imgui::{FontAtlasRefMut, SliderFlags};
@@ -46,7 +44,7 @@ use input::UserInput;
 use physics::PhysicsEngine;
 use structs::{Camera, TerrainSpec, PhysicsProp, SimulationSOA};
 use render::vkdevice;
-use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, Model};
+use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
 
 use crate::routines::*;
 use crate::asset::GLTFMeshData;
@@ -295,6 +293,8 @@ fn main() {
 
     //Create graphics pipelines
     let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline, postfx_pipeline] = unsafe {
+        use render::GraphicsPipelineBuilder;
+
         //Load shaders
         let main_shader_stages = {
             let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
@@ -326,20 +326,20 @@ fn main() {
             vec![v, f]
         };
 
-        let main_info = vkdevice::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
+        let main_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                         .set_shader_stages(main_shader_stages).build_info();
-        let terrain_info = vkdevice::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
+        let terrain_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(terrain_shader_stages).build_info();
-        let atm_info = vkdevice::GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
+        let atm_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
-        let shadow_info = vkdevice::GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
+        let shadow_info = GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
                             .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
-        let postfx_info = vkdevice::GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
+        let postfx_info = GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
                             .set_shader_stages(postfx_shader_stages).build_info();
                             
     
         let infos = [main_info, terrain_info, atm_info, shadow_info, postfx_info];
-        let pipelines = vkdevice::GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
+        let pipelines = GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
 
         [
             pipelines[0],
@@ -412,7 +412,7 @@ fn main() {
             emissive_idx: None
         }
     ) as u32;
-    let terrain_rock_matidx = renderer.global_materials.insert(
+    let _terrain_rock_matidx = renderer.global_materials.insert(
         Material {
             pipeline: terrain_pipeline,
             base_color:  [1.0; 4],
@@ -542,9 +542,7 @@ fn main() {
         }
 
         if input_output.spawn_totoro_prop {
-            let view_mat = camera.make_view_matrix();
-            let dir = glm::vec3(0.0, 0.0, -1.0);
-            let shoot_dir = glm::vec4_to_vec3(&(glm::affine_inverse(view_mat) * glm::vec3_to_vec4(&dir)));
+            let shoot_dir = camera.look_direction();
             let init_pos = camera.position + 5.0 * shoot_dir;
             let totoro_prop = {
                 let rigid_body = RigidBodyBuilder::dynamic()
@@ -631,7 +629,7 @@ fn main() {
                         if imgui::MenuItem::new("New").build(&imgui_ui) {}
                         if imgui::MenuItem::new("Load").build(&imgui_ui) {}
                         if imgui::MenuItem::new("Save As...").build(&imgui_ui) {
-                            if let Some(path) = tfd::save_file_dialog("Save As...", "./data/scenes") {
+                            if let Some(_path) = tfd::save_file_dialog("Save As...", "./data/scenes") {
                                 
                             }
                         }
@@ -688,7 +686,8 @@ fn main() {
                         totoro_list.delete(i);
                     }
                 }
-
+                
+                #[cfg(target_os = "windows")]
                 if DevGui::do_standard_button(&imgui_ui, "Just crash my whole PC why don't ya") {
                     if let tfd::YesNo::Yes = tfd::message_box_yes_no("Dude...", "Are you really sure you want to do this? Make sure all the work you have open on your PC has been saved", tfd::MessageBoxIcon::Warning, tfd::YesNo::No) {
                         bsod::bsod();
@@ -734,10 +733,11 @@ fn main() {
             EntityWindowResponse::LoadOzyMesh(path) => {
                 let mesh_data = OzyMesh::from_file(&path);
                 let model = renderer.upload_ozymesh(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
+                let spawn_point = camera.position + camera.look_direction() * 5.0;
                 let s = Entity {
                     name: mesh_data.name,
                     model,
-                    position: camera.position,
+                    position: spawn_point,
                     pitch: 0.0,
                     yaw: 0.0,
                     roll: 0.0,

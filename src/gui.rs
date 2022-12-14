@@ -1,6 +1,5 @@
 use ash::vk;
 use imgui::{DrawCmd, Ui, TreeNodeId};
-use ozy::io::OzyMesh;
 use crate::render::{Renderer};
 use crate::structs::{TerrainSpec, EntityKey};
 use render::vkdevice::*;
@@ -40,6 +39,8 @@ impl DevGui {
     pub fn do_standard_button<S: AsRef<str>>(ui: &Ui, label: S) -> bool { ui.button_with_size(label, [0.0, 32.0]) }
 
     pub fn new(vk: &mut VulkanGraphicsDevice, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
+        use render::GraphicsPipelineBuilder;
+
         let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
         for _ in 0..Self::FRAMES_IN_FLIGHT {
             frames.push(DevGuiFrame::default());

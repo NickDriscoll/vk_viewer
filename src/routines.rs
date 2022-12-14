@@ -1,6 +1,6 @@
 use ozy::render::PositionNormalTangentUvPrimitive;
 use ozy::structs::UninterleavedVertexArrays;
-use render::{Model, PrimitiveKey};
+use render::{PrimitiveKey};
 use render::vkdevice::*;
 use crate::*;
 

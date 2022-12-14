@@ -1,7 +1,6 @@
 use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
-use ozy::io;
-use ozy::io::{OzyMaterial, OzyPrimitive, OzyMesh, OzyImage};
+use ozy::io::{OzyMaterial, OzyPrimitive, OzyImage};
 use ozy::render::PositionNormalTangentUvPrimitive;
 use std::ptr;
 use render::vkdevice::*;
@@ -374,7 +373,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
     let info = read_info.info();
     let width = info.width;
     let height = info.height;
-    let rgb_bitcount = info.bit_depth as u32;
+    //let rgb_bitcount = info.bit_depth as u32;
     let uncompressed_format = match info.srgb {
         Some(_) => { vk::Format::R8G8B8A8_SRGB }
         None => { vk::Format::R8G8B8A8_UNORM }
@@ -553,8 +552,7 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanGraphicsDevice, path: &str) 
 
 #[derive(Debug)]
 pub enum GLTFImageType {
-    PNG,
-    JPG
+    PNG
 }
 
 #[derive(Debug)]
@@ -643,14 +641,15 @@ fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic
     };
     let view = acc.view().unwrap();
 
-    let byte_stride = match view.stride() {
-        Some(s) => { s }
-        None => { 0 }
-    };
-
     #[cfg(debug_assertions)]
-    if byte_stride != 0 {
-        crash_with_error_dialog("You are trying to load a glTF whose vertex attributes are not tightly packed, violating the assumptions of the loader");
+    {
+        let byte_stride = match view.stride() {
+            Some(s) => { s }
+            None => { 0 }
+        };
+        if byte_stride != 0 {
+            crash_with_error_dialog("You are trying to load a glTF whose vertex attributes are not tightly packed, violating the assumptions of the loader");
+        }
     }
 
     unsafe {
@@ -1040,7 +1039,7 @@ fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, out_primitive_array: &mut Vec<G
 }
 
 #[named]
-pub fn gltf_scenedata(path: &str) -> GLTFSceneData {
+pub fn _gltf_scenedata(path: &str) -> GLTFSceneData {
     let glb = Gltf::open(path).unwrap();
 
     //We only load glb's that have one scene
