@@ -16,6 +16,7 @@ Todo:
     Add render pass abstraction
     Add ability to mix and match mesh materials
     Irradiance maps
+    Change shadow map data such as cascade distances to be data-driven
     
 Shader issues:
     Redundancy wrt model_fragment and terrain_fragment
