@@ -168,6 +168,28 @@ pub struct GPUImage {
 }
 
 impl GPUImage {
+    pub fn allocate(vk: &mut VulkanGraphicsDevice, create_info: &vk::ImageCreateInfo, sampler: vk::Sampler) -> Self {
+        unsafe {
+            let image = vk.device.create_image(&create_info, MEMORY_ALLOCATOR).unwrap();
+            let allocation = allocate_image_memory(vk, image);
+            let width = create_info.extent.width;
+            let height = create_info.extent.height;
+            let mip_count = ozy::routines::calculate_mipcount(width, height);
+
+            GPUImage {
+                image,
+                view: None,
+                width,
+                height,
+                mip_count,
+                format: create_info.format,
+                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                sampler,
+                allocation
+            }
+        }
+    }
+
     pub fn free(self, vk: &mut VulkanGraphicsDevice) {
         vk.allocator.free(self.allocation).unwrap();
         unsafe {

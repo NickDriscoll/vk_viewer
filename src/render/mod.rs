@@ -262,7 +262,10 @@ pub struct Renderer {
 
     pub window_manager: WindowManager,
     
+    //Light data
     pub main_sun: Option<SunLight>,
+    pub irradiance_map_idx: u32,
+
     pub uniform_data: EnvironmentUniforms,
 
     //Various GPU allocated buffers
@@ -604,7 +607,7 @@ impl Renderer {
         };
 
         //Create texture samplers
-        let (material_sampler, point_sampler, shadow_sampler) = unsafe {
+        let (material_sampler, point_sampler, shadow_sampler, cubemap_sampler) = unsafe {
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::LINEAR,
                 mag_filter: vk::Filter::LINEAR,
@@ -650,8 +653,27 @@ impl Renderer {
                 ..Default::default()
             };
             let shadow = vk.device.create_sampler(&sampler_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-            
-            (mat, font, shadow)
+
+            let sampler_info = vk::SamplerCreateInfo {
+                min_filter: vk::Filter::LINEAR,
+                mag_filter: vk::Filter::LINEAR,
+                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                address_mode_u: vk::SamplerAddressMode::REPEAT,
+                address_mode_v: vk::SamplerAddressMode::REPEAT,
+                address_mode_w: vk::SamplerAddressMode::REPEAT,
+                mip_lod_bias: 0.0,
+                anisotropy_enable: vk::TRUE,
+                max_anisotropy: 16.0,
+                compare_enable: vk::FALSE,
+                min_lod: 0.0,
+                max_lod: vk::LOD_CLAMP_NONE,
+                border_color: vk::BorderColor::FLOAT_OPAQUE_BLACK,
+                unnormalized_coordinates: vk::FALSE,
+                ..Default::default()
+            };
+            let cubemap = vk.device.create_sampler(&sampler_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+
+            (mat, font, shadow, cubemap)
         };
 
         let format = vk::Format::R8G8B8A8_UNORM;
@@ -729,6 +751,44 @@ impl Renderer {
             command_buffers
         };
 
+        let irradiance_map_info = vk::ImageCreateInfo {
+            flags: vk::ImageCreateFlags::CUBE_COMPATIBLE,
+            image_type: vk::ImageType::TYPE_2D,
+            format: vk::Format::R16G16B16A16_SFLOAT,
+            extent: vk::Extent3D {
+                width: 512,
+                height: 512,
+                depth: 1
+            },
+            mip_levels: ozy::routines::calculate_mipcount(512, 512),
+            array_layers: 6,
+            samples: vk::SampleCountFlags::TYPE_1,
+            tiling: vk::ImageTiling::OPTIMAL,
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            queue_family_index_count: 1,
+            p_queue_family_indices: &vk.queue_family_index,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            ..Default::default()
+        };
+        let mut irradiance_image = GPUImage::allocate(vk, &irradiance_map_info, cubemap_sampler);
+        let irradiance_view_info = vk::ImageViewCreateInfo {
+            image: irradiance_image.image,
+            view_type: vk::ImageViewType::CUBE,
+            format: vk::Format::R16G16B16A16_SFLOAT,
+            components: vkdevice::COMPONENT_MAPPING_DEFAULT,
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 6
+            },
+            ..Default::default()
+        };
+        irradiance_image.view = unsafe { Some(vk.device.create_image_view(&irradiance_view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()) };
+        let irradiance_map_idx = global_images.insert(irradiance_image) as u32;
+
         Renderer {
             default_color_idx,
             default_normal_idx,
@@ -766,6 +826,7 @@ impl Renderer {
             compute_buffer,
             samplers_descriptor_index,
             main_sun: None,
+            irradiance_map_idx,
             frames_in_flight: in_flight_frame_data,
             in_flight_frame: 0
         }

@@ -126,6 +126,52 @@ fn main() {
         vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
+    let probe_pass = unsafe {
+        let depth_description = vk::AttachmentDescription {
+            format: vk::Format::R16G16B16A16_SFLOAT,
+            samples: vk::SampleCountFlags::TYPE_1,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::STORE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ..Default::default()
+        };
+
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        };
+
+        let subpass = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+            color_attachment_count: 0,
+            p_color_attachments: ptr::null(),
+            p_depth_stencil_attachment: &depth_attachment_reference,
+            ..Default::default()
+        };
+
+        //Multiview info
+        let mask = (1 << CascadedShadowMap::CASCADE_COUNT) - 1;
+        let multiview_info = vk::RenderPassMultiviewCreateInfo {
+            subpass_count: 1,
+            p_view_masks: &mask,
+            correlation_mask_count: 1,
+            p_correlation_masks: &mask,
+            ..Default::default()
+        };
+
+        let attachments = [depth_description];
+        let renderpass_info = vk::RenderPassCreateInfo {
+            p_next: &multiview_info as *const _ as *const c_void,
+            attachment_count: attachments.len() as u32,
+            p_attachments: attachments.as_ptr(),
+            subpass_count: 1,
+            p_subpasses: &subpass,
+            ..Default::default()
+        };
+        vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+    };
+
     let hdr_forward_pass = unsafe {
         let color_attachment_description = vk::AttachmentDescription {
             format: vk::Format::R16G16B16A16_SFLOAT,
@@ -333,7 +379,7 @@ fn main() {
         let atm_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
         let shadow_info = GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
-                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
+                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::BACK).build_info();
         let postfx_info = GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
                             .set_shader_stages(postfx_shader_stages).build_info();
                             
