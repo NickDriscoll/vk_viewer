@@ -112,6 +112,10 @@ pub struct PhysicsProp {
     pub collider_handle: ColliderHandle
 }
 
+impl PhysicsProp {
+    
+}
+
 #[derive(Clone)]
 pub struct Entity {
     pub name: String,

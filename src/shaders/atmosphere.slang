@@ -85,6 +85,10 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
         );
     }
 
+    //float sunview_dot = dot(uniforms.sun_direction.xyz, normalize(input.view_direction));
+    //float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
+    //sky_sample += nighttime_factor * uniforms.sun_irradiance.rgb * smoothstep(lerp(1.0, 0.99, 0.25), 1.0, sunview_dot);
+
     float3 stars_color = sample_sky_stars(uniforms, view_direction);
     float3 final_color = sky_sample + stars_color;
 

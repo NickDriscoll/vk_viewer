@@ -137,21 +137,26 @@ fn main() {
             ..Default::default()
         };
 
-        let depth_attachment_reference = vk::AttachmentReference {
+        let color_attachment_reference = vk::AttachmentReference {
             attachment: 0,
-            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
         };
+
+        // let depth_attachment_reference = vk::AttachmentReference {
+        //     attachment: 0,
+        //     layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        // };
 
         let subpass = vk::SubpassDescription {
             pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-            color_attachment_count: 0,
-            p_color_attachments: ptr::null(),
-            p_depth_stencil_attachment: &depth_attachment_reference,
+            color_attachment_count: 1,
+            p_color_attachments: &color_attachment_reference,
+            //p_depth_stencil_attachment: &depth_attachment_reference,
             ..Default::default()
         };
 
         //Multiview info
-        let mask = (1 << CascadedShadowMap::CASCADE_COUNT) - 1;
+        let mask = (1 << 6) - 1;
         let multiview_info = vk::RenderPassMultiviewCreateInfo {
             subpass_count: 1,
             p_view_masks: &mask,

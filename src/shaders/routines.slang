@@ -142,10 +142,7 @@ float3 sample_fake_sky(float3 sun_direction, float3 view_direction, Sampler2D su
     float3 sunview_color = sun_view.Sample(float2(sunzenith_dot, 0.5)).rgb;
     sunview_color *= pow(sunview_dot, 6.0);
 
-    float nighttime_factor = smoothstep(-0.1, 0.1, sun_direction.z);
     float3 final_color = base_color + viewzenith_color + sunview_color;
-
-    final_color += nighttime_factor * smoothstep(lerp(1.0, 0.99, 0.25), 1.0, sunview_dot);
 
     return final_color;
 }
