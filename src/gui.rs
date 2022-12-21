@@ -107,7 +107,7 @@ impl DevGui {
         response
     }
 
-    pub fn do_entity_window(&mut self, ui: &Ui, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>) -> EntityWindowResponse {
+    pub fn do_entity_window(&mut self, ui: &Ui, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>, rigid_body_set: &mut RigidBodySet) -> EntityWindowResponse {
         let mut out = EntityWindowResponse::None;
         if !self.do_props_window { return out; }
         let mut interacted = false;
@@ -120,13 +120,23 @@ impl DevGui {
                 let prop = prop.1;
 
                 if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push(ui) {
-                    interacted |= imgui::Drag::new("X").speed(0.1).build(ui, &mut prop.position.x);
-                    interacted |= imgui::Drag::new("Y").speed(0.1).build(ui, &mut prop.position.y);
-                    interacted |= imgui::Drag::new("Z").speed(0.1).build(ui, &mut prop.position.z);
-                    interacted |= imgui::Drag::new("Pitch").speed(0.05).build(ui, &mut prop.pitch);
-                    interacted |= imgui::Drag::new("Yaw").speed(0.05).build(ui, &mut prop.yaw);
-                    interacted |= imgui::Drag::new("Roll").speed(0.05).build(ui, &mut prop.roll);
-                    interacted |= imgui::Drag::new("Scale").speed(0.05).build(ui, &mut prop.scale);
+                    if let Some(body) = rigid_body_set.get_mut(prop.physics_component.rigid_body_handle) {
+                        let mut pos = body.position().clone();
+                        let rot = body.rotation();
+                        let mut angles = quaternion_to_euler(&rot);
+
+                        interacted |= imgui::Drag::new("X").speed(0.1).build(ui, &mut pos.translation.x);
+                        interacted |= imgui::Drag::new("Y").speed(0.1).build(ui, &mut pos.translation.y);
+                        interacted |= imgui::Drag::new("Z").speed(0.1).build(ui, &mut pos.translation.z);   
+                        interacted |= imgui::Drag::new("Pitch").speed(0.05).build(ui, &mut angles[0]);
+                        interacted |= imgui::Drag::new("Yaw").speed(0.05).build(ui, &mut angles[2]);
+                        interacted |= imgui::Drag::new("Roll").speed(0.05).build(ui, &mut angles[1]);                        
+                        interacted |= imgui::Drag::new("Scale").speed(0.05).build(ui, &mut prop.physics_component.scale);
+
+                        body.set_position(pos, true);
+                        body.set_rotation(angles, true);
+                    }
+
 
                     let mut b = false;
                     if let Some(key) = focused_entity {
@@ -152,9 +162,14 @@ impl DevGui {
             }
             ui.separator();
 
-            for mut add in add_list {
-                add.position += glm::vec3(5.0, 0.0, 0.0);
-                entities.insert(add);
+            for add in add_list {
+                if let Some(body) = rigid_body_set.get_mut(add.physics_component.rigid_body_handle) {
+                    let mut pos = body.position().clone();
+                    pos.translation.x += 5.0;
+
+                    body.set_position(pos, true);
+                    entities.insert(add);
+                }
             }
 
             if let Some(key) = deleted_item {

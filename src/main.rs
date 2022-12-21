@@ -493,7 +493,7 @@ fn main() {
         });
         let model_key = renderer.new_model(0, vec![prim_key]);
 
-        let e = Entity::new(String::from("main_terrain"), model_key);
+        let e = Entity::new(String::from("main_terrain"), model_key, &mut physics_engine);
         simulation_state.entities.insert(e)
     };
 
@@ -766,34 +766,21 @@ fn main() {
             AssetWindowResponse::None => {}
         }
 
-        match dev_gui.do_entity_window(&imgui_ui, &mut simulation_state.entities, focused_entity) {
+        match dev_gui.do_entity_window(&imgui_ui, &mut simulation_state.entities, focused_entity, &mut physics_engine.rigid_body_set) {
             EntityWindowResponse::LoadGLTF(path) => {
                 let mesh_data = asset::gltf_meshdata(&path);
                 let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
-                let s = Entity {
-                    name: mesh_data.name,
-                    model,
-                    position: camera.position,
-                    pitch: 0.0,
-                    yaw: 0.0,
-                    roll: 0.0,
-                    scale: 1.0
-                };
+                let spawn_point = camera.position + camera.look_direction() * 5.0;
+                let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
+                s.set_position(spawn_point, &mut physics_engine);
                 simulation_state.entities.insert(s);
             }
             EntityWindowResponse::LoadOzyMesh(path) => {
                 let mesh_data = OzyMesh::from_file(&path);
                 let model = renderer.upload_ozymesh(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
                 let spawn_point = camera.position + camera.look_direction() * 5.0;
-                let s = Entity {
-                    name: mesh_data.name,
-                    model,
-                    position: spawn_point,
-                    pitch: 0.0,
-                    yaw: 0.0,
-                    roll: 0.0,
-                    scale: 1.0
-                };
+                let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
+                s.set_position(spawn_point, &mut physics_engine);
                 simulation_state.entities.insert(s);
             }
             EntityWindowResponse::DeleteEntity(key) => {
@@ -870,8 +857,16 @@ fn main() {
                             let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(lookat_pos));                
                             lookat_pos = glm::vec4_to_vec3(&new_pos);
                         }
+
+                        let lookat_target = match physics_engine.rigid_body_set.get(prop.physics_component.rigid_body_handle) {
+                            Some(body) => {
+                                body.translation()
+                            }
+                            None => {
+                                crash_with_error_dialog("All entities should have a rigid body component");
+                            }
+                        };
             
-                        let lookat_target = prop.position;
                         let pos = lookat_pos + lookat_target;
                         let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
                         renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
@@ -908,12 +903,8 @@ fn main() {
 
         //Push drawcalls for entities
         for (_, entity) in simulation_state.entities.iter() {
-            let mm = glm::translation(&entity.position) *
-                     glm::rotation(entity.pitch, &glm::vec3(1.0, 0.0, 0.0)) *
-                     glm::rotation(entity.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-                     glm::rotation(entity.roll, &glm::vec3(0.0, 1.0, 0.0)) * 
-                     ozy::routines::uniform_scale(entity.scale);
-
+            let body = physics_engine.rigid_body_set.get(entity.physics_component.rigid_body_handle).expect("All entities should have a rigid body component.");
+            let mm = body.position().to_matrix() * ozy::routines::uniform_scale(entity.physics_component.scale);
             renderer.queue_drawcall(entity.model, vec![mm]);
         }
         

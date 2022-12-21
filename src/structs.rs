@@ -1,7 +1,7 @@
 use ozy::structs::UninterleavedVertexArrays;
 use slotmap::new_key_type;
 
-use crate::{*, render::{ModelKey}};
+use crate::{*, render::{ModelKey}, physics::PhysicsComponent};
 
 pub struct Camera {
     pub position: glm::TVec3<f32>,
@@ -112,32 +112,37 @@ pub struct PhysicsProp {
     pub collider_handle: ColliderHandle
 }
 
-impl PhysicsProp {
-    
-}
-
 #[derive(Clone)]
 pub struct Entity {
     pub name: String,
     pub model: ModelKey,
-    pub position: glm::TVec3<f32>,
-    pub pitch: f32,
-    pub yaw: f32,
-    pub roll: f32,
-    pub scale: f32
+    pub physics_component: PhysicsComponent
 }
 
 impl Entity {
-    pub fn new(name: String, model: ModelKey) -> Self {
+    pub fn new(name: String, model: ModelKey, physics_engine: &mut PhysicsEngine) -> Self {
+        let rigid_body = RigidBodyBuilder::dynamic().ccd_enabled(true).build();
+        let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
+        let physics_component = PhysicsComponent {
+            rigid_body_handle,
+            collider_handle: None,
+            scale: 1.0
+        };
         Entity {
             name,
             model,
-            position: glm::zero(),
-            pitch: 0.0,
-            yaw: 0.0,
-            roll: 0.0,
-            scale: 1.0
+            physics_component
         }
+    }
+
+    pub fn set_position(&mut self, pos: glm::TVec3<f32>, physics_engine: &mut PhysicsEngine) {
+        if let Some(body) = physics_engine.rigid_body_set.get_mut(self.physics_component.rigid_body_handle) {
+            body.set_translation(pos, true);
+        }
+    }
+
+    pub fn set_collider_component(&mut self, physics_engine: &mut PhysicsEngine) {
+
     }
 }
 

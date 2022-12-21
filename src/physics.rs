@@ -1,5 +1,12 @@
 use rapier3d::prelude::*;
 
+#[derive(Clone)]
+pub struct PhysicsComponent {
+    pub rigid_body_handle: RigidBodyHandle,
+    pub collider_handle: Option<ColliderHandle>,
+    pub scale: f32
+}
+
 pub struct PhysicsEngine {
     pub gravity: glm::TVec3<f32>,
     pub integration_parameters: IntegrationParameters,

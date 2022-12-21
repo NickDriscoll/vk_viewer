@@ -19,6 +19,43 @@ pub fn vec_to_bytes<'a, T>(vec: &Vec<T>) -> &'a [u8] {
     unsafe { core::slice::from_raw_parts(vec.as_ptr() as *const u8, vec.len() * size_of::<T>()) }
 }
 
+pub fn quaternion_to_euler(q: &Rotation<Real>) -> glm::TVec3<Real> {
+    let mut angles = glm::vec3(0.0, 0.0, 0.0);
+    let sinr_cosp = 2.0 * (q.w * q.i + q.j * q.k);
+    let cosr_cosp = 1.0 - 2.0 * (q.i * q.i + q.j * q.j);
+    angles.x = f32::atan2(sinr_cosp, cosr_cosp);
+
+    // pitch (y-axis rotation)
+    let sinp = f32::sqrt(1.0 + 2.0 * (q.w * q.i - q.j * q.k));
+    let cosp = f32::sqrt(1.0 - 2.0 * (q.w * q.i - q.j * q.k));
+    angles.y = 2.0 * f32::atan2(sinp, cosp) - glm::pi::<f32>() / 2.0;
+
+    // yaw (z-axis rotation)
+    let siny_cosp = 2.0 * (q.w * q.k + q.i * q.j);
+    let cosy_cosp = 1.0 - 2.0 * (q.j * q.j + q.k * q.k);
+    angles.z = f32::atan2(siny_cosp, cosy_cosp);
+
+    angles
+}
+
+// pub fn euler_to_quaternion(roll: f32, pitch: f32, yaw: f32) -> Rotation<Real> {
+//     let cr = f32::cos(roll * 0.5);
+//     let sr = f32::sin(roll * 0.5);
+//     let cp = f32::cos(pitch * 0.5);
+//     let sp = f32::sin(pitch * 0.5);
+//     let cy = f32::cos(yaw * 0.5);
+//     let sy = f32::sin(yaw * 0.5);
+
+//     let mut q = Rotation::identity();
+    
+//     q.w = cr * cp * cy + sr * sp * sy;
+//     q.i = sr * cp * cy - cr * sp * sy;
+//     q.j = cr * sp * cy + sr * cp * sy;
+//     q.k = cr * cp * sy - sr * sp * cy;
+
+//     q
+// }
+
 pub fn crash_with_error_dialog(message: &str) -> ! {
     crash_with_error_dialog_titled("Oops...", message);
 }
