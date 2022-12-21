@@ -98,9 +98,6 @@ impl InputSystem {
                         Scancode::R => {
                             out.regen_terrain = true;
                         }
-                        Scancode::T => {
-                            out.reset_totoro = true;
-                        }
                         _ => {}
                     }
                 }
@@ -207,6 +204,9 @@ impl InputSystem {
         }
         if keyboard_state.is_scancode_pressed(Scancode::E) {
             out.movement_vector += glm::vec3(0.0, 0.0, 1.0);
+        }
+        if keyboard_state.is_scancode_pressed(Scancode::T) {
+            out.reset_totoro = true;
         }
 
         out.framerate = imgui_io.framerate;

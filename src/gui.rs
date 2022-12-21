@@ -29,7 +29,8 @@ pub struct DevGui {
     pub do_prop_window: bool,
     pub do_props_window: bool,
     pub do_asset_window: bool,
-    pub do_mat_list: bool
+    pub do_mat_list: bool,
+    pub do_sun_window: bool
 }
 
 impl DevGui {
@@ -133,8 +134,10 @@ impl DevGui {
                         interacted |= imgui::Drag::new("Roll").speed(0.05).build(ui, &mut angles[1]);                        
                         interacted |= imgui::Drag::new("Scale").speed(0.05).build(ui, &mut prop.physics_component.scale);
 
-                        body.set_position(pos, true);
-                        body.set_rotation(angles, true);
+                        if interacted {
+                            body.set_position(pos, true);
+                            body.set_rotation(angles, true);
+                        }
                     }
 
 
@@ -240,6 +243,13 @@ impl DevGui {
             }
         }
         regen_terrain
+    }
+
+    pub fn do_sun_window(&mut self, ui: &Ui, sun: &mut SunLight) {
+        imgui::Slider::new("Sun pitch speed", 0.0, 1.0).build(&ui, &mut sun.pitch_speed);
+        imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&ui, &mut sun.pitch);
+        imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&ui, &mut sun.yaw_speed);
+        imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&ui, &mut sun.yaw);
     }
 
     //This is where we upload the Dear Imgui geometry for the current frame

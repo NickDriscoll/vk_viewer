@@ -509,8 +509,7 @@ fn main() {
     //let totoro_model = renderer.upload_ozymesh(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
-    //let mut totoro_list = OptionVec::new();
-    let main_totoro_idx = {
+    let main_totoro_key = {
         let rigid_body = RigidBodyBuilder::dynamic()
         .translation(glm::vec3(0.0, 0.0, 20.0))
         .ccd_enabled(true)
@@ -527,13 +526,9 @@ fn main() {
         };
         let e = Entity::new(String::from("Bouncy Totoro"), totoro_model, &mut physics_engine).set_physics_component(p_component);
         simulation_state.entities.insert(e)
-        //totoro_list.insert(PhysicsProp {
-        //    rigid_body_handle,
-        //    collider_handle
-        //})
     };
 
-    let mut focused_entity = None;
+    let mut focused_entity = Some(main_totoro_key);
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
@@ -598,7 +593,7 @@ fn main() {
             }
         }
         if input_output.reset_totoro {
-            reset_totoro(&mut physics_engine, &simulation_state.entities[main_totoro_idx]);
+            reset_totoro(&mut physics_engine, &simulation_state.entities[main_totoro_key]);
         }
 
         if input_output.spawn_totoro_prop {
@@ -621,6 +616,7 @@ fn main() {
             };
             let e = Entity::new(String::from("fired totoro"), totoro_model, &mut physics_engine).set_physics_component(p_component);
             simulation_state.entities.insert(e);
+            renderer.increment_model_count(totoro_model);
         }
 
         //Handle needing to resize the window
@@ -710,6 +706,7 @@ fn main() {
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Environment") {
                         if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) { dev_gui.do_terrain_window = true; }
+                        if imgui::MenuItem::new("Sun variables").build(&imgui_ui) { dev_gui.do_sun_window = true; }
                         mt.end();
                     }
                     mb.end();
@@ -726,10 +723,7 @@ fn main() {
                 color_token.pop();
     
                 if let Some(sun) = &mut renderer.main_sun {
-                    imgui::Slider::new("Sun pitch speed", 0.0, 1.0).build(&imgui_ui, &mut sun.pitch_speed);
-                    imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.pitch);
-                    imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&imgui_ui, &mut sun.yaw_speed);
-                    imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&imgui_ui, &mut sun.yaw);
+                    dev_gui.do_sun_window(&imgui_ui, sun);
                 }
                 
                 imgui::Slider::new("Ambient factor", 0.0, 500.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);    
@@ -748,9 +742,12 @@ fn main() {
                     for e in simulation_state.entities.iter() {
                         let key = e.0;
                         let entity = e.1;
-                        if entity.name == "fired totoro" {
+                        if entity.name.contains("fired totoro") {
                             remove_keys.push(key);
                         }
+                    }
+                    for key in remove_keys {
+                        simulation_state.entities.remove(key);
                     }
                 }
                 
@@ -822,17 +819,15 @@ fn main() {
             0.0, -1.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 1.0
         ) * glm::vec3_to_vec4(&input_output.movement_vector);
- 
-        //Totoros update
-        // let mut matrices = vec![];
-        // for i in 0..totoro_list.len() {
-        //     let prop = &totoro_list[i];
-        //     if let Some(p) = prop {
-        //         if i == main_totoro_idx && glm::distance(physics_engine.rigid_body_set[p.rigid_body_handle].translation(), &glm::zero()) > 750.0 {
-        //             reset_totoro(&mut physics_engine, &simulation_state.entities[main_totoro_idx]);
-        //         }
-        //     }
-        // }
+
+        //Move the main totoro back to the center if it's too far from the center of the world
+        if let Some(entity) = simulation_state.entities.get_mut(main_totoro_key) {
+            if let Some(body) = physics_engine.rigid_body_set.get(entity.physics_component.rigid_body_handle) {
+                if glm::distance(body.translation(), &glm::zero()) > 750.0 {
+                    reset_totoro(&mut physics_engine, entity);
+                }
+            }
+        }
 
         //Compute this frame's view matrix
         let view_from_world = match focused_entity {
@@ -917,7 +912,7 @@ fn main() {
         for (_, entity) in simulation_state.entities.iter() {
             let body = physics_engine.rigid_body_set.get(entity.physics_component.rigid_body_handle).expect("All entities should have a rigid body component.");
             let mm = body.position().to_matrix() * glm::translation(&(-entity.physics_component.rigid_body_offset)) * ozy::routines::uniform_scale(entity.physics_component.scale);
-            renderer.queue_drawcall(entity.model, vec![mm]);
+            renderer.drawcall(entity.model, vec![mm]);
         }
         
         //Update sun

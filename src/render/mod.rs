@@ -221,7 +221,7 @@ impl<K: slotmap::Key, V: UniqueID> InstancedSlotMap<K, V> {
         key
     }
 
-    pub fn increment_instance(&mut self, key: K) {
+    pub fn increment_model_count(&mut self, key: K) {
         if let Some(count) = self.counts.get_mut(&key) {
             *count += 1;
         }
@@ -324,6 +324,12 @@ impl Renderer {
 
     pub unsafe fn cleanup(&mut self, vk: &mut VulkanGraphicsDevice) {
         vk.device.wait_for_fences(&self.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
+    }
+
+    pub fn increment_model_count(&mut self, key: ModelKey) {
+        if let Some(count) = self.models.counts.get_mut(&key) {
+            *count += 1;
+        }
     }
 
     pub fn init(vk: &mut VulkanGraphicsDevice, window: &sdl2::video::Window, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
@@ -989,7 +995,7 @@ impl Renderer {
 
         //Check if this model is already loaded
         if let Some(key) = self.models.id_exists(id) {
-            self.models.increment_instance(key);
+            self.models.increment_model_count(key);
             return key;
         }
 
@@ -1066,7 +1072,7 @@ impl Renderer {
 
         //Check if this model is already loaded
         if let Some(key) = self.models.id_exists(id) {
-            self.models.increment_instance(key);
+            self.models.increment_model_count(key);
             return key;
         }
         
@@ -1430,7 +1436,7 @@ impl Renderer {
         frame_info
     }
 
-    pub fn queue_drawcall(&mut self, model_key: ModelKey, world_transforms: Vec<glm::TMat4<f32>>) {
+    pub fn drawcall(&mut self, model_key: ModelKey, world_transforms: Vec<glm::TMat4<f32>>) {
         let desired_draw = DesiredDraw {
             model_key,
             world_transforms
