@@ -41,8 +41,8 @@ use std::time::SystemTime;
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::UserInput;
-use physics::PhysicsEngine;
-use structs::{Camera, TerrainSpec, PhysicsProp, SimulationSOA};
+use physics::{PhysicsEngine, PhysicsComponent};
+use structs::{Camera, TerrainSpec, SimulationSOA};
 use render::vkdevice;
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
 
@@ -509,7 +509,7 @@ fn main() {
     //let totoro_model = renderer.upload_ozymesh(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
-    let mut totoro_list = OptionVec::new();
+    //let mut totoro_list = OptionVec::new();
     let main_totoro_idx = {
         let rigid_body = RigidBodyBuilder::dynamic()
         .translation(glm::vec3(0.0, 0.0, 20.0))
@@ -518,10 +518,19 @@ fn main() {
         let collider = ColliderBuilder::ball(2.1).restitution(2.5).build();
         let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
         let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
-        totoro_list.insert(PhysicsProp {
+
+        let p_component = PhysicsComponent {
             rigid_body_handle,
-            collider_handle
-        })
+            collider_handle: Some(collider_handle),
+            rigid_body_offset: glm::vec3(0.0, 0.0, 2.25),
+            scale: 1.0
+        };
+        let e = Entity::new(String::from("Bouncy Totoro"), totoro_model, &mut physics_engine).set_physics_component(p_component);
+        simulation_state.entities.insert(e)
+        //totoro_list.insert(PhysicsProp {
+        //    rigid_body_handle,
+        //    collider_handle
+        //})
     };
 
     let mut focused_entity = None;
@@ -589,27 +598,29 @@ fn main() {
             }
         }
         if input_output.reset_totoro {
-            reset_totoro(&mut physics_engine, &totoro_list[main_totoro_idx]);
+            reset_totoro(&mut physics_engine, &simulation_state.entities[main_totoro_idx]);
         }
 
         if input_output.spawn_totoro_prop {
             let shoot_dir = camera.look_direction();
             let init_pos = camera.position + 5.0 * shoot_dir;
-            let totoro_prop = {
-                let rigid_body = RigidBodyBuilder::dynamic()
-                .translation(init_pos)
-                .linvel(shoot_dir * 40.0)
-                .ccd_enabled(true)
-                .build();
-                let collider = ColliderBuilder::ball(2.25).restitution(0.5).build();
-                let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
-                let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
-                PhysicsProp {
-                    rigid_body_handle,
-                    collider_handle
-                }
+
+            let rigid_body = RigidBodyBuilder::dynamic()
+            .translation(init_pos)
+            .linvel(shoot_dir * 40.0)
+            .ccd_enabled(true)
+            .build();
+            let collider = ColliderBuilder::ball(2.25).restitution(0.5).build();
+            let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
+            let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
+            let p_component = PhysicsComponent {
+                rigid_body_handle,
+                collider_handle: Some(collider_handle),
+                rigid_body_offset: glm::vec3(0.0, 0.0, 2.25),
+                scale: 1.0
             };
-            totoro_list.insert(totoro_prop);
+            let e = Entity::new(String::from("fired totoro"), totoro_model, &mut physics_engine).set_physics_component(p_component);
+            simulation_state.entities.insert(e);
         }
 
         //Handle needing to resize the window
@@ -733,8 +744,13 @@ fn main() {
                 imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
                 
                 if DevGui::do_standard_button(&imgui_ui, "Totoro's be gone") {
-                    for i in 1..totoro_list.len() {
-                        totoro_list.delete(i);
+                    let mut remove_keys = vec![];
+                    for e in simulation_state.entities.iter() {
+                        let key = e.0;
+                        let entity = e.1;
+                        if entity.name == "fired totoro" {
+                            remove_keys.push(key);
+                        }
                     }
                 }
                 
@@ -808,19 +824,15 @@ fn main() {
         ) * glm::vec3_to_vec4(&input_output.movement_vector);
  
         //Totoros update
-        let mut matrices = vec![];
-        for i in 0..totoro_list.len() {
-            let prop = &totoro_list[i];
-            if let Some(p) = prop {
-                if i == main_totoro_idx && glm::distance(physics_engine.rigid_body_set[p.rigid_body_handle].translation(), &glm::zero()) > 750.0 {
-                    reset_totoro(&mut physics_engine, &totoro_list[main_totoro_idx]);
-                }
-                let body_transform = physics_engine.rigid_body_set[p.rigid_body_handle].position().to_matrix();
-                let matrix = body_transform * glm::translation(&glm::vec3(0.0, 0.0, -2.25));
-                matrices.push(matrix);
-            }
-        }
-        renderer.queue_drawcall(totoro_model, matrices);
+        // let mut matrices = vec![];
+        // for i in 0..totoro_list.len() {
+        //     let prop = &totoro_list[i];
+        //     if let Some(p) = prop {
+        //         if i == main_totoro_idx && glm::distance(physics_engine.rigid_body_set[p.rigid_body_handle].translation(), &glm::zero()) > 750.0 {
+        //             reset_totoro(&mut physics_engine, &simulation_state.entities[main_totoro_idx]);
+        //         }
+        //     }
+        // }
 
         //Compute this frame's view matrix
         let view_from_world = match focused_entity {
@@ -904,7 +916,7 @@ fn main() {
         //Push drawcalls for entities
         for (_, entity) in simulation_state.entities.iter() {
             let body = physics_engine.rigid_body_set.get(entity.physics_component.rigid_body_handle).expect("All entities should have a rigid body component.");
-            let mm = body.position().to_matrix() * ozy::routines::uniform_scale(entity.physics_component.scale);
+            let mm = body.position().to_matrix() * glm::translation(&(-entity.physics_component.rigid_body_offset)) * ozy::routines::uniform_scale(entity.physics_component.scale);
             renderer.queue_drawcall(entity.model, vec![mm]);
         }
         

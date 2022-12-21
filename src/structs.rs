@@ -107,11 +107,6 @@ impl Default for TerrainSpec {
     }
 }
 
-pub struct PhysicsProp {
-    pub rigid_body_handle: RigidBodyHandle,
-    pub collider_handle: ColliderHandle
-}
-
 #[derive(Clone)]
 pub struct Entity {
     pub name: String,
@@ -126,6 +121,7 @@ impl Entity {
         let physics_component = PhysicsComponent {
             rigid_body_handle,
             collider_handle: None,
+            rigid_body_offset: glm::zero(),
             scale: 1.0
         };
         Entity {
@@ -141,8 +137,9 @@ impl Entity {
         }
     }
 
-    pub fn set_collider_component(&mut self, physics_engine: &mut PhysicsEngine) {
-
+    pub fn set_physics_component(mut self, component: PhysicsComponent) -> Self {
+        self.physics_component = component;
+        self
     }
 }
 

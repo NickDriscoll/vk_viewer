@@ -139,8 +139,8 @@ pub fn replace_uploaded_vertices(vk: &mut VulkanGraphicsDevice, renderer: &mut R
     renderer.replace_vertex_uvs(vk, &attributes.uvs, offset);
 }
 
-pub fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Option<PhysicsProp>) {
-    let handle = totoro.as_ref().unwrap().rigid_body_handle;
+pub fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Entity) {
+    let handle = totoro.physics_component.rigid_body_handle;
     if let Some(body) = physics_engine.rigid_body_set.get_mut(handle) {
         body.set_linvel(glm::zero(), true);
         body.set_position(Isometry::from_parts(Translation::new(0.0, 0.0, 20.0), *body.rotation()), true);

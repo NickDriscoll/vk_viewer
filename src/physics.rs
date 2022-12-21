@@ -4,6 +4,7 @@ use rapier3d::prelude::*;
 pub struct PhysicsComponent {
     pub rigid_body_handle: RigidBodyHandle,
     pub collider_handle: Option<ColliderHandle>,
+    pub rigid_body_offset: glm::TVec3<f32>,
     pub scale: f32
 }
 
