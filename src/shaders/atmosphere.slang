@@ -53,6 +53,12 @@ static const float3 SKYBOX_NONINDEXED_POSITIONS[] = {
     1.0, 1.0, -1.0
 };
 
+[[vk::push_constant]]
+cbuffer PushConstants
+{
+    uint sun_idx;
+}
+
 [shader("vertex")]
 AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     AtmosphereVertexOutput output;
@@ -67,6 +73,7 @@ AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
 [shader("fragment")]
 float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     float3 view_direction = normalize(input.view_direction);
+    DirectionalLight sun = uniforms.directional_lights[sun_idx];
 
     float3 sky_sample;
     if (uniforms.real_sky) {
@@ -74,10 +81,10 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
             float3(0.0, 0.0, earth_radius + 1.0),
             view_direction
         };
-        sky_sample = get_incident_light(ray, uniforms.sun_direction.xyz, uniforms.sun_irradiance.rgb);
+        sky_sample = get_incident_light(ray, sun.direction.xyz, sun.irradiance.rgb);
     } else {
         sky_sample = sample_fake_sky(
-            uniforms.sun_direction.xyz,
+            sun.direction.xyz,
             view_direction,
             global_textures[uniforms.sunzenith_idx],
             global_textures[uniforms.viewzenith_idx],
@@ -89,7 +96,7 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     //float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
     //sky_sample += nighttime_factor * uniforms.sun_irradiance.rgb * smoothstep(lerp(1.0, 0.99, 0.25), 1.0, sunview_dot);
 
-    float3 stars_color = sample_sky_stars(uniforms, view_direction);
+    float3 stars_color = sample_sky_stars(uniforms, view_direction, sun.direction.z);
     float3 final_color = sky_sample + stars_color;
 
     return float4(final_color, 1.0);

@@ -331,7 +331,18 @@ fn main() {
         shadow_pass
     );
     renderer.uniform_data.sun_shadowmap_idx = sun_shadow_map.texture_index() as u32;
-    renderer.main_sun = Some(
+    // renderer.main_sun = Some(
+    //     SunLight {
+    //         pitch: 0.118,
+    //         yaw: 0.783,
+    //         pitch_speed: 0.003,
+    //         yaw_speed: 0.0,
+    //         irradiance: 790.0f32 * glm::vec3(1.0, 0.891, 0.796),
+    //         shadow_map: sun_shadow_map
+    //     }
+    // );
+
+    let sunlight_key = renderer.new_directional_light(
         SunLight {
             pitch: 0.118,
             yaw: 0.783,
@@ -340,7 +351,7 @@ fn main() {
             irradiance: 790.0f32 * glm::vec3(1.0, 0.891, 0.796),
             shadow_map: sun_shadow_map
         }
-    );
+    ).unwrap();
 
     //Create graphics pipelines
     let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline, postfx_pipeline] = unsafe {
@@ -539,7 +550,6 @@ fn main() {
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
-    renderer.uniform_data.sun_irradiance = glm::vec4(1.0, 0.891, 0.796, 0.0);
     renderer.uniform_data.ambient_factor = 20.0;
     renderer.uniform_data.stars_threshold = 4.0;
     renderer.uniform_data.stars_exposure = 2000.0;
@@ -722,7 +732,7 @@ fn main() {
                 imgui_ui.text(message);
                 color_token.pop();
     
-                if let Some(sun) = &mut renderer.main_sun {
+                if let Some(sun) = renderer.get_directional_light_mut(sunlight_key) {
                     dev_gui.do_sun_window(&imgui_ui, sun);
                 }
                 
@@ -878,7 +888,6 @@ fn main() {
                         let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
                         renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
                         m
-
                     }
                     None => {
                         //Freecam update                
@@ -916,7 +925,7 @@ fn main() {
         }
         
         //Update sun
-        if let Some(sun) = &mut renderer.main_sun {
+        if let Some(sun) = renderer.get_directional_light_mut(sunlight_key) {
             sun.pitch += sun.pitch_speed * scaled_delta_time;
             sun.yaw += sun.yaw_speed * scaled_delta_time;
             if sun.pitch > glm::two_pi() {
@@ -951,7 +960,7 @@ fn main() {
             let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
             
             //Shadow render pass
-            if let Some(sun) = &renderer.main_sun {
+            if let Some(sun) = renderer.get_directional_light(sunlight_key) {
                 let sun_shadow_map = &sun.shadow_map;
                 let render_area = {
                     vk::Rect2D {
@@ -1082,6 +1091,7 @@ fn main() {
 
             //Record atmosphere rendering commands
             vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
+            vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &0u32.to_le_bytes());
             vk.device.cmd_draw(frame_info.main_command_buffer, 36, 1, 0, 0);
             vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
 

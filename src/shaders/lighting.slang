@@ -42,21 +42,6 @@ float3 f_lambert(float3 color)
     return color / PI;
 }
 
-struct PBRSurface
-{
-    float3 albedo;
-    float3 shading_normal;
-    float3 geometry_normal;
-    float3 view;
-    float roughness;
-    float metalness;
-}
-
-struct DirectionalLight {
-    float3 direction;
-    float3 irradiance;
-}
-
 //Returns the outgoing radiance caused by the directional light hitting the surface
 float3 directional_lighting(PBRSurface surface, DirectionalLight light)
 {

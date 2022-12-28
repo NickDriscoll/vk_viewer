@@ -33,17 +33,6 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float sampled_roughness = metal_roughness_sample.g;
     float sampled_metalness = metal_roughness_sample.b;
 
-    // Compute sun color
-    float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
-    float3 halo_color = float3(1.0);
-    float3 sky_color = float3(1.0);
-    float3 sun_color;
-    if (!uniforms.real_sky) {
-        sky_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
-        halo_color = global_textures[uniforms.viewzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
-    }
-    sun_color = lerp(sky_color, halo_color, 0.2);
-
     // Get normal vector at this point
     float3 sampled_normal = 2.0 * global_textures[my_mat.normal_map_index].Sample(input.uv).xyz - 1.0;
     // float roughness = toksvigs_method(sampled_normal, my_mat.base_roughness * sampled_roughness);
@@ -58,31 +47,45 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     params.roughness = roughness;
     params.metalness = metalness;
 
-    DirectionalLight sunlight = {
-        uniforms.sun_direction.xyz,
-        uniforms.sun_irradiance.rgb
-    };
-
+    // Outgoing radiance accumulator
     float3 final_radiance = float3(0.0);
 
-    float2 sun_shadowing = compute_cascade_shadowing(
-        global_array_textures[uniforms.sun_shadowmap_idx],
-        normal,
-        uniforms.sun_direction.xyz,
-        input.sunshadow_space_positions,
-        uniforms.sun_shadow_distances,
-        input.clip_space_z
-    );
-    final_radiance = sun_shadowing.x * directional_lighting(params, sunlight);
-    final_radiance += 200.0 * global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
+    for (uint i = 0; i < uniforms.directional_light_count; i++) {
+        DirectionalLight light = uniforms.directional_lights[i];
 
-    if (!uniforms.real_sky) {
-        // Apply fog like GL_EXP2
-        final_radiance = exp2_fog(uniforms, input.position, final_radiance, sun_color);
+        // Compute sun color
+        float sunzenith_dot = light.direction.z * 0.5 + 0.5;
+        float3 halo_color = float3(1.0);
+        float3 sky_color = float3(1.0);
+        float3 sun_color;
+        if (!uniforms.real_sky) {
+            sky_color = global_textures[uniforms.sunzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
+            halo_color = global_textures[uniforms.viewzenith_idx].Sample(float2(sunzenith_dot, 0.5)).rgb;
+        }
+        sun_color = lerp(sky_color, halo_color, 0.2);
+
+        float2 sun_shadowing = compute_cascade_shadowing(
+            global_array_textures[uniforms.sun_shadowmap_idx],
+            normal,
+            light.direction.xyz,
+            input.sunshadow_space_positions,
+            uniforms.sun_shadow_distances,
+            input.clip_space_z,
+            0
+        );
+        final_radiance += sun_shadowing.x * directional_lighting(params, light);
+
+        if (!uniforms.real_sky) {
+            // Apply fog like GL_EXP2
+            final_radiance = exp2_fog(uniforms, input.position, final_radiance, sun_color);
+        }
     }
 
+    //Emissive contribution
+    final_radiance += 200.0 * global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
+
     float3 ambient = float3(uniforms.ambient_factor) * params.albedo * sampled_ao;
-    final_radiance = final_radiance + ambient;
+    final_radiance += ambient;
     
     return float4(final_radiance, 1.0);
 }

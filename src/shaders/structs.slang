@@ -1,8 +1,9 @@
 
 static const float PI = acos(-1);
 
+static const uint MAX_DIRECTIONAL_LIGHTS = 4;
 static const uint SHADOW_CASCADE_COUNT = 6;
-static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = SHADOW_CASCADE_COUNT + 1;
+static const uint CASCADE_DISTANCE_ARRAY_ELEMENTS = (SHADOW_CASCADE_COUNT + 1) * MAX_DIRECTIONAL_LIGHTS;
 
 struct InstanceData {
     float4x4 world_from_model;
@@ -64,10 +65,12 @@ struct FrameUniforms {
     float4x4 view_from_world;
     float4x4 clip_from_skybox;
     float4x4 clip_from_screen;
-    float4x4 sun_shadow_matrices[SHADOW_CASCADE_COUNT];
+    float4x4 sun_shadow_matrices[SHADOW_CASCADE_COUNT * MAX_DIRECTIONAL_LIGHTS];
     float4 camera_position;
-    float4 sun_direction;
-    float4 sun_irradiance;
+    // float4 sun_direction;
+    // float4 sun_irradiance;
+    DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
+    uint directional_light_count;
     uint sun_shadowmap_idx;
     float time;
     float stars_threshold;
@@ -80,6 +83,9 @@ struct FrameUniforms {
     float ambient_factor;
     bool real_sky;
     float pad0;
+    float pad1;
+    float pad2;
+    float pad3;
     float4 sun_shadow_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4 + 1];
 }
 
@@ -93,4 +99,20 @@ struct Material {
     uint emissive_index;
     uint pad0;
     uint pad1;
+}
+
+struct PBRSurface {
+    float3 albedo;
+    float3 shading_normal;
+    float3 geometry_normal;
+    float3 view;
+    float roughness;
+    float metalness;
+}
+
+struct DirectionalLight {
+    float3 direction;
+    float pad0;
+    float3 irradiance;
+    float pad1;
 };

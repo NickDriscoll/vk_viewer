@@ -3,7 +3,7 @@
 use core::slice::Iter;
 use std::{convert::TryInto, ffi::c_void, hash::{Hash, Hasher}, collections::hash_map::DefaultHasher};
 use ozy::io::OzyMesh;
-use slotmap::SlotMap;
+use slotmap::{SlotMap, new_key_type};
 use crate::*;
 pub use structs::*;
 use vkdevice::*;
@@ -263,7 +263,8 @@ pub struct Renderer {
     pub window_manager: WindowManager,
     
     //Light data
-    pub main_sun: Option<SunLight>,
+    //pub main_sun: Option<SunLight>,
+    directional_lights: SlotMap<DirectionalLightKey, SunLight>,
     pub irradiance_map_idx: u32,
 
     pub uniform_data: EnvironmentUniforms,
@@ -705,7 +706,7 @@ impl Renderer {
             uniforms.sunzenith_idx = sunzenith_index;
             uniforms.viewzenith_idx = viewzenith_index;
             uniforms.sunview_idx = sunview_index;
-        };
+        }
 
         //Create the main swapchain for window present
         let window_manager = WindowManager::init(vk, &window, swapchain_render_pass);
@@ -831,7 +832,8 @@ impl Renderer {
             material_buffer,
             compute_buffer,
             samplers_descriptor_index,
-            main_sun: None,
+            //main_sun: None,
+            directional_lights: SlotMap::with_key(),
             irradiance_map_idx,
             frames_in_flight: in_flight_frame_data,
             in_flight_frame: 0
@@ -1145,9 +1147,31 @@ impl Renderer {
         }
     }
 
+    pub fn new_directional_light(&mut self, light: SunLight) -> Option<DirectionalLightKey> {
+        let mut ret = None;
+        if self.directional_lights.len() < MAX_DIRECTIONAL_LIGHTS {
+            ret = Some(self.directional_lights.insert(light));
+        }
+        ret
+    }
+
+    pub fn get_directional_light(&self, key: DirectionalLightKey) -> Option<&SunLight> {
+        self.directional_lights.get(key)
+    }
+
+    pub fn get_directional_light_mut(&mut self, key: DirectionalLightKey) -> Option<&mut SunLight> {
+        self.directional_lights.get_mut(key)
+    }
+
+    pub fn delete_directional_light(&mut self, key: DirectionalLightKey) {
+        self.directional_lights.remove(key);
+    }
+
     fn next_frame(&mut self, vk: &mut VulkanGraphicsDevice) -> InFlightFrameData {
         let cb = self.frames_in_flight[self.in_flight_frame];
-        unsafe { vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap(); }
+        unsafe {
+            vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap();
+        }
         self.in_flight_frame += 1;
         self.in_flight_frame %= Self::FRAMES_IN_FLIGHT;
         cb
@@ -1387,22 +1411,53 @@ impl Renderer {
     
             uniforms.clip_from_world = uniforms.clip_from_view * view_from_world;
 
-            if let Some(sunlight) = &self.main_sun {
-                //Compute sun direction from pitch and yaw
-                uniforms.sun_direction = 
-                    glm::rotation(sunlight.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-                    glm::rotation(sunlight.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+            //Push directional light data
+            let mut i = 0;
+            for light in self.directional_lights.iter() {
+                let light = light.1;
+                let irradiance = light.irradiance;
+                let direction = 
+                    glm::rotation(light.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+                    glm::rotation(light.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
                     glm::vec4(-1.0, 0.0, 0.0, 0.0);
+                let direction = glm::vec4_to_vec3(&direction);
 
-                uniforms.sun_shadow_matrices = sunlight.shadow_map.compute_shadow_cascade_matrices(
-                    &uniforms.sun_direction.xyz(),
+                uniforms.directional_lights[i] = DirectionalLight::new(direction, irradiance);
+
+                let matrices = light.shadow_map.compute_shadow_cascade_matrices(
+                    &direction,
                     &uniforms.view_from_world,
                     &uniforms.clip_from_view
                 );
+                for j in 0..matrices.len() {
+                    uniforms.sun_shadow_matrices[CascadedShadowMap::CASCADE_COUNT * i + j] = matrices[j];
+                }
 
-                uniforms.sun_shadow_distances = sunlight.shadow_map.clip_distances();
-                uniforms.sun_irradiance = glm::vec3_to_vec4(&sunlight.irradiance);
+                let dists = light.shadow_map.clip_distances();
+                for j in 0..dists.len() {
+                    uniforms.sun_shadow_distances[(CascadedShadowMap::CASCADE_COUNT + 1) * i + j] = dists[j];
+                }
+
+                i += 1;
             }
+            uniforms.directional_light_count = self.directional_lights.len() as u32;
+
+            // if let Some(sunlight) = &self.main_sun {
+            //     //Compute sun direction from pitch and yaw
+            //     uniforms.sun_direction = 
+            //         glm::rotation(sunlight.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+            //         glm::rotation(sunlight.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+            //         glm::vec4(-1.0, 0.0, 0.0, 0.0);
+
+            //     uniforms.sun_shadow_matrices = sunlight.shadow_map.compute_shadow_cascade_matrices(
+            //         &uniforms.sun_direction.xyz(),
+            //         &uniforms.view_from_world,
+            //         &uniforms.clip_from_view
+            //     );
+
+            //     uniforms.sun_shadow_distances = sunlight.shadow_map.clip_distances();
+            //     uniforms.sun_irradiance = glm::vec3_to_vec4(&sunlight.irradiance);
+            // }
             
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
             //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion

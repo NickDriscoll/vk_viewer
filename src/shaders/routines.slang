@@ -113,7 +113,7 @@ float3 Unity_Blackbody_float(float Temperature) {
     return color;
 }
 
-float3 sample_sky_stars(FrameUniforms uniforms, float3 view_direction) {
+float3 sample_sky_stars(FrameUniforms uniforms, float3 view_direction, float sunzenith_dot) {
     // Stars computation
     float stars = pow(clamp(noise(view_direction * 200.0f), 0.0f, 1.0f), uniforms.stars_threshold) * uniforms.stars_exposure;
     float star_fact = lerp(0.4, 1.4, noise(view_direction * 100.0f + float3(uniforms.time)));
@@ -123,7 +123,7 @@ float3 sample_sky_stars(FrameUniforms uniforms, float3 view_direction) {
     float stars_temperature = noise(view_direction * 150.0) * 0.5 + 0.5;
     float3 stars_color = stars * Unity_Blackbody_float(lerp(1500.0, 65000.0, pow(stars_temperature, 4.0)));
 
-    float nighttime_factor = smoothstep(-0.1, 0.1, uniforms.sun_direction.z);
+    float nighttime_factor = smoothstep(-0.1, 0.1, sunzenith_dot);
     stars_color *= 1.0 - nighttime_factor;
 
     return stars_color;
@@ -196,13 +196,15 @@ float2 compute_cascade_shadowing(
     float3 light_direction,
     float4 shadow_space_positions[SHADOW_CASCADE_COUNT],
     float4 cascade_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4 + 1],
-    float clip_space_z
+    float clip_space_z,
+    uint directional_light_idx,
 ) {
     //Determine which cascade the fragment is in
     float3 adj_shadow_space_pos;
     int shadow_cascade = -1;
     for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
-        float cascade_distance = cascade_distances[(i + 1) / 4][(i + 1) % 4];
+        uint cascade_index = i + (SHADOW_CASCADE_COUNT * directional_light_idx);
+        float cascade_distance = cascade_distances[(cascade_index + 1) / 4][(cascade_index + 1) % 4];
         if (clip_space_z < cascade_distance) {
             adj_shadow_space_pos = float3(float2(shadow_space_positions[i].xy * 0.5 + 0.5), shadow_space_positions[i].z);
             if (!(
@@ -432,9 +434,9 @@ float3 get_incident_light(ray_t ray, float3 sun_dir, float3 sun_irradiance) {
     return sun_irradiance * (sumR * phaseR * betaR + sumM * phaseM * betaM);
 }
 
-void compute_sun_color(FrameUniforms uniforms, Sampler2D sun_zenith, Sampler2D view_zenith) {
+void compute_sun_color(FrameUniforms uniforms, float sunzenith_dot, Sampler2D sun_zenith, Sampler2D view_zenith) {
     // Compute sun color
-    float sunzenith_dot = uniforms.sun_direction.z * 0.5 + 0.5;
+    sunzenith_dot = sunzenith_dot * 0.5 + 0.5;
     float3 halo_color = float3(1.0);
     float3 sky_color = float3(1.0);
     float3 sun_color;

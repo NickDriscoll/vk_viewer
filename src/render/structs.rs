@@ -6,6 +6,8 @@ use slotmap::{SlotMap, new_key_type};
 use render::{vkdevice, VulkanGraphicsDevice};
 use crate::*;
 
+pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
+
 pub trait UniqueID {
     fn id(&self) -> u64;
 }
@@ -15,9 +17,31 @@ pub struct DeferredDelete {
     pub frames_til_deletion: u32
 }
 
+//1:1 with shader struct
+#[derive(Clone, Debug, Default)]
+#[repr(C)]
+pub struct DirectionalLight {
+    pub direction: glm::TVec3<f32>,
+    pad0: f32,
+    pub irradiance: glm::TVec3<f32>,
+    pad1: f32
+}
+
+impl DirectionalLight {
+    pub fn new(direction: glm::TVec3<f32>, irradiance: glm::TVec3<f32>) -> Self {
+        DirectionalLight {
+            direction,
+            pad0: 0.0,
+            irradiance,
+            pad1: 0.0
+        }
+    }
+}
+
 //SlotMap key types used by Renderer
 new_key_type! { pub struct ModelKey; }
 new_key_type! { pub struct PrimitiveKey; }
+new_key_type! { pub struct DirectionalLightKey; }
 new_key_type! { pub struct ImageKey; }
 new_key_type! { pub struct PositionBufferBlockKey; }
 
@@ -202,10 +226,12 @@ pub struct EnvironmentUniforms {
     pub view_from_world: glm::TMat4<f32>,
     pub clip_from_skybox: glm::TMat4<f32>,
     pub clip_from_screen: glm::TMat4<f32>,
-    pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT],
+    pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT * MAX_DIRECTIONAL_LIGHTS],
     pub camera_position: glm::TVec4<f32>,
-    pub sun_direction: glm::TVec4<f32>,
-    pub sun_irradiance: glm::TVec4<f32>,
+    //pub sun_direction: glm::TVec4<f32>,
+    //pub sun_irradiance: glm::TVec4<f32>,
+    pub directional_lights: [DirectionalLight; MAX_DIRECTIONAL_LIGHTS],
+    pub directional_light_count: u32,
     pub sun_shadowmap_idx: u32,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
@@ -218,7 +244,10 @@ pub struct EnvironmentUniforms {
     pub ambient_factor: f32,
     pub real_sky: f32,
     pub pad0: f32,
-    pub sun_shadow_distances: [f32; CascadedShadowMap::CASCADE_COUNT + 1],
+    pub pad1: f32,
+    pub pad2: f32,
+    pub pad3: f32,
+    pub sun_shadow_distances: [f32; (CascadedShadowMap::CASCADE_COUNT + 1) * MAX_DIRECTIONAL_LIGHTS],
 }
 
 pub struct CascadedShadowMap {
