@@ -944,14 +944,14 @@ fn main() {
 
         //Resolve the current Dear Imgui frame
         dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, imgui_ui);
+        
+        //Does all work that needs to happen before the render passes
+        let frame_info = renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
 
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
             let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
-            
-            //Does all work that needs to happen before the render pass
-            let frame_info = renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
 
             //Put command buffer in recording state
             vk.device.begin_command_buffer(frame_info.main_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
@@ -1177,12 +1177,13 @@ fn main() {
             vk.device.reset_fences(&[frame_info.fence]).unwrap();
             vk.device.queue_submit(queue, &[submit_info], frame_info.fence).unwrap();
 
+            let present_semaphores = [frame_info.semaphore, vk_swapchain_semaphore];
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
                 p_swapchains: &renderer.window_manager.swapchain,
                 p_image_indices: &(current_framebuffer_index as u32),
-                wait_semaphore_count: 1,
-                p_wait_semaphores: &frame_info.semaphore,
+                wait_semaphore_count: present_semaphores.len() as u32,
+                p_wait_semaphores: present_semaphores.as_ptr(),
                 ..Default::default()
             };
             if let Err(e) = vk.ext_swapchain.queue_present(queue, &present_info) {

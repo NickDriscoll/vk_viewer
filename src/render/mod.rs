@@ -1441,23 +1441,6 @@ impl Renderer {
                 i += 1;
             }
             uniforms.directional_light_count = self.directional_lights.len() as u32;
-
-            // if let Some(sunlight) = &self.main_sun {
-            //     //Compute sun direction from pitch and yaw
-            //     uniforms.sun_direction = 
-            //         glm::rotation(sunlight.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-            //         glm::rotation(sunlight.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
-            //         glm::vec4(-1.0, 0.0, 0.0, 0.0);
-
-            //     uniforms.sun_shadow_matrices = sunlight.shadow_map.compute_shadow_cascade_matrices(
-            //         &uniforms.sun_direction.xyz(),
-            //         &uniforms.view_from_world,
-            //         &uniforms.clip_from_view
-            //     );
-
-            //     uniforms.sun_shadow_distances = sunlight.shadow_map.clip_distances();
-            //     uniforms.sun_irradiance = glm::vec3_to_vec4(&sunlight.irradiance);
-            // }
             
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
             //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
