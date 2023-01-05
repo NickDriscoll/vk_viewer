@@ -72,6 +72,30 @@ fn main() {
         let io = imgui_context.io_mut();
         io.display_size[0] = window_size.x as f32;
         io.display_size[1] = window_size.y as f32;
+        
+        //Set up keyboard index map
+        use sdl2::keyboard::Scancode;
+        io.key_map[imgui::Key::Tab as usize] = Scancode::Tab as u32;
+        io.key_map[imgui::Key::LeftArrow as usize] = Scancode::Left as u32;
+        io.key_map[imgui::Key::RightArrow as usize] = Scancode::Right as u32;
+        io.key_map[imgui::Key::UpArrow as usize] = Scancode::Up as u32;
+        io.key_map[imgui::Key::DownArrow as usize] = Scancode::Down as u32;
+        io.key_map[imgui::Key::PageDown as usize] = Scancode::PageDown as u32;
+        io.key_map[imgui::Key::PageUp as usize] = Scancode::PageUp as u32;
+        io.key_map[imgui::Key::Home as usize] = Scancode::Home as u32;
+        io.key_map[imgui::Key::End as usize] = Scancode::End as u32;
+        io.key_map[imgui::Key::Insert as usize] = Scancode::Insert as u32;
+        io.key_map[imgui::Key::Delete as usize] = Scancode::Delete as u32;
+        io.key_map[imgui::Key::Backspace as usize] = Scancode::Backspace as u32;
+        io.key_map[imgui::Key::Space as usize] = Scancode::Space as u32;
+        io.key_map[imgui::Key::Enter as usize] = Scancode::Return as u32;
+        io.key_map[imgui::Key::KeyPadEnter as usize] = Scancode::KpEnter as u32;
+        io.key_map[imgui::Key::A as usize] = Scancode::A as u32;
+        io.key_map[imgui::Key::C as usize] = Scancode::C as u32;
+        io.key_map[imgui::Key::V as usize] = Scancode::V as u32;
+        io.key_map[imgui::Key::X as usize] = Scancode::X as u32;
+        io.key_map[imgui::Key::Y as usize] = Scancode::Y as u32;
+        io.key_map[imgui::Key::Z as usize] = Scancode::Z as u32;
     }
 
     //Initialize the Vulkan API
@@ -1190,7 +1214,7 @@ fn main() {
                 println!("{}", e);
             }
         }
-    }
+    } //After main application loop
 
     //Cleanup
     unsafe {

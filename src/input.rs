@@ -50,9 +50,9 @@ impl InputSystem {
         use sdl2::keyboard::{Scancode};
         use sdl2::mouse::MouseButton;
 
+        //The output from the input system that the simulation will read
         let mut out = InputOutput::default();
 
-        //Abstracted input variables
         out.movement_multiplier = 5.0f32;
         out.movement_vector = glm::zero();
         out.orientation_delta = glm::zero();
@@ -91,7 +91,13 @@ impl InputSystem {
                         _ => {}
                     }
                 }
+                Event::TextInput { text, .. } => {
+                    for c in text.chars() {
+                        imgui_io.add_input_character(c);
+                    }
+                }
                 Event::KeyDown { scancode: Some(sc), repeat: false, .. } => {
+                    imgui_io.keys_down[sc as usize] = true;
                     match sc {
                         Scancode::Escape => { out.gui_toggle = true; }
                         Scancode::Space => { out.spawn_totoro_prop = true; }
@@ -100,6 +106,9 @@ impl InputSystem {
                         }
                         _ => {}
                     }
+                }
+                Event::KeyUp { scancode: Some(sc), repeat: false, .. } => {
+                    imgui_io.keys_down[sc as usize] = false;
                 }
                 Event::MouseButtonUp { mouse_btn, .. } => {
                     match mouse_btn {
