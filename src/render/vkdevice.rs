@@ -625,8 +625,10 @@ impl VulkanGraphicsDevice {
             let mut multiview_features = vk::PhysicalDeviceMultiviewFeatures::default();
             let mut buffer_address_features = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
             let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
+            let mut sync2_features = vk::PhysicalDeviceSynchronization2Features::default();
             indexing_features.p_next = &mut buffer_address_features as *mut _ as *mut c_void;
             buffer_address_features.p_next = &mut multiview_features as *mut _ as *mut c_void;
+            multiview_features.p_next = &mut sync2_features as *mut _ as *mut c_void;
             let mut physical_device_features = vk::PhysicalDeviceFeatures2 {
                 p_next: &mut indexing_features as *mut _ as *mut c_void,
                 ..Default::default()

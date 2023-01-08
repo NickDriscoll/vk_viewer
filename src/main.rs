@@ -355,16 +355,6 @@ fn main() {
         shadow_pass
     );
     renderer.uniform_data.sun_shadowmap_idx = sun_shadow_map.texture_index() as u32;
-    // renderer.main_sun = Some(
-    //     SunLight {
-    //         pitch: 0.118,
-    //         yaw: 0.783,
-    //         pitch_speed: 0.003,
-    //         yaw_speed: 0.0,
-    //         irradiance: 790.0f32 * glm::vec3(1.0, 0.891, 0.796),
-    //         shadow_map: sun_shadow_map
-    //     }
-    // );
 
     let sunlight_key = renderer.new_directional_light(
         SunLight {
@@ -1029,7 +1019,7 @@ fn main() {
                 for drawcall in renderer.drawlist_iter() {
                     if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
                         if let ShadowType::NonCaster = model.shadow_type { continue; }
-    
+
                         let pcs = [
                             model.material_idx.to_le_bytes(),
                             model.position_offset.to_le_bytes(),
@@ -1042,6 +1032,30 @@ fn main() {
                 }
 
                 vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
+
+                //Shadow map pipeline memory barrier
+                let dependency_info = vk::DependencyInfo {
+                    image_memory_barrier_count: 1,
+                    p_image_memory_barriers: &vk::ImageMemoryBarrier2 {
+                        src_access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                        dst_access_mask: vk::AccessFlags2::SHADER_READ,
+                        src_stage_mask: vk::PipelineStageFlags2::ALL_COMMANDS,
+                        dst_stage_mask: vk::PipelineStageFlags2::ALL_COMMANDS,
+                        src_queue_family_index: vk.queue_family_index,
+                        dst_queue_family_index: vk.queue_family_index,
+                        image: sun_shadow_map.image(),
+                        subresource_range: vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::DEPTH,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 6
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                vk.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &dependency_info);
             }
             
             //Set the viewport for this frame

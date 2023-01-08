@@ -263,7 +263,6 @@ pub struct Renderer {
     pub window_manager: WindowManager,
     
     //Light data
-    //pub main_sun: Option<SunLight>,
     directional_lights: SlotMap<DirectionalLightKey, SunLight>,
     pub irradiance_map_idx: u32,
 
