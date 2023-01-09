@@ -25,7 +25,7 @@ pub struct PhysicsEngine {
 }
 
 impl PhysicsEngine {
-    pub fn new() -> Self {
+    pub fn init() -> Self {
         let gravity = vector![0.0, 0.0, -9.81];
         let integration_parameters = IntegrationParameters::default();
         let rigid_body_set = RigidBodySet::new();

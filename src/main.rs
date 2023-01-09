@@ -40,7 +40,7 @@ use std::time::SystemTime;
 
 use ozy::structs::{FrameTimer, OptionVec};
 
-use input::UserInput;
+use input::InputSystemOutput;
 use physics::{PhysicsEngine, PhysicsComponent};
 use structs::{Camera, TerrainSpec, SimulationSOA};
 use render::vkdevice;
@@ -102,7 +102,7 @@ fn main() {
     let mut vk = vkdevice::VulkanGraphicsDevice::init();
 
     //Initialize the physics engine
-    let mut physics_engine = PhysicsEngine::new();
+    let mut physics_engine = PhysicsEngine::init();
 
     let shadow_pass = unsafe {
         let depth_description = vk::AttachmentDescription {
@@ -138,6 +138,17 @@ fn main() {
             ..Default::default()
         };
 
+        //Create dependency between this shadow pass and the HDR pass
+        let dependency = vk::SubpassDependency {
+            src_subpass: 0,
+            dst_subpass: vk::SUBPASS_EXTERNAL,
+            src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            src_access_mask: vk::AccessFlags::MEMORY_WRITE,
+            dst_access_mask: vk::AccessFlags::SHADER_READ,
+            dependency_flags: vk::DependencyFlags::empty()
+        };
+
         let attachments = [depth_description];
         let renderpass_info = vk::RenderPassCreateInfo {
             p_next: &multiview_info as *const _ as *const c_void,
@@ -145,6 +156,8 @@ fn main() {
             p_attachments: attachments.as_ptr(),
             subpass_count: 1,
             p_subpasses: &subpass,
+            dependency_count: 1,
+            p_dependencies: &dependency,
             ..Default::default()
         };
         vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
@@ -243,12 +256,37 @@ fn main() {
             ..Default::default()
         };
 
+        //Create dependences between this pass and previous shadow pass, plus this pass and the PostFX pass
+        let dependencies = [
+            vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                dst_subpass: 0,
+                src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                src_access_mask: vk::AccessFlags::MEMORY_WRITE,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                dependency_flags: vk::DependencyFlags::empty()
+            },
+            vk::SubpassDependency {
+                src_subpass: 0,
+                dst_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                src_access_mask: vk::AccessFlags::MEMORY_WRITE,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                dependency_flags: vk::DependencyFlags::empty()
+
+            }
+        ];
+
         let attachments = [color_attachment_description, depth_attachment_description];
         let renderpass_info = vk::RenderPassCreateInfo {
             attachment_count: attachments.len() as u32,
             p_attachments: attachments.as_ptr(),
             subpass_count: 1,
             p_subpasses: &subpass,
+            dependency_count: dependencies.len() as u32,
+            p_dependencies: dependencies.as_ptr(),
             ..Default::default()
         };
         vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
@@ -368,7 +406,7 @@ fn main() {
     ).unwrap();
 
     //Create graphics pipelines
-    let [vk_3D_graphics_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline, postfx_pipeline] = unsafe {
+    let [pbr_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline, postfx_pipeline] = unsafe {
         use render::GraphicsPipelineBuilder;
 
         //Load shaders
@@ -530,7 +568,7 @@ fn main() {
     //let totoro_data = OzyMesh::from_file("./data/models/.optimized/totoro_backup.ozy");
 
     //Register each primitive with the renderer
-    let totoro_model = renderer.upload_gltf_model(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
+    let totoro_model = renderer.upload_gltf_model(&mut vk, &totoro_data, pbr_pipeline);
     //let totoro_model = renderer.upload_ozymesh(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
@@ -592,16 +630,16 @@ fn main() {
 
         //Input sampling
         let imgui_io = imgui_context.io_mut();
-        let input_output = match input_system.poll(&timer, imgui_io) {
-            UserInput::Output(o) => { o }
-            UserInput::ExitProgram => { break 'running; }
+        let user_input = match input_system.poll(&timer, imgui_io) {
+            InputSystemOutput::Output(o) => { o }
+            InputSystemOutput::ExitProgram => { break 'running; }
         };
 
         //Handling of some input results before update
-        if input_output.gui_toggle {
+        if user_input.gui_toggle {
             dev_gui.do_gui = !dev_gui.do_gui
         }
-        if input_output.regen_terrain {
+        if user_input.regen_terrain {
             if let Some(entity) = simulation_state.entities.get(terrain_key) {
                 if let Some(model) = renderer.get_model(entity.model) {
                     let p_key = model.primitive_keys[0];
@@ -616,11 +654,11 @@ fn main() {
                 }
             }
         }
-        if input_output.reset_totoro {
+        if user_input.reset_totoro {
             reset_totoro(&mut physics_engine, &simulation_state.entities[main_totoro_key]);
         }
 
-        if input_output.spawn_totoro_prop {
+        if user_input.spawn_totoro_prop {
             let shoot_dir = camera.look_direction();
             let init_pos = camera.position + 5.0 * shoot_dir;
 
@@ -645,7 +683,7 @@ fn main() {
 
         //Handle needing to resize the window
         unsafe {
-            if input_output.resize_window {
+            if user_input.resize_window {
                 //Window resizing requires us to "flush the pipeline" as it were. wahh
                 vk.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
@@ -736,7 +774,7 @@ fn main() {
                     mb.end();
                 }
     
-                imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime, frame {})", input_output.framerate, 1000.0 / input_output.framerate, timer.frame_count));
+                imgui_ui.text(format!("Rendering at {:.0} FPS ({:.2} ms frametime, frame {})", user_input.framerate, 1000.0 / user_input.framerate, timer.frame_count));
                 
                 let (message, color) =  match input_system.controllers[0] {
                     Some(_) => { ("Controller is connected.", [0.0, 1.0, 0.0, 1.0]) }
@@ -806,7 +844,7 @@ fn main() {
         match dev_gui.do_entity_window(&imgui_ui, &mut simulation_state.entities, focused_entity, &mut physics_engine.rigid_body_set) {
             EntityWindowResponse::LoadGLTF(path) => {
                 let mesh_data = asset::gltf_meshdata(&path);
-                let model = renderer.upload_gltf_model(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
+                let model = renderer.upload_gltf_model(&mut vk, &mesh_data, pbr_pipeline);
                 let spawn_point = camera.position + camera.look_direction() * 5.0;
                 let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
                 s.set_position(spawn_point, &mut physics_engine);
@@ -814,7 +852,7 @@ fn main() {
             }
             EntityWindowResponse::LoadOzyMesh(path) => {
                 let mesh_data = OzyMesh::from_file(&path);
-                let model = renderer.upload_ozymesh(&mut vk, &mesh_data, vk_3D_graphics_pipeline);
+                let model = renderer.upload_ozymesh(&mut vk, &mesh_data, pbr_pipeline);
                 let spawn_point = camera.position + camera.look_direction() * 5.0;
                 let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
                 s.set_position(spawn_point, &mut physics_engine);
@@ -842,7 +880,7 @@ fn main() {
             0.0, 0.0, 1.0, 0.0,
             0.0, -1.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 1.0
-        ) * glm::vec3_to_vec4(&input_output.movement_vector);
+        ) * glm::vec3_to_vec4(&user_input.movement_vector);
 
         //Move the main totoro back to the center if it's too far from the center of the world
         if let Some(entity) = simulation_state.entities.get_mut(main_totoro_key) {
@@ -860,11 +898,11 @@ fn main() {
                     Some(prop) => {
                         let min = 3.0;
                         let max = 200.0;
-                        lookat_dist -= 0.1 * lookat_dist * input_output.scroll_amount;
+                        lookat_dist -= 0.1 * lookat_dist * user_input.scroll_amount;
                         lookat_dist = f32::clamp(lookat_dist, min, max);
                         
                         let lookat = glm::look_at(&lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
-                        let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-input_output.orientation_delta.x, input_output.orientation_delta.y, 0.0, 0.0);
+                        let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-user_input.orientation_delta.x, user_input.orientation_delta.y, 0.0, 0.0);
             
                         lookat_pos += lookat_dist * glm::vec4_to_vec3(&world_space_offset);
                         let camera_pos = glm::normalize(&lookat_pos);
@@ -908,7 +946,7 @@ fn main() {
                         const FREECAM_SPEED: f32 = 3.0;
                         let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
                         camera.position += glm::vec4_to_vec3(&delta_pos);
-                        camera.orientation += input_output.orientation_delta;
+                        camera.orientation += user_input.orientation_delta;
         
                         camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
                         renderer.uniform_data.camera_position = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
@@ -921,7 +959,7 @@ fn main() {
                 const FREECAM_SPEED: f32 = 3.0;
                 let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
                 camera.position += glm::vec4_to_vec3(&delta_pos);
-                camera.orientation += input_output.orientation_delta;
+                camera.orientation += user_input.orientation_delta;
 
                 camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
                 renderer.uniform_data.camera_position = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
@@ -1032,30 +1070,6 @@ fn main() {
                 }
 
                 vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
-
-                //Shadow map pipeline memory barrier
-                let dependency_info = vk::DependencyInfo {
-                    image_memory_barrier_count: 1,
-                    p_image_memory_barriers: &vk::ImageMemoryBarrier2 {
-                        src_access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                        dst_access_mask: vk::AccessFlags2::SHADER_READ,
-                        src_stage_mask: vk::PipelineStageFlags2::ALL_COMMANDS,
-                        dst_stage_mask: vk::PipelineStageFlags2::ALL_COMMANDS,
-                        src_queue_family_index: vk.queue_family_index,
-                        dst_queue_family_index: vk.queue_family_index,
-                        image: sun_shadow_map.image(),
-                        subresource_range: vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::DEPTH,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 6
-                        },
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-                vk.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &dependency_info);
             }
             
             //Set the viewport for this frame

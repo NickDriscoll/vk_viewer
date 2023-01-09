@@ -6,7 +6,7 @@ use crate::*;
 
 #[derive(Default)]
 //The output of the input system
-pub struct InputOutput {
+pub struct UserInput {
     pub movement_multiplier: f32,
     pub movement_vector: glm::TVec3<f32>,
     pub orientation_delta: glm::TVec2<f32>,
@@ -19,8 +19,8 @@ pub struct InputOutput {
     pub spawn_totoro_prop: bool
 }
 
-pub enum UserInput {
-    Output(InputOutput),
+pub enum InputSystemOutput {
+    Output(UserInput),
     ExitProgram
 }
 pub struct InputSystem {
@@ -44,14 +44,14 @@ impl InputSystem {
         }
     }
 
-    pub fn poll(&mut self, timer: &FrameTimer, imgui_io: &mut Io) -> UserInput {
+    pub fn poll(&mut self, timer: &FrameTimer, imgui_io: &mut Io) -> InputSystemOutput {
         use sdl2::controller::Button;
         use sdl2::event::WindowEvent;
         use sdl2::keyboard::{Scancode};
         use sdl2::mouse::MouseButton;
 
         //The output from the input system that the simulation will read
-        let mut out = InputOutput::default();
+        let mut out = UserInput::default();
 
         out.movement_multiplier = 5.0f32;
         out.movement_vector = glm::zero();
@@ -84,7 +84,7 @@ impl InputSystem {
         //Pump event queue
         while let Some(event) = self.event_pump.poll_event() {
             match event {
-                Event::Quit{..} => { return UserInput::ExitProgram; }
+                Event::Quit{..} => { return InputSystemOutput::ExitProgram; }
                 Event::Window { win_event, .. } => {
                     match win_event {
                         WindowEvent::Resized(_, _) => { out.resize_window = true; }
@@ -221,6 +221,6 @@ impl InputSystem {
         out.framerate = imgui_io.framerate;
         out.movement_vector *= out.movement_multiplier;
 
-        UserInput::Output(out)
+        InputSystemOutput::Output(out)
     }
 }
