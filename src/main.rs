@@ -56,7 +56,7 @@ fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
     let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
-    let mut window_size = glm::vec2(1920, 1080);
+    let mut window_size = glm::vec2(1280, 720);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
@@ -122,8 +122,6 @@ fn main() {
 
         let subpass = vk::SubpassDescription {
             pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-            color_attachment_count: 0,
-            p_color_attachments: ptr::null(),
             p_depth_stencil_attachment: &depth_attachment_reference,
             ..Default::default()
         };
@@ -142,9 +140,9 @@ fn main() {
         let dependency = vk::SubpassDependency {
             src_subpass: 0,
             dst_subpass: vk::SUBPASS_EXTERNAL,
-            src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            src_stage_mask: vk::PipelineStageFlags::ALL_GRAPHICS,
             dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
-            src_access_mask: vk::AccessFlags::MEMORY_WRITE,
+            src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
             dst_access_mask: vk::AccessFlags::SHADER_READ,
             dependency_flags: vk::DependencyFlags::empty()
         };
@@ -256,14 +254,14 @@ fn main() {
             ..Default::default()
         };
 
-        //Create dependences between this pass and previous shadow pass, plus this pass and the PostFX pass
+        //Create dependences between this pass and the PostFX pass
         let dependencies = [
             vk::SubpassDependency {
                 src_subpass: vk::SUBPASS_EXTERNAL,
                 dst_subpass: 0,
-                src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                src_stage_mask: vk::PipelineStageFlags::ALL_GRAPHICS,
                 dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
-                src_access_mask: vk::AccessFlags::MEMORY_WRITE,
+                src_access_mask: vk::AccessFlags::NONE,
                 dst_access_mask: vk::AccessFlags::SHADER_READ,
                 dependency_flags: vk::DependencyFlags::empty()
             },
@@ -275,7 +273,6 @@ fn main() {
                 src_access_mask: vk::AccessFlags::MEMORY_WRITE,
                 dst_access_mask: vk::AccessFlags::SHADER_READ,
                 dependency_flags: vk::DependencyFlags::empty()
-
             }
         ];
 

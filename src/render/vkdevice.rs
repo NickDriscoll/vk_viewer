@@ -642,7 +642,8 @@ impl VulkanGraphicsDevice {
             if physical_device_features.features.texture_compression_bc == vk::FALSE {
                 tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
-            buffer_device_address = buffer_address_features.buffer_device_address != vk::FALSE;
+            //buffer_device_address = buffer_address_features.buffer_device_address != vk::FALSE;
+            buffer_device_address = false;
             
             if indexing_features.descriptor_binding_partially_bound == vk::FALSE || indexing_features.runtime_descriptor_array == vk::FALSE {
                 crash_with_error_dialog("Your GPU lacks the specific features required to do bindless rendering. Sorry.");

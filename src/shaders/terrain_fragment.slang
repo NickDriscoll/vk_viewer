@@ -104,9 +104,34 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         }
     }
 
-    //float3 ambient = float3(uniforms.ambient_factor) * params.albedo * ao;
-    float3 ambient = float3(uniforms.ambient_factor) * params.albedo;
+    float3 ambient = float3(uniforms.ambient_factor) * params.albedo * ao;
+    //float3 ambient = float3(uniforms.ambient_factor) * params.albedo;
     final_radiance += ambient;
 
-    return float4(final_radiance, 1.0);
+    //Determine which cascade the fragment is in
+    float3 adj_shadow_space_pos;
+    int shadow_cascade = -1;
+    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
+        uint cascade_index = i + (SHADOW_CASCADE_COUNT * 0);
+        float cascade_distance = uniforms.sun_shadow_distances[(cascade_index + 1) / 4][(cascade_index + 1) % 4];
+        if (input.clip_space_z < cascade_distance) {
+            adj_shadow_space_pos = float3(float2(input.sunshadow_space_positions[i].xy * 0.5 + 0.5), input.sunshadow_space_positions[i].z);
+            if (!(
+                adj_shadow_space_pos.z < 0.0 ||
+                adj_shadow_space_pos.z > 1.0 ||
+                adj_shadow_space_pos.x < 0.0 ||
+                adj_shadow_space_pos.x > 1.0 ||
+                adj_shadow_space_pos.y < 0.0 ||
+                adj_shadow_space_pos.y > 1.0
+            )) {
+                shadow_cascade = i;
+            }
+            break;
+        }
+    }
+    float2 f_shadow_pos = adj_shadow_space_pos.xy;
+    float3 sample_uv = float3(f_shadow_pos.xy, (float)shadow_cascade);
+
+    //return float4(final_radiance, 1.0);
+    return float4(global_array_textures[uniforms.sun_shadowmap_idx].Sample(float3(uvs, 1.0)).r);
 }
