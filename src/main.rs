@@ -254,17 +254,8 @@ fn main() {
             ..Default::default()
         };
 
-        //Create dependences between this pass and the PostFX pass
+        //Create dependencies between this pass and the PostFX pass
         let dependencies = [
-            vk::SubpassDependency {
-                src_subpass: vk::SUBPASS_EXTERNAL,
-                dst_subpass: 0,
-                src_stage_mask: vk::PipelineStageFlags::ALL_GRAPHICS,
-                dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
-                src_access_mask: vk::AccessFlags::NONE,
-                dst_access_mask: vk::AccessFlags::SHADER_READ,
-                dependency_flags: vk::DependencyFlags::empty()
-            },
             vk::SubpassDependency {
                 src_subpass: 0,
                 dst_subpass: vk::SUBPASS_EXTERNAL,

@@ -12,7 +12,7 @@ strip = true
 incremental = false
 debug = false
 #panic = "abort"
-lto = true
+#lto = true
 opt-level = 3
 
 [profile.release]

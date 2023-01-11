@@ -132,6 +132,5 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float2 f_shadow_pos = adj_shadow_space_pos.xy;
     float3 sample_uv = float3(f_shadow_pos.xy, (float)shadow_cascade);
 
-    //return float4(final_radiance, 1.0);
-    return float4(global_array_textures[uniforms.sun_shadowmap_idx].Sample(float3(uvs, 1.0)).r);
+    return float4(final_radiance, 1.0);
 }

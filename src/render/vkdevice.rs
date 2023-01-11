@@ -584,7 +584,6 @@ impl VulkanGraphicsDevice {
 
             unsafe { vk_entry.create_instance(&vk_create_info, MEMORY_ALLOCATOR).unwrap() }
         };
-
         let vk_ext_surface = ash::extensions::khr::Surface::new(&vk_entry, &vk_instance);
 
         //Create the Vulkan device
@@ -642,8 +641,8 @@ impl VulkanGraphicsDevice {
             if physical_device_features.features.texture_compression_bc == vk::FALSE {
                 tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
-            //buffer_device_address = buffer_address_features.buffer_device_address != vk::FALSE;
-            buffer_device_address = false;
+            buffer_device_address = buffer_address_features.buffer_device_address != vk::FALSE;
+            //buffer_device_address = false;
             
             if indexing_features.descriptor_binding_partially_bound == vk::FALSE || indexing_features.runtime_descriptor_array == vk::FALSE {
                 crash_with_error_dialog("Your GPU lacks the specific features required to do bindless rendering. Sorry.");
@@ -677,7 +676,7 @@ impl VulkanGraphicsDevice {
                 ..Default::default()
             };
 
-            vk_instance.create_device(vk_physical_device, &create_info, MEMORY_ALLOCATOR).unwrap()
+            vk_instance.create_device(vk_physical_device, &create_info, MEMORY_ALLOCATOR).expect("Error creating VkDevice")
         };
         
         let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);

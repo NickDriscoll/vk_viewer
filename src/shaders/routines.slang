@@ -154,7 +154,7 @@ float determine_shadowed(float3 f_shadow_pos, float3 normal, float3 light_direct
     bias = 0.00125 * (1.0 - max(0.0, dot(normal, light_direction))) + 0.00125;
 
     float3 sample_uv = float3(f_shadow_pos.xy, (float)cascade);
-    
+
     float sampled_depth = shadow_map.Sample(sample_uv).r;
     return sampled_depth + bias < f_shadow_pos.z ? 1.0 : 0.0;
 }
