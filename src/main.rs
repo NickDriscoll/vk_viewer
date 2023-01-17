@@ -808,6 +808,10 @@ fn main() {
                     }
                 }
 
+                if DevGui::do_standard_button(&imgui_ui, "Unfocus camera") {
+                    focused_entity = None;
+                }
+
                 let mut state = renderer.uniform_data.real_sky != 0.0;
                 if imgui_ui.checkbox("Realistic sky", &mut state) {
                     renderer.uniform_data.real_sky = if state {
@@ -845,6 +849,17 @@ fn main() {
                 let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
                 s.set_position(spawn_point, &mut physics_engine);
                 simulation_state.entities.insert(s);
+            }
+            EntityWindowResponse::CloneEntity(key) => {
+                if let Some(entity) = simulation_state.entities.get(key) {
+                    renderer.increment_model_count(entity.model);
+                    let new_entity = Entity {
+                        name: entity.name.clone(),
+                        model: entity.model,
+                        physics_component: physics_engine.clone_physics_component(&entity.physics_component)
+                    };
+                    simulation_state.entities.insert(new_entity);
+                }
             }
             EntityWindowResponse::DeleteEntity(key) => {
                 if let Some(entity) = simulation_state.entities.get(key) {

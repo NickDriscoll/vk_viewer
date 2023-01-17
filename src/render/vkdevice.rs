@@ -582,7 +582,7 @@ impl VulkanGraphicsDevice {
                 ..Default::default()
             };
 
-            unsafe { vk_entry.create_instance(&vk_create_info, MEMORY_ALLOCATOR).unwrap() }
+            unsafe { vk_entry.create_instance(&vk_create_info, MEMORY_ALLOCATOR).expect("Crash during Vulkan instance creation.") }
         };
         let vk_ext_surface = ash::extensions::khr::Surface::new(&vk_entry, &vk_instance);
 
@@ -676,7 +676,7 @@ impl VulkanGraphicsDevice {
                 ..Default::default()
             };
 
-            vk_instance.create_device(vk_physical_device, &create_info, MEMORY_ALLOCATOR).expect("Error creating VkDevice")
+            vk_instance.create_device(vk_physical_device, &create_info, MEMORY_ALLOCATOR).expect("Crash during VkDevice creation")
         };
         
         let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);

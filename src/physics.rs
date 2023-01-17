@@ -1,6 +1,5 @@
 use rapier3d::prelude::*;
 
-#[derive(Clone)]
 pub struct PhysicsComponent {
     pub rigid_body_handle: RigidBodyHandle,
     pub collider_handle: Option<ColliderHandle>,
@@ -52,6 +51,29 @@ impl PhysicsEngine {
             physics_hooks: (),
             event_handler: (),
             physics_pipeline
+        }
+    }
+
+    pub fn clone_physics_component(&mut self, original: &PhysicsComponent) -> PhysicsComponent {
+        let mut rigid_body_clone = self.rigid_body_set.get(original.rigid_body_handle).unwrap().clone();
+        let mut pos = rigid_body_clone.translation();
+        rigid_body_clone.set_translation(pos + glm::vec3(5.0, 0.0, 0.0), true);
+        let rigid_body_clone_handle = self.rigid_body_set.insert(rigid_body_clone);
+
+        let collider_handle = match original.collider_handle {
+            Some(handle) => {
+                let collider = self.collider_set.get(handle).unwrap();
+                let c = collider.clone();
+                Some(self.collider_set.insert_with_parent(c, rigid_body_clone_handle, &mut self.rigid_body_set))
+            }
+            None => { None }
+        };
+
+        PhysicsComponent {
+            rigid_body_handle: rigid_body_clone_handle,
+            collider_handle,
+            rigid_body_offset: original.rigid_body_offset,
+            scale: original.scale
         }
     }
 

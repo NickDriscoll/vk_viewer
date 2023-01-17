@@ -107,7 +107,6 @@ impl Default for TerrainSpec {
     }
 }
 
-#[derive(Clone)]
 pub struct Entity {
     pub name: String,
     pub model: ModelKey,

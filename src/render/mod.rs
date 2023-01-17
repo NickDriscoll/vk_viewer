@@ -831,7 +831,6 @@ impl Renderer {
             material_buffer,
             compute_buffer,
             samplers_descriptor_index,
-            //main_sun: None,
             directional_lights: SlotMap::with_key(),
             irradiance_map_idx,
             frames_in_flight: in_flight_frame_data,

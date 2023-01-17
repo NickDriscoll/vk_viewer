@@ -11,6 +11,7 @@ pub enum AssetWindowResponse {
 }
 
 pub enum EntityWindowResponse {
+    CloneEntity(EntityKey),
     DeleteEntity(EntityKey),
     LoadGLTF(String),
     LoadOzyMesh(String),
@@ -111,10 +112,11 @@ impl DevGui {
     pub fn do_entity_window(&mut self, ui: &Ui, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>, rigid_body_set: &mut RigidBodySet) -> EntityWindowResponse {
         let mut out = EntityWindowResponse::None;
         if !self.do_props_window { return out; }
+        
         let mut interacted = false;
         if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
             let mut i = 0;
-            let mut add_list = vec![];
+            let mut cloned_item = None;
             let mut deleted_item = None;
             for prop in entities.iter_mut() {
                 let prop_key = prop.0;
@@ -151,7 +153,7 @@ impl DevGui {
                     }
 
                     if Self::do_standard_button(ui, "Clone") {
-                        add_list.push(prop.clone());
+                        cloned_item = Some(prop_key);
                     }
                     ui.same_line();
                     if Self::do_standard_button(ui, "Delete") {
@@ -165,14 +167,8 @@ impl DevGui {
             }
             ui.separator();
 
-            for add in add_list {
-                if let Some(body) = rigid_body_set.get_mut(add.physics_component.rigid_body_handle) {
-                    let mut pos = body.position().clone();
-                    pos.translation.x += 5.0;
-
-                    body.set_position(pos, true);
-                    entities.insert(add);
-                }
+            if let Some(key) = cloned_item {
+                out = EntityWindowResponse::CloneEntity(key);
             }
 
             if let Some(key) = deleted_item {
