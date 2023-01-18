@@ -56,7 +56,7 @@ impl PhysicsEngine {
 
     pub fn clone_physics_component(&mut self, original: &PhysicsComponent) -> PhysicsComponent {
         let mut rigid_body_clone = self.rigid_body_set.get(original.rigid_body_handle).unwrap().clone();
-        let mut pos = rigid_body_clone.translation();
+        let pos = rigid_body_clone.translation();
         rigid_body_clone.set_translation(pos + glm::vec3(5.0, 0.0, 0.0), true);
         let rigid_body_clone_handle = self.rigid_body_set.insert(rigid_body_clone);
 

@@ -1,5 +1,5 @@
 use std::{process::Command, fs::OpenOptions};
-use std::io::Write;
+use std::io::{Write, BufWriter};
 
 const SHADER_SRC_DIR: &str = "./src/shaders";
 const SHADER_OUTPUT_DIR: &str = "./data/shaders";
@@ -20,7 +20,7 @@ fn compile_slang_shader(stage: &str, src_file: &str, out_file: &str) -> String {
 }
 
 fn main() {
-    let mut build_log = OpenOptions::new().write(true).truncate(true).create(true).open("./build_output.log").unwrap();
+    let mut build_log = BufWriter::new(OpenOptions::new().write(true).truncate(true).create(true).open("./build_output.log").unwrap());
     write!(build_log, "Starting compilation...\n").unwrap();
     
     if let Err(e) = std::fs::remove_dir_all(SHADER_OUTPUT_DIR) {
@@ -62,11 +62,13 @@ fn main() {
     }
 
     //Copy SDL2 dlls to target directory
-    let envs = ["debug", "release"];
-    let files = ["SDL2.dll", "SDL2_mixer.dll", "libmpg123-0.dll"];
+    let envs = ["debug", "release", "master"];
+    //let files = ["SDL2.dll", "SDL2_mixer.dll", "libmpg123-0.dll"];
     for env in envs {
-        for file in files {
-            if let Err(e) = std::fs::copy(&format!("./redist/{}", file), &format!("./target/{}/{}", env, file)) {
+        for path in std::fs::read_dir("./redist").unwrap() {
+            let entry = path.unwrap().file_name();
+            let filename = entry.to_str().unwrap();
+            if let Err(e) = std::fs::copy(&format!("./redist/{}", filename), &format!("./target/{}/{}", env, filename)) {
                 write!(build_log, "{}\n", e).unwrap();
             }
         }

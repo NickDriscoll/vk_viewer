@@ -54,6 +54,7 @@ impl WindowManager {
             }
 
             let desired_present_mode = vk::PresentModeKHR::FIFO;
+            //let desired_present_mode = vk::PresentModeKHR::MAILBOX;
             let mut has_fifo = false;
             for mode in present_modes {
                 if mode == desired_present_mode {
@@ -65,7 +66,6 @@ impl WindowManager {
                 crash_with_error_dialog("FIFO present mode not supported on your system.");
             }
             let present_mode = desired_present_mode;
-            //let present_mode = vk::PresentModeKHR::MAILBOX;
 
             vk_swapchain_image_format = surf_format.format;
             vk_swapchain_extent = vk::Extent2D {

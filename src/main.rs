@@ -40,7 +40,7 @@ use std::time::SystemTime;
 
 use ozy::structs::{FrameTimer, OptionVec};
 
-use input::InputSystemOutput;
+use input::{InputSystemOutput, InputSystem};
 use physics::{PhysicsEngine, PhysicsComponent};
 use structs::{Camera, TerrainSpec, SimulationSOA};
 use render::vkdevice;
@@ -140,7 +140,7 @@ fn main() {
         let dependency = vk::SubpassDependency {
             src_subpass: 0,
             dst_subpass: vk::SUBPASS_EXTERNAL,
-            src_stage_mask: vk::PipelineStageFlags::ALL_GRAPHICS,
+            src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
             dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
             src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
             dst_access_mask: vk::AccessFlags::SHADER_READ,
@@ -261,7 +261,7 @@ fn main() {
                 dst_subpass: vk::SUBPASS_EXTERNAL,
                 src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                 dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
-                src_access_mask: vk::AccessFlags::MEMORY_WRITE,
+                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
                 dst_access_mask: vk::AccessFlags::SHADER_READ,
                 dependency_flags: vk::DependencyFlags::empty()
             }
@@ -602,7 +602,7 @@ fn main() {
 
     let mut dev_gui = DevGui::new(&mut vk, swapchain_pass, graphics_pipeline_layout);
 
-    let mut input_system = input::InputSystem::init(&sdl_context);
+    let mut input_system = InputSystem::init(&sdl_context);
 
     //Main application loop
     'running: loop {
