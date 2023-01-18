@@ -547,7 +547,7 @@ impl VulkanGraphicsDevice {
         let vk_entry = ash::Entry::linked();
         let vk_instance = {
             let app_info = vk::ApplicationInfo {
-                api_version: vk::make_api_version(0, 1, 3, 0),
+                api_version: vk::make_api_version(0, 1, 2, 0),
                 ..Default::default()
             };
 
@@ -570,7 +570,7 @@ impl VulkanGraphicsDevice {
 
             #[cfg(not(master))]
             let layer_names = unsafe  {[
-                CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr()
+                CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr(),
             ]};
             
             let vk_create_info = vk::InstanceCreateInfo {
@@ -582,7 +582,7 @@ impl VulkanGraphicsDevice {
                 ..Default::default()
             };
 
-            unsafe { vk_entry.create_instance(&vk_create_info, MEMORY_ALLOCATOR).expect("Crash during Vulkan instance creation.") }
+            unsafe { vk_entry.create_instance(&vk_create_info, MEMORY_ALLOCATOR).expect("Crash during Vulkan instance creation") }
         };
         let vk_ext_surface = ash::extensions::khr::Surface::new(&vk_entry, &vk_instance);
 
@@ -665,7 +665,10 @@ impl VulkanGraphicsDevice {
                 ..Default::default()
             };
 
-            let extension_names = [ash::extensions::khr::Swapchain::name().as_ptr()];
+            let extension_names = unsafe {[
+                CStr::from_bytes_with_nul_unchecked(b"VK_KHR_shader_non_semantic_info\0").as_ptr(),
+                ash::extensions::khr::Swapchain::name().as_ptr()
+            ]};
             let create_info = vk::DeviceCreateInfo {
                 queue_create_info_count: 1,
                 p_queue_create_infos: [queue_create_info].as_ptr(),
