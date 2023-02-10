@@ -20,7 +20,7 @@ use ::function_name::named;
 use ash::vk::{self};
 use gpu_allocator::MemoryLocation;
 use gui::AssetWindowResponse;
-use imgui::{FontAtlasRefMut, SliderFlags};
+use imgui::{SliderFlags};
 use ozy::io::{DDSHeader, DDSHeader_DXT10, DDS_PixelFormat, OzyMesh};
 use rapier3d::prelude::*;
 use routines::struct_to_bytes;
@@ -88,7 +88,7 @@ fn main() {
         io.key_map[imgui::Key::Backspace as usize] = Scancode::Backspace as u32;
         io.key_map[imgui::Key::Space as usize] = Scancode::Space as u32;
         io.key_map[imgui::Key::Enter as usize] = Scancode::Return as u32;
-        io.key_map[imgui::Key::KeyPadEnter as usize] = Scancode::KpEnter as u32;
+        io.key_map[imgui::Key::KeypadEnter as usize] = Scancode::KpEnter as u32;
         io.key_map[imgui::Key::A as usize] = Scancode::A as u32;
         io.key_map[imgui::Key::C as usize] = Scancode::C as u32;
         io.key_map[imgui::Key::V as usize] = Scancode::V as u32;
@@ -319,23 +319,18 @@ fn main() {
     let mut renderer = Renderer::init(&mut vk, &window, swapchain_pass, hdr_forward_pass);
 
     //Create and upload Dear IMGUI font atlas
-    match imgui_context.fonts() {
-        FontAtlasRefMut::Owned(atlas) => unsafe {
-            let atlas_texture = atlas.build_alpha8_texture();
-            let atlas_format = vk::Format::R8_UNORM;
-            let atlas_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-            let gpu_image = vkdevice::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
-            let index = renderer.global_images.insert(gpu_image);
-            renderer.default_texture_idx = index as u32;
-            
-            atlas.clear_tex_data();                         //Free atlas memory CPU-side
-            atlas.tex_id = imgui::TextureId::new(index);    //Giving Dear Imgui a reference to the font atlas GPU texture
-            index as u32
-        }
-        FontAtlasRefMut::Shared(_) => {
-            panic!("Not dealing with this case.");
-        }
-    };
+    unsafe {
+        let atlas = imgui_context.fonts();
+        let atlas_texture = atlas.build_alpha8_texture();
+        let atlas_format = vk::Format::R8_UNORM;
+        let atlas_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        let gpu_image = vkdevice::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
+        let index = renderer.global_images.insert(gpu_image);
+        renderer.default_texture_idx = index as u32;
+        
+        atlas.clear_tex_data();                         //Free atlas memory CPU-side
+        atlas.tex_id = imgui::TextureId::new(index);    //Giving Dear Imgui a reference to the font atlas GPU texture
+    }
 
     let push_constant_stage_flags = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
     let graphics_pipeline_layout = unsafe {
@@ -730,32 +725,32 @@ fn main() {
         }
 
         if dev_gui.do_gui {
-            if let Some(t) = imgui::Window::new("Main control panel (press ESC to hide/unhide)").menu_bar(true).begin(&imgui_ui) {
+            if let Some(t) = imgui_ui.window("Main control panel (press ESC to hide/unhide)").begin() {
                 if let Some(mb) = imgui_ui.begin_menu_bar() {
                     if let Some(mt) = imgui_ui.begin_menu("File") {
-                        if imgui::MenuItem::new("New").build(&imgui_ui) {}
-                        if imgui::MenuItem::new("Load").build(&imgui_ui) {}
-                        if imgui::MenuItem::new("Save As...").build(&imgui_ui) {
+                        if imgui_ui.menu_item("New") {}
+                        if imgui_ui.menu_item("Load") {}
+                        if imgui_ui.menu_item("Save As...") {
                             if let Some(_path) = tfd::save_file_dialog("Save As...", "./data/scenes") {
                                 
                             }
                         }
-                        if imgui::MenuItem::new("Quit").build(&imgui_ui) { break 'running; }
+                        if imgui_ui.menu_item("Quit") { break 'running; }
                         mt.end();
                     
                     }
                     if let Some(mt) = imgui_ui.begin_menu("View") {
-                        if imgui::MenuItem::new("Asset window").build(&imgui_ui) { dev_gui.do_asset_window = true; }
-                        if imgui::MenuItem::new("Props window").build(&imgui_ui) { dev_gui.do_props_window = true; }
+                        if imgui_ui.menu_item("Asset window") { dev_gui.do_asset_window = true; }
+                        if imgui_ui.menu_item("Props window") { dev_gui.do_props_window = true; }
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Cheats") {
-                        if imgui::MenuItem::new("Made you look").build(&imgui_ui) {}
+                        if imgui_ui.menu_item("Made you look") {}
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Environment") {
-                        if imgui::MenuItem::new("Terrain generator").build(&imgui_ui) { dev_gui.do_terrain_window = true; }
-                        if imgui::MenuItem::new("Sun variables").build(&imgui_ui) { dev_gui.do_sun_window = true; }
+                        if imgui_ui.menu_item("Terrain generator") { dev_gui.do_terrain_window = true; }
+                        if imgui_ui.menu_item("Sun variables") { dev_gui.do_sun_window = true; }
                         mt.end();
                     }
                     mb.end();
@@ -775,14 +770,14 @@ fn main() {
                     dev_gui.do_sun_window(&imgui_ui, sun);
                 }
                 
-                imgui::Slider::new("Ambient factor", 0.0, 500.0).build(&imgui_ui, &mut renderer.uniform_data.ambient_factor);    
-                imgui::Slider::new("Stars threshold", 0.0, 16.0).build(&imgui_ui, &mut renderer.uniform_data.stars_threshold);
-                imgui::Slider::new("Stars exposure", 0.0, 5000.0).build(&imgui_ui, &mut renderer.uniform_data.stars_exposure);
-                imgui::Slider::new("Fog factor", 0.0, 8.0).build(&imgui_ui, &mut renderer.uniform_data.fog_density);
-                imgui::Slider::new("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&imgui_ui, &mut renderer.uniform_data.exposure);
-                imgui::Slider::new("Timescale factor", 0.001, 8.0).build(&imgui_ui, &mut simulation_state.timescale);
+                imgui_ui.slider("Ambient factor", 0.0, 500.0, &mut renderer.uniform_data.ambient_factor);    
+                imgui_ui.slider("Stars threshold", 0.0, 16.0, &mut renderer.uniform_data.stars_threshold);
+                imgui_ui.slider("Stars exposure", 0.0, 5000.0, &mut renderer.uniform_data.stars_exposure);
+                imgui_ui.slider("Fog factor", 0.0, 8.0, &mut renderer.uniform_data.fog_density);
+                imgui_ui.slider_config("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.exposure);
+                imgui_ui.slider("Timescale factor", 0.001, 8.0, &mut simulation_state.timescale);
     
-                if imgui::Slider::new("Music volume", 0, 128).build(&imgui_ui, &mut music_volume) { Music::set_volume(music_volume); }
+                if imgui_ui.slider("Music volume", 0, 128, &mut music_volume) { Music::set_volume(music_volume); }
     
                 imgui_ui.text(format!("Freecam is at ({:.4}, {:.4}, {:.4})", camera.position.x, camera.position.y, camera.position.z));
                 
@@ -997,7 +992,7 @@ fn main() {
         }
 
         //Resolve the current Dear Imgui frame
-        dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, imgui_ui);
+        dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, &mut imgui_context);
         
         //Does all work that needs to happen before the render passes
         let frame_info = renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);

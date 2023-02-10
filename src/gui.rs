@@ -73,7 +73,7 @@ impl DevGui {
     pub fn do_asset_window(&mut self, ui: &Ui, path: &str) -> AssetWindowResponse {
         let mut response = AssetWindowResponse::None;
         if !self.do_asset_window { return response; }
-        if let Some(win_t) = imgui::Window::new("Asset manager").begin(ui) {
+        if let Some(win_t) = ui.window("Asset manager").begin() {
             let p = Path::new(path);
             let mut i = 0;
             for entry in p.read_dir().unwrap() {
@@ -114,7 +114,7 @@ impl DevGui {
         if !self.do_props_window { return out; }
         
         let mut interacted = false;
-        if let Some(win_token) = imgui::Window::new("Entity window").begin(ui) {
+        if let Some(win_token) = ui.window("Entity window").begin() {
             let mut i = 0;
             let mut cloned_item = None;
             let mut deleted_item = None;
@@ -122,7 +122,7 @@ impl DevGui {
                 let prop_key = prop.0;
                 let prop = prop.1;
 
-                if let Some(token) = imgui::TreeNode::new(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push(ui) {
+                if let Some(token) = ui.tree_node_config(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push() {
                     if let Some(body) = rigid_body_set.get_mut(prop.physics_component.rigid_body_handle) {
                         let mut pos = body.position().clone();
                         let rot = body.rotation();
@@ -197,7 +197,7 @@ impl DevGui {
 
     pub fn do_material_list(&mut self, imgui_ui: &Ui, renderer: &mut Renderer) {
         if !self.do_mat_list { return; }
-        if let Some(token) = imgui::Window::new("Loaded materials").begin(imgui_ui) {
+        if let Some(token) = imgui_ui.window("Loaded materials").begin() {
             for i in 0..renderer.global_materials.len() {
                 if let Some(mat) = &renderer.global_materials[i] {
                     imgui_ui.text(format!("{:#?}", mat));
@@ -213,16 +213,16 @@ impl DevGui {
     pub fn do_terrain_window(&mut self, imgui_ui: &Ui, terrain: &mut TerrainSpec) -> bool {
         let mut regen_terrain = false;
         if self.do_gui && self.do_terrain_window {
-            if let Some(token) = imgui::Window::new("Terrain generator").begin(&imgui_ui) {
+            if let Some(token) = imgui_ui.window("Terrain generator").begin() {
                 let mut parameters_changed = false;
 
                 imgui_ui.text("Global terrain variables:");
-                parameters_changed |= imgui::Slider::new("Amplitude", 0.0, 8.0).build(&imgui_ui, &mut terrain.amplitude);
-                parameters_changed |= imgui::Slider::new("Exponent", 1.0, 5.0).build(&imgui_ui, &mut terrain.exponent);
-                parameters_changed |= imgui::Slider::new("Octaves", 1, 16).build(&imgui_ui, &mut terrain.octaves);
-                parameters_changed |= imgui::Slider::new("Lacunarity", 0.0, 5.0).build(&imgui_ui, &mut terrain.lacunarity);
-                parameters_changed |= imgui::Slider::new("Gain", 0.0, 2.0).build(&imgui_ui, &mut terrain.gain);
-                parameters_changed |= imgui::Slider::new("Scale", 1.0, 50.0).build(&imgui_ui, &mut terrain.scale);
+                parameters_changed |= imgui_ui.slider("Amplitude", 0.0, 8.0, &mut terrain.amplitude);
+                parameters_changed |= imgui_ui.slider("Exponent", 1.0, 5.0, &mut terrain.exponent);
+                parameters_changed |= imgui_ui.slider("Octaves", 1, 16, &mut terrain.octaves);
+                parameters_changed |= imgui_ui.slider("Lacunarity", 0.0, 5.0, &mut terrain.lacunarity);
+                parameters_changed |= imgui_ui.slider("Gain", 0.0, 2.0, &mut terrain.gain);
+                parameters_changed |= imgui_ui.slider("Scale", 1.0, 50.0, &mut terrain.scale);
                 imgui_ui.separator();
 
                 imgui_ui.text(format!("Last seed used: 0x{:X}", terrain.seed));
@@ -242,18 +242,18 @@ impl DevGui {
     }
 
     pub fn do_sun_window(&mut self, ui: &Ui, sun: &mut SunLight) {
-        imgui::Slider::new("Sun pitch speed", 0.0, 1.0).build(&ui, &mut sun.pitch_speed);
-        imgui::Slider::new("Sun pitch", 0.0, glm::two_pi::<f32>()).build(&ui, &mut sun.pitch);
-        imgui::Slider::new("Sun yaw speed", -1.0, 1.0).build(&ui, &mut sun.yaw_speed);
-        imgui::Slider::new("Sun yaw", 0.0, glm::two_pi::<f32>()).build(&ui, &mut sun.yaw);
+        ui.slider("Sun pitch speed", 0.0, 1.0, &mut sun.pitch_speed);
+        ui.slider("Sun pitch", 0.0, glm::two_pi::<f32>(), &mut sun.pitch);
+        ui.slider("Sun yaw speed", -1.0, 1.0, &mut sun.yaw_speed);
+        ui.slider("Sun yaw", 0.0, glm::two_pi::<f32>(), &mut sun.yaw);
     }
 
     //This is where we upload the Dear Imgui geometry for the current frame
-    pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, ui: imgui::Ui) {
+    pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, context: &mut imgui::Context) {
         let mut index_buffers = Vec::with_capacity(16);
         let mut draw_cmd_lists = Vec::with_capacity(16);
         let mut offsets = Vec::with_capacity(16);
-        let imgui_draw_data = ui.render();
+        let imgui_draw_data = context.render();
 
         let most_recent_dead_frame = &self.frames[self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT];
 
