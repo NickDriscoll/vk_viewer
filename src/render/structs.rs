@@ -371,6 +371,7 @@ impl CascadedShadowMap {
             clip_distances[i] = p.z;
         }
 
+        let sampler = vk.get_sampler(renderer.shadow_sampler).unwrap();
         let gpu_image = vkdevice::GPUImage {
             image,
             view: Some(image_view),
@@ -379,7 +380,7 @@ impl CascadedShadowMap {
             mip_count: 1,
             format,
             layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-            sampler: renderer.shadow_sampler,
+            sampler,
             allocation
         };
         

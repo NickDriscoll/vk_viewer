@@ -51,7 +51,6 @@ use crate::asset::GLTFMeshData;
 use crate::gui::{DevGui, EntityWindowResponse};
 use crate::structs::Entity;
 
-//Entry point
 fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");

@@ -1,10 +1,12 @@
 use std::{ffi::c_void, io::Read, ops::Index};
 
+use ash::prelude::VkResult;
 use ash::vk;
 use gpu_allocator::vulkan::*;
 use gpu_allocator::MemoryLocation;
 use ozy::io::DDSHeader;
 use sdl2::libc::c_char;
+use slotmap::new_key_type;
 use std::ptr;
 use crate::*;
 use render::FreeList;
@@ -92,14 +94,14 @@ pub unsafe fn allocate_named_image_memory(vk: &mut VulkanGraphicsDevice, image: 
     alloc
 }
 
-pub fn load_bc7_texture(vk: &mut VulkanGraphicsDevice, global_textures: &mut FreeList<GPUImage>, sampler: vk::Sampler, path: &str) -> u32 {
+pub fn load_bc7_texture(vk: &mut VulkanGraphicsDevice, global_textures: &mut FreeList<GPUImage>, sampler_key: SamplerKey, path: &str) -> u32 {
     unsafe {
-        let vim = GPUImage::from_bc7_file(vk, sampler, path);
+        let vim = GPUImage::from_bc7_file(vk, sampler_key, path);
         global_textures.insert(vim) as u32
     }
 }
 
-pub unsafe fn upload_raw_image(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, format: vk::Format, layout: vk::ImageLayout, width: u32, height: u32, rgba: &[u8]) -> GPUImage {
+pub unsafe fn upload_raw_image(vk: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, format: vk::Format, layout: vk::ImageLayout, width: u32, height: u32, rgba: &[u8]) -> GPUImage {
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
         format,
@@ -122,6 +124,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampl
     let normal_image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
     let allocation = allocate_image_memory(vk, normal_image);
 
+    let sampler = vk.get_sampler(sampler_key).unwrap();
     let mut vim = GPUImage {
         image: normal_image,
         view: None,
@@ -168,13 +171,14 @@ pub struct GPUImage {
 }
 
 impl GPUImage {
-    pub fn allocate(vk: &mut VulkanGraphicsDevice, create_info: &vk::ImageCreateInfo, sampler: vk::Sampler) -> Self {
+    pub fn allocate(vk: &mut VulkanGraphicsDevice, create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey) -> Self {
         unsafe {
             let image = vk.device.create_image(&create_info, MEMORY_ALLOCATOR).unwrap();
             let allocation = allocate_image_memory(vk, image);
             let width = create_info.extent.width;
             let height = create_info.extent.height;
             let mip_count = ozy::routines::calculate_mipcount(width, height);
+            let sampler = vk.get_sampler(sampler_key).unwrap();
 
             GPUImage {
                 image,
@@ -200,20 +204,20 @@ impl GPUImage {
         }
     }
 
-    pub fn from_png_file(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, path: &str) -> Self {
+    pub fn from_png_file(vk: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, path: &str) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
         file.read_exact(&mut png_bytes).unwrap();
-        Self::from_png_bytes(vk, sampler, &png_bytes)
+        Self::from_png_bytes(vk, sampler_key, &png_bytes)
     }
 
-    pub fn from_png_file_deferred(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, path: &str) -> DeferredImage {
+    pub fn from_png_file_deferred(vk: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, path: &str) -> DeferredImage {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
         file.read_exact(&mut png_bytes).unwrap();
-        Self::from_png_bytes_deferred(vk, sampler, &png_bytes)
+        Self::from_png_bytes_deferred(vk, sampler_key, &png_bytes)
     }
-    pub fn from_png_bytes_deferred(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, png_bytes: &[u8]) -> DeferredImage {
+    pub fn from_png_bytes_deferred(vk: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, png_bytes: &[u8]) -> DeferredImage {
         let decoder = png::Decoder::new(png_bytes);
         let read_info = decoder.read_info().unwrap();
         let info = read_info.info();
@@ -247,7 +251,7 @@ impl GPUImage {
                 ..Default::default()
             };
             
-            let mut def_image = asset::upload_image_deferred(vk, &image_create_info, sampler, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
+            let mut def_image = asset::upload_image_deferred(vk, &image_create_info, sampler_key, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
 
             let view_info = vk::ImageViewCreateInfo {
                 image: def_image.final_image.image,
@@ -268,7 +272,7 @@ impl GPUImage {
         }
     }
 
-    pub fn from_png_bytes(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, png_bytes: &[u8]) -> Self {
+    pub fn from_png_bytes(vk: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, png_bytes: &[u8]) -> Self {
         let decoder = png::Decoder::new(png_bytes);
         let read_info = decoder.read_info().unwrap();
         let info = read_info.info();
@@ -329,6 +333,7 @@ impl GPUImage {
             let cbidx = vk.command_buffer_indices.insert(0);
             vk.device.begin_command_buffer(vk.command_buffers[cbidx], &vk::CommandBufferBeginInfo::default()).unwrap();
 
+            let sampler = vk.get_sampler(sampler_key).unwrap();
             let mut vim = GPUImage {
                 image,
                 view: Some(view),
@@ -360,7 +365,7 @@ impl GPUImage {
         }
     }
 
-    pub fn from_bc7_bytes(vk: &mut VulkanGraphicsDevice, raw_bytes: &[u8], sampler: vk::Sampler, width: u32, height: u32, mipmap_count: u32, format: vk::Format) -> Self {
+    pub fn from_bc7_bytes(vk: &mut VulkanGraphicsDevice, raw_bytes: &[u8], sampler_key: SamplerKey, width: u32, height: u32, mipmap_count: u32, format: vk::Format) -> Self {
         let image_extent = vk::Extent3D {
             width,
             height,
@@ -385,6 +390,7 @@ impl GPUImage {
         unsafe {
             let image = vk.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
             let allocation = allocate_image_memory(vk, image);
+            let sampler = vk.get_sampler(sampler_key).unwrap();
 
             let mut vim = GPUImage {
                 image,
@@ -420,7 +426,7 @@ impl GPUImage {
         }
     }
 
-    pub unsafe fn from_bc7_file(vk: &mut VulkanGraphicsDevice, sampler: vk::Sampler, path: &str) -> Self {
+    pub unsafe fn from_bc7_file(vk: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, path: &str) -> Self {
         use ozy::io::DXGI_FORMAT;
 
         let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
@@ -448,7 +454,7 @@ impl GPUImage {
             _ => { crash_with_error_dialog("Unreachable statement reached in GPUImage::from_bc7_file()"); }
         };
 
-        Self::from_bc7_bytes(vk, &raw_bytes, sampler, width, height, mipmap_count, format)
+        Self::from_bc7_bytes(vk, &raw_bytes, sampler_key, width, height, mipmap_count, format)
     }
 }
 
@@ -526,7 +532,8 @@ impl DeferredImage {
     }
 }
 
-//All the variables that Vulkan needs
+//All the variables associated with the Vulkan graphics device
+new_key_type! { pub struct SamplerKey; }
 pub struct VulkanGraphicsDevice {
     pub instance: ash::Instance,
     pub physical_device: vk::PhysicalDevice,
@@ -539,10 +546,36 @@ pub struct VulkanGraphicsDevice {
     pub command_pool: vk::CommandPool,
     pub command_buffer_indices: FreeList<u8>,
     pub command_buffers: Vec<vk::CommandBuffer>,
-    pub command_buffer_fence: vk::Fence
+    pub command_buffer_fence: vk::Fence,
+    samplers: DenseSlotMap<SamplerKey, vk::Sampler>
 }
 
 impl VulkanGraphicsDevice {
+    pub unsafe fn create_sampler(&mut self, info: &vk::SamplerCreateInfo) -> VkResult<SamplerKey> {
+        let sampler = match self.device.create_sampler(info, MEMORY_ALLOCATOR) {
+            Ok(s) => { s }
+            Err(e) => { return Err(e) }
+        };
+        Ok(self.samplers.insert(sampler))
+    }
+
+    pub fn get_sampler(&self, key: SamplerKey) -> Option<vk::Sampler> {
+        match self.samplers.get(key) {
+            Some(k) => { Some(*k) }
+            None => None
+        }
+    }
+
+    pub unsafe fn destroy_sampler(&mut self, key: SamplerKey) -> bool {
+        match self.samplers.remove(key) {
+            Some(sampler) => {
+                self.device.destroy_sampler(sampler, MEMORY_ALLOCATOR);
+                true
+            }
+            None => { false }
+        }
+    }
+
     pub fn init() -> Self {
         let vk_entry = ash::Entry::linked();
         let vk_instance = {
@@ -735,7 +768,8 @@ impl VulkanGraphicsDevice {
             command_pool,
             command_buffer_indices: FreeList::with_capacity(command_buffer_count),
             command_buffers: general_command_buffers,
-            command_buffer_fence: graphics_command_buffer_fence
+            command_buffer_fence: graphics_command_buffer_fence,
+            samplers: DenseSlotMap::with_key()
         }
     }
 }

@@ -52,13 +52,14 @@ pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
     }
 }
 
-pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler: vk::Sampler, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
+pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
     let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
     staging_buffer.write_buffer(vk, &raw_bytes);
 
     //Create image
+    let sampler = vk.get_sampler(sampler_key).unwrap();
     let image = vk.device.create_image(image_create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
     let allocation = vkdevice::allocate_image_memory(vk, image);
     let vim = GPUImage {
@@ -404,7 +405,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
     
     unsafe {
         let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        let sampler = vk.device.create_sampler(&vk::SamplerCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
+        let sampler = vk.create_sampler(&vk::SamplerCreateInfo::default()).unwrap();
         let def_image = upload_image_deferred(vk, &image_create_info, sampler, gpu_image_layout, &bytes);
         let mut def_images = DeferredImage::synchronize(vk, vec![def_image]);
         let finished_image_reqs = vk.device.get_image_memory_requirements(def_images[0].final_image.image);
@@ -455,7 +456,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
             im.final_image.free(vk);
         }
         vk.command_buffer_indices.remove(cb_idx);
-        vk.device.destroy_sampler(sampler, vkdevice::MEMORY_ALLOCATOR);
+        vk.destroy_sampler(sampler);
 
         let uncompressed_bytes = readback_buffer.read_buffer_bytes();
         readback_buffer.free(vk);

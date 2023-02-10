@@ -249,9 +249,9 @@ pub struct Renderer {
     pub default_emissive_idx: u32,
     pub default_texture_idx: u32,
 
-    pub material_sampler: vk::Sampler,
-    pub point_sampler: vk::Sampler,
-    pub shadow_sampler: vk::Sampler,
+    pub material_sampler: SamplerKey,
+    pub point_sampler: SamplerKey,
+    pub shadow_sampler: SamplerKey,
 
     models: InstancedSlotMap<ModelKey, Model>,
     primitives: SlotMap<PrimitiveKey, Primitive>,
@@ -631,7 +631,7 @@ impl Renderer {
                 unnormalized_coordinates: vk::FALSE,
                 ..Default::default()
             };
-            let mat = vk.device.create_sampler(&sampler_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            let mat = vk.create_sampler(&sampler_info).unwrap();
             
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::NEAREST,
@@ -640,7 +640,7 @@ impl Renderer {
                 anisotropy_enable: vk::FALSE,
                 ..sampler_info
             };
-            let font = vk.device.create_sampler(&sampler_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            let font = vk.create_sampler(&sampler_info).unwrap();
 
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::LINEAR,
@@ -658,7 +658,7 @@ impl Renderer {
                 unnormalized_coordinates: vk::FALSE,
                 ..Default::default()
             };
-            let shadow = vk.device.create_sampler(&sampler_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            let shadow = vk.create_sampler(&sampler_info).unwrap();
 
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::LINEAR,
@@ -677,7 +677,7 @@ impl Renderer {
                 unnormalized_coordinates: vk::FALSE,
                 ..Default::default()
             };
-            let cubemap = vk.device.create_sampler(&sampler_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            let cubemap = vk.create_sampler(&sampler_info).unwrap();
 
             (mat, font, shadow, cubemap)
         };
@@ -838,7 +838,7 @@ impl Renderer {
         }
     }
 
-    fn create_hdr_framebuffers(vk: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler: vk::Sampler, global_images: &mut FreeList<GPUImage>) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
+    fn create_hdr_framebuffers(vk: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler_key: SamplerKey, global_images: &mut FreeList<GPUImage>) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
         let hdr_color_format = vk::Format::R16G16B16A16_SFLOAT;
         let vk_depth_format = vk::Format::D32_SFLOAT;
 
@@ -949,6 +949,7 @@ impl Renderer {
             };
             hdr_framebuffers[i] = framebuffer_object;
 
+            let sampler = vk.get_sampler(sampler_key).unwrap();
             let gpu_image = GPUImage {
                 image: primary_color_buffer,
                 view: Some(color_buffer_view),
