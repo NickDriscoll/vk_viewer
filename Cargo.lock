@@ -1523,6 +1523,7 @@ dependencies = [
  "gpu-allocator",
  "imgui",
  "ispc-texcomp",
+ "mint",
  "nalgebra-glm",
  "noise",
  "ozy_engine",

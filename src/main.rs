@@ -598,6 +598,8 @@ fn main() {
 
     let mut input_system = InputSystem::init(&sdl_context);
 
+    let mut totoro_counter = 0;
+
     //Main application loop
     'running: loop {
         timer.update(); //Update frame timer
@@ -658,7 +660,8 @@ fn main() {
                 rigid_body_offset: glm::vec3(0.0, 0.0, 2.25),
                 scale: 1.0
             };
-            let e = Entity::new(String::from("fired totoro"), totoro_model, &mut physics_engine).set_physics_component(p_component);
+            let e = Entity::new(format!("Dynamic Totoro #{}", totoro_counter), totoro_model, &mut physics_engine).set_physics_component(p_component);
+            totoro_counter += 1;
             simulation_state.entities.insert(e);
             renderer.increment_model_count(totoro_model);
         }
@@ -705,7 +708,7 @@ fn main() {
 
         // --- Sim Update ---
 
-        let imgui_ui = imgui_context.frame();   //Transition Dear ImGUI into recording state
+        let imgui_ui = imgui_context.new_frame();   //Transition Dear ImGUI into recording state
 
         //Terrain generation window
         if dev_gui.do_terrain_window(&imgui_ui, &mut terrain) {
@@ -725,7 +728,9 @@ fn main() {
         }
 
         if dev_gui.do_gui {
-            if let Some(t) = imgui_ui.window("Main control panel (press ESC to hide/unhide)").begin() {
+            if let Some(t) = imgui_ui.window("Main control panel (press ESC to hide/unhide)")
+                .menu_bar(true)
+                .begin() {
                 if let Some(mb) = imgui_ui.begin_menu_bar() {
                     if let Some(mt) = imgui_ui.begin_menu("File") {
                         if imgui_ui.menu_item("New") {}
@@ -741,7 +746,7 @@ fn main() {
                     }
                     if let Some(mt) = imgui_ui.begin_menu("View") {
                         if imgui_ui.menu_item("Asset window") { dev_gui.do_asset_window = true; }
-                        if imgui_ui.menu_item("Props window") { dev_gui.do_props_window = true; }
+                        if imgui_ui.menu_item("Props window") { dev_gui.do_entity_window = true; }
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Cheats") {
@@ -827,7 +832,7 @@ fn main() {
             AssetWindowResponse::None => {}
         }
 
-        match dev_gui.do_entity_window(&imgui_ui, &mut simulation_state.entities, focused_entity, &mut physics_engine.rigid_body_set) {
+        match dev_gui.do_entity_window(&imgui_ui, window_size, &mut simulation_state.entities, focused_entity, &mut physics_engine.rigid_body_set) {
             EntityWindowResponse::LoadGLTF(path) => {
                 let mesh_data = asset::gltf_meshdata(&path);
                 let model = renderer.upload_gltf_model(&mut vk, &mesh_data, pbr_pipeline);

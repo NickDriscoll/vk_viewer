@@ -111,6 +111,7 @@ impl InputSystem {
                     imgui_io.keys_down[sc as usize] = false;
                 }
                 Event::MouseButtonUp { mouse_btn, .. } => {
+                    if imgui_io.want_capture_mouse { continue; }
                     match mouse_btn {
                         MouseButton::Right => { self.cursor_captured = !self.cursor_captured; }
                         _ => {}

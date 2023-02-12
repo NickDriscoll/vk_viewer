@@ -37,6 +37,7 @@ slotmap = "1.0"
 ispc-texcomp = "0.1.20"
 function_name = "0.3.0"
 bsod = "0.1.1"
+mint = "0.5.9"
 
 [dependencies.ash]
 version = "0.36.0"

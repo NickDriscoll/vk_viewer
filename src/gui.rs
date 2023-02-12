@@ -27,8 +27,7 @@ pub struct DevGui {
     pub current_frame: usize,
     pub do_gui: bool,
     pub do_terrain_window: bool,
-    pub do_prop_window: bool,
-    pub do_props_window: bool,
+    pub do_entity_window: bool,
     pub do_asset_window: bool,
     pub do_mat_list: bool,
     pub do_sun_window: bool
@@ -66,6 +65,7 @@ impl DevGui {
             frames,
             current_frame: 0,
             do_gui: true,
+            do_entity_window: true,
             ..Default::default()
         }
     }
@@ -109,12 +109,16 @@ impl DevGui {
         response
     }
 
-    pub fn do_entity_window(&mut self, ui: &Ui, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>, rigid_body_set: &mut RigidBodySet) -> EntityWindowResponse {
+    pub fn do_entity_window(&mut self, ui: &Ui, window_size: glm::TVec2<u32>, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>, rigid_body_set: &mut RigidBodySet) -> EntityWindowResponse {
         let mut out = EntityWindowResponse::None;
-        if !self.do_props_window { return out; }
+        if !self.do_entity_window { return out; }
         
         let mut interacted = false;
-        if let Some(win_token) = ui.window("Entity window").begin() {
+        if let Some(win_token) = ui.window("Entity window")
+            .position(mint::Vector2{x: window_size.x as f32, y: 0.0}, imgui::Condition::Always)
+            .position_pivot(mint::Vector2 {x: 1.0, y: 0.0})
+            .resizable(false)
+            .begin() {
             let mut i = 0;
             let mut cloned_item = None;
             let mut deleted_item = None;
@@ -187,7 +191,7 @@ impl DevGui {
                 }
             }
 
-            if DevGui::do_standard_button(ui, "Close") { self.do_props_window = false; }
+            if DevGui::do_standard_button(ui, "Close") { self.do_entity_window = false; }
             win_token.end();
         }
         if interacted { out = EntityWindowResponse::Interacted; }
