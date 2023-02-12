@@ -69,7 +69,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
             normal,
             light.direction.xyz,
             input.sunshadow_space_positions,
-            uniforms.sun_shadow_distances,
+            uniforms.directional_lights[i].shadow_distances,
             input.clip_space_z,
             0
         );

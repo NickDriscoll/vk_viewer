@@ -195,7 +195,7 @@ float2 compute_cascade_shadowing(
     float3 normal,
     float3 light_direction,
     float4 shadow_space_positions[SHADOW_CASCADE_COUNT],
-    float4 cascade_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4 + 1],
+    float4 cascade_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4],
     float clip_space_z,
     uint directional_light_idx,
 ) {

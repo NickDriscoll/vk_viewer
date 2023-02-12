@@ -1423,19 +1423,20 @@ impl Renderer {
 
                 uniforms.directional_lights[i] = DirectionalLight::new(direction, irradiance);
 
-                let matrices = light.shadow_map.compute_shadow_cascade_matrices(
-                    &direction,
-                    &uniforms.view_from_world,
-                    &uniforms.clip_from_view
-                );
-                for j in 0..matrices.len() {
-                    uniforms.sun_shadow_matrices[CascadedShadowMap::CASCADE_COUNT * i + j] = matrices[j];
+                let mut matrices = [glm::identity(); CascadedShadowMap::CASCADE_COUNT];
+                let mut dists = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
+
+                if let Some(shadow_map) = &light.shadow_map {
+                    matrices = shadow_map.compute_shadow_cascade_matrices(
+                        &direction,
+                        &uniforms.view_from_world,
+                        &uniforms.clip_from_view
+                    );
+                    dists = shadow_map.clip_distances();
                 }
 
-                let dists = light.shadow_map.clip_distances();
-                for j in 0..dists.len() {
-                    uniforms.sun_shadow_distances[(CascadedShadowMap::CASCADE_COUNT + 1) * i + j] = dists[j];
-                }
+                uniforms.directional_lights[i].shadow_matrices = matrices;
+                uniforms.directional_lights[i].shadow_distances = dists;
 
                 i += 1;
             }

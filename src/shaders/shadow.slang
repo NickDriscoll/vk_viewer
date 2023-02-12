@@ -20,7 +20,7 @@ ShadowVertexOutput vertex_main(ModelVertex vertex, int view_id: SV_ViewID) {
     float3 world_position = mul(model_matrix, float4(position, 1.0)).xyz;
 
     ShadowVertexOutput out;
-    out.clip_out = mul(uniforms.sun_shadow_matrices[view_id], float4(world_position, 1.0));
+    out.clip_out = mul(uniforms.directional_lights[0].shadow_matrices[view_id], float4(world_position, 1.0));
     out.uv = vertex_uvs[vertex.id + uv_buffer_offset];
 
     return out;

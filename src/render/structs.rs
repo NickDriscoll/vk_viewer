@@ -7,6 +7,7 @@ use render::{vkdevice, VulkanGraphicsDevice};
 use crate::*;
 
 pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
+pub const SHADOW_DISTANCE_ARRAY_LENGTH: usize = (CascadedShadowMap::CASCADE_COUNT + 1) + (4 - ((CascadedShadowMap::CASCADE_COUNT + 1) % 4));
 
 pub trait UniqueID {
     fn id(&self) -> u64;
@@ -21,6 +22,8 @@ pub struct DeferredDelete {
 #[derive(Clone, Debug, Default)]
 #[repr(C)]
 pub struct DirectionalLight {
+    pub shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT],
+    pub shadow_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH],
     pub direction: glm::TVec3<f32>,
     pad0: f32,
     pub irradiance: glm::TVec3<f32>,
@@ -30,6 +33,8 @@ pub struct DirectionalLight {
 impl DirectionalLight {
     pub fn new(direction: glm::TVec3<f32>, irradiance: glm::TVec3<f32>) -> Self {
         DirectionalLight {
+            shadow_matrices: [glm::identity(); CascadedShadowMap::CASCADE_COUNT],
+            shadow_distances: [0.0; SHADOW_DISTANCE_ARRAY_LENGTH],
             direction,
             pad0: 0.0,
             irradiance,
@@ -226,10 +231,8 @@ pub struct EnvironmentUniforms {
     pub view_from_world: glm::TMat4<f32>,
     pub clip_from_skybox: glm::TMat4<f32>,
     pub clip_from_screen: glm::TMat4<f32>,
-    pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT * MAX_DIRECTIONAL_LIGHTS],
+    //pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT * MAX_DIRECTIONAL_LIGHTS],
     pub camera_position: glm::TVec4<f32>,
-    //pub sun_direction: glm::TVec4<f32>,
-    //pub sun_irradiance: glm::TVec4<f32>,
     pub directional_lights: [DirectionalLight; MAX_DIRECTIONAL_LIGHTS],
     pub directional_light_count: u32,
     pub sun_shadowmap_idx: u32,
@@ -243,11 +246,11 @@ pub struct EnvironmentUniforms {
     pub exposure: f32,
     pub ambient_factor: f32,
     pub real_sky: f32,
-    pub pad0: f32,
-    pub pad1: f32,
-    pub pad2: f32,
-    pub pad3: f32,
-    pub sun_shadow_distances: [f32; (CascadedShadowMap::CASCADE_COUNT + 1) * MAX_DIRECTIONAL_LIGHTS],
+    //pub pad0: f32,
+    //pub pad1: f32,
+    //pub pad2: f32,
+    //pub pad3: f32,
+    //pub sun_shadow_distances: [f32; (CascadedShadowMap::CASCADE_COUNT + 1) * MAX_DIRECTIONAL_LIGHTS],
 }
 
 pub struct CascadedShadowMap {
@@ -257,17 +260,17 @@ pub struct CascadedShadowMap {
     format: vk::Format,
     texture_index: u32,
     resolution: u32,
-    clip_distances: [f32; Self::CASCADE_COUNT + 1],
-    view_distances: [f32; Self::CASCADE_COUNT + 1]
+    clip_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH],
+    view_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH]
 }
 
 impl CascadedShadowMap {
     pub const CASCADE_COUNT: usize = 6;
 
-    pub fn clip_distances(&self) -> [f32; Self::CASCADE_COUNT + 1] { self.clip_distances }
-    pub fn view_distances(&self) -> [f32; Self::CASCADE_COUNT + 1] { self.view_distances }
+    pub fn clip_distances(&self) -> [f32; SHADOW_DISTANCE_ARRAY_LENGTH] { self.clip_distances }
+    pub fn view_distances(&self) -> [f32; SHADOW_DISTANCE_ARRAY_LENGTH] { self.view_distances }
 
-    pub fn update_view_distances(&mut self, clipping_from_view: &glm::TMat4<f32>, view_distances: [f32; Self::CASCADE_COUNT + 1]) {
+    pub fn update_view_distances(&mut self, clipping_from_view: &glm::TMat4<f32>, view_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH]) {
         for i in 0..view_distances.len() {
             let p = clipping_from_view * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
             self.clip_distances[i] = p.z;
@@ -355,7 +358,7 @@ impl CascadedShadowMap {
 
         //Manually picking the cascade distances because math is hard
         //The shadow cascade distances are negative bc they are in view space
-        let mut view_distances = [0.0; Self::CASCADE_COUNT + 1];
+        let mut view_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
         view_distances[0] = -(Renderer::NEAR_CLIP_DISTANCE);
         view_distances[1] = -(Renderer::NEAR_CLIP_DISTANCE + 10.0);
         view_distances[2] = -(Renderer::NEAR_CLIP_DISTANCE + 30.0);
@@ -365,7 +368,7 @@ impl CascadedShadowMap {
         view_distances[6] = -(Renderer::NEAR_CLIP_DISTANCE + 500.0);
 
         //Compute the clip space distances
-        let mut clip_distances = [0.0; Self::CASCADE_COUNT + 1];
+        let mut clip_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
         for i in 0..view_distances.len() {
             let p = clipping_from_view * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
             clip_distances[i] = p.z;
@@ -474,7 +477,7 @@ pub struct SunLight {
     pub pitch_speed: f32,
     pub yaw_speed: f32,
     pub irradiance: glm::TVec3<f32>,
-    pub shadow_map: CascadedShadowMap
+    pub shadow_map: Option<CascadedShadowMap>
 }
 
 pub struct VertexInputConfiguration {

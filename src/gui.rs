@@ -114,10 +114,14 @@ impl DevGui {
         if !self.do_entity_window { return out; }
         
         let mut interacted = false;
+        let window_x = window_size.x as f32;
+        let window_y = window_size.y as f32;
         if let Some(win_token) = ui.window("Entity window")
-            .position(mint::Vector2{x: window_size.x as f32, y: 0.0}, imgui::Condition::Always)
+            .position(mint::Vector2{x: window_x, y: 0.0}, imgui::Condition::Always)
             .position_pivot(mint::Vector2 {x: 1.0, y: 0.0})
+            .size(mint::Vector2 { x: window_x * 1.0 / 4.0, y: window_y }, imgui::Condition::Always)
             .resizable(false)
+            .collapsible(false)
             .begin() {
             let mut i = 0;
             let mut cloned_item = None;
@@ -179,13 +183,13 @@ impl DevGui {
                 out = EntityWindowResponse::DeleteEntity(key);
             }
             
-            if Self::do_standard_button(ui, "Load glTF") {
+            if Self::do_standard_button(ui, "Import glTF") {
                 if let Some(path) = tfd::open_file_dialog("Choose glb", "./data/models", Some((&["*.glb"], ".glb (Binary gLTF)"))) {
                     out = EntityWindowResponse::LoadGLTF(path);
                 }
             }
             
-            if Self::do_standard_button(ui, "Load OzyMesh") {
+            if Self::do_standard_button(ui, "Import OzyMesh") {
                 if let Some(path) = tfd::open_file_dialog("Choose OzyMesh", "./data/models/.optimized", Some((&["*.ozy"], ".ozy (Optimized model)"))) {
                     out = EntityWindowResponse::LoadOzyMesh(path);
                 }

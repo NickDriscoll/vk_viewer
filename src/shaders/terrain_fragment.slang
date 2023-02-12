@@ -92,7 +92,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
             normal,
             light.direction.xyz,
             input.sunshadow_space_positions,
-            uniforms.sun_shadow_distances,
+            uniforms.directional_lights[i].shadow_distances,
             input.clip_space_z,
             0
         );
@@ -113,7 +113,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     int shadow_cascade = -1;
     for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
         uint cascade_index = i + (SHADOW_CASCADE_COUNT * 0);
-        float cascade_distance = uniforms.sun_shadow_distances[(cascade_index + 1) / 4][(cascade_index + 1) % 4];
+        float cascade_distance = uniforms.directional_lights[i].shadow_distances[(cascade_index + 1) / 4][(cascade_index + 1) % 4];
         if (input.clip_space_z < cascade_distance) {
             adj_shadow_space_pos = float3(float2(input.sunshadow_space_positions[i].xy * 0.5 + 0.5), input.sunshadow_space_positions[i].z);
             if (!(

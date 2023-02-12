@@ -383,7 +383,7 @@ fn main() {
             pitch_speed: 0.003,
             yaw_speed: 0.0,
             irradiance: 790.0f32 * glm::vec3(1.0, 0.891, 0.796),
-            shadow_map: sun_shadow_map
+            shadow_map: Some(sun_shadow_map)
         }
     ).unwrap();
 
@@ -1015,63 +1015,64 @@ fn main() {
             
             //Shadow render pass
             if let Some(sun) = renderer.get_directional_light(sunlight_key) {
-                let sun_shadow_map = &sun.shadow_map;
-                let render_area = {
-                    vk::Rect2D {
-                        offset: vk::Offset2D { x: 0, y: 0 },
-                        extent: vk::Extent2D {
-                            width: sun_shadow_map.resolution(),
-                            height: sun_shadow_map.resolution() 
+                if let Some(sun_shadow_map) = &sun.shadow_map {
+                    let render_area = {
+                        vk::Rect2D {
+                            offset: vk::Offset2D { x: 0, y: 0 },
+                            extent: vk::Extent2D {
+                                width: sun_shadow_map.resolution(),
+                                height: sun_shadow_map.resolution() 
+                            }
+                        }
+                    };
+                    vk.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[render_area]);
+                    let clear_values = [vkdevice::DEPTH_STENCIL_CLEAR];
+                    let rp_begin_info = vk::RenderPassBeginInfo {
+                        render_pass: shadow_pass,
+                        framebuffer: sun_shadow_map.framebuffer(),
+                        render_area,
+                        clear_value_count: clear_values.len() as u32,
+                        p_clear_values: clear_values.as_ptr(),
+                        ..Default::default()
+                    };
+
+                    vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+                    vk.device.cmd_bind_descriptor_sets(
+                        frame_info.main_command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        graphics_pipeline_layout,
+                        0,
+                        &[renderer.bindless_descriptor_set],
+                        &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+                    );
+                    vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
+
+                    let viewport = vk::Viewport {
+                        x: 0.0,
+                        y: 0.0,
+                        width: sun_shadow_map.resolution() as f32,
+                        height: sun_shadow_map.resolution() as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0
+                    };
+                    vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
+                    for drawcall in renderer.drawlist_iter() {
+                        if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
+                            if let ShadowType::NonCaster = model.shadow_type { continue; }
+
+                            let pcs = [
+                                model.material_idx.to_le_bytes(),
+                                model.position_offset.to_le_bytes(),
+                                model.uv_offset.to_le_bytes()
+                            ].concat();
+                            vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
+                            vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                            vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                         }
                     }
-                };
-                vk.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[render_area]);
-                let clear_values = [vkdevice::DEPTH_STENCIL_CLEAR];
-                let rp_begin_info = vk::RenderPassBeginInfo {
-                    render_pass: shadow_pass,
-                    framebuffer: sun_shadow_map.framebuffer(),
-                    render_area,
-                    clear_value_count: clear_values.len() as u32,
-                    p_clear_values: clear_values.as_ptr(),
-                    ..Default::default()
-                };
 
-                vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-                vk.device.cmd_bind_descriptor_sets(
-                    frame_info.main_command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    graphics_pipeline_layout,
-                    0,
-                    &[renderer.bindless_descriptor_set],
-                    &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
-                );
-                vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
-
-                let viewport = vk::Viewport {
-                    x: 0.0,
-                    y: 0.0,
-                    width: sun_shadow_map.resolution() as f32,
-                    height: sun_shadow_map.resolution() as f32,
-                    min_depth: 0.0,
-                    max_depth: 1.0
-                };
-                vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
-                for drawcall in renderer.drawlist_iter() {
-                    if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
-                        if let ShadowType::NonCaster = model.shadow_type { continue; }
-
-                        let pcs = [
-                            model.material_idx.to_le_bytes(),
-                            model.position_offset.to_le_bytes(),
-                            model.uv_offset.to_le_bytes()
-                        ].concat();
-                        vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
-                        vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                        vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
-                    }
+                    vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
                 }
-
-                vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
             }
             
             //Set the viewport for this frame
