@@ -2,6 +2,7 @@ use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
 use ozy::io::{OzyMaterial, OzyPrimitive, OzyImage};
 use ozy::render::PositionNormalTangentUvPrimitive;
+use std::io::BufWriter;
 use std::ptr;
 use render::vkdevice::*;
 use crate::*;
@@ -551,6 +552,14 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanGraphicsDevice, path: &str) 
     out_file.write(&bc7_bytes).unwrap();
 }
 
+pub struct UninterleavedVertexData {
+    indices: Vec<u32>,
+    positions: Vec<f32>,
+    normals: Vec<f32>,
+    tangents: Vec<f32>,
+    uvs: Vec<f32>
+}
+
 #[derive(Debug)]
 pub enum GLTFImageType {
     PNG
@@ -615,17 +624,21 @@ pub struct GLTFSceneData {
 }
 
 fn png_bytes_from_source(glb: &Gltf, source: gltf::image::Source) -> Vec<u8> {
-    let mut bytes = vec![];
+    let mut bytes;
     match source {
         gltf::image::Source::View {view, mime_type} => unsafe {
             if mime_type.ne("image/png") {
                 crash_with_error_dialog(&format!("Error loading image from glb\nUnsupported image type: {}", mime_type));
             }
-            if let Some(blob) = &glb.blob {
-                bytes = vec![0u8; view.length()];
-                let src_ptr = blob.as_ptr() as *const u8;
-                let src_ptr = src_ptr.offset(view.offset() as isize);
-                ptr::copy_nonoverlapping(src_ptr, bytes.as_mut_ptr(), view.length());
+            
+            match &glb.blob {
+                Some(blob) => {
+                    bytes = vec![0u8; view.length()];
+                    let src_ptr = blob.as_ptr() as *const u8;
+                    let src_ptr = src_ptr.offset(view.offset() as isize);
+                    ptr::copy_nonoverlapping(src_ptr, bytes.as_mut_ptr(), view.length());
+                }
+                None => { crash_with_error_dialog("GLB had no blob"); }
             }
         }
         gltf::image::Source::Uri {..} => {
@@ -633,6 +646,59 @@ fn png_bytes_from_source(glb: &Gltf, source: gltf::image::Source) -> Vec<u8> {
         }
     }
     bytes
+}
+
+fn uninterleaved_primitive_vertex_data(glb: &Gltf, prim: &gltf::Primitive) -> UninterleavedVertexData {
+    use gltf::Semantic;
+    //We always expect an index buffer to be present
+    let indices = load_primitive_index_buffer(glb, &prim);
+    //We always expect position data to be present
+    let positions = match get_f32_semantic(&glb, &prim, Semantic::Positions) {
+        Some(v) => {
+            let mut out = vec![0.0; v.len() * 4 / 3];
+            for i in (0..v.len()).step_by(3) {
+                out[4 * i / 3] =     v[i];
+                out[4 * i / 3 + 1] = v[i + 1];
+                out[4 * i / 3 + 2] = v[i + 2];
+                out[4 * i / 3 + 3] = 1.0;
+            }
+            out
+        }
+        None => {
+            crash_with_error_dialog("GLTF primitive was missing position attribute.");
+        }
+    };
+    let normals = match get_f32_semantic(&glb, &prim, Semantic::Normals) {
+        Some(v) => {
+            //Align to float4
+            let mut out = vec![0.0; v.len() * 4 / 3];
+            for i in (0..v.len()).step_by(3) {
+                out[4 * i / 3] =     v[i];
+                out[4 * i / 3 + 1] = v[i + 1];
+                out[4 * i / 3 + 2] = v[i + 2];
+                out[4 * i / 3 + 3] = 0.0;
+            }
+            out
+        }
+        None => { vec![0.0; positions.len()] }
+    };
+
+    let tangents = match get_f32_semantic(&glb, &prim, Semantic::Tangents) {
+        Some(v) => { v }
+        None => { vec![0.0; positions.len() / 3 * 4] }
+    };
+    let uvs = match get_f32_semantic(&glb, &prim, Semantic::TexCoords(0)) {
+        Some(v) => { v }
+        None => { vec![0.0; positions.len() / 3 * 2] }
+    };
+
+    UninterleavedVertexData {
+        indices,
+        positions,
+        normals,
+        tangents,
+        uvs
+    }
 }
 
 fn get_f32_semantic(glb: &Gltf, prim: &gltf::Primitive, semantic: gltf::Semantic) -> Option<Vec<f32>> {
@@ -701,7 +767,7 @@ fn load_primitive_index_buffer(glb: &Gltf, prim: &gltf::Primitive) -> Vec<u32> {
     }
 }
 
-pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
+pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
     let glb = Gltf::open(path).unwrap();
 
     let parent_dir = Path::new(path).parent().unwrap();
@@ -712,48 +778,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
     let mut primitives = Vec::with_capacity(64);
     for mesh in glb.meshes() {
         for prim in mesh.primitives() {
-            use gltf::Semantic;
-            let vertex_positions = match get_f32_semantic(&glb, &prim, Semantic::Positions) {
-                Some(v) => {
-                    let mut out = vec![0.0; v.len() * 4 / 3];
-                    for i in (0..v.len()).step_by(3) {
-                        out[4 * i / 3] =     v[i];
-                        out[4 * i / 3 + 1] = v[i + 1];
-                        out[4 * i / 3 + 2] = v[i + 2];
-                        out[4 * i / 3 + 3] = 1.0;
-                    }
-                    out
-                }
-                None => {
-                    crash_with_error_dialog("GLTF primitive was missing position attribute.");
-                }
-            };
-            let vertex_normals = match get_f32_semantic(&glb, &prim, Semantic::Normals) {
-                Some(v) => {
-                    //Align to float4
-                    let mut out = vec![0.0; v.len() * 4 / 3];
-                    for i in (0..v.len()).step_by(3) {
-                        out[4 * i / 3] =     v[i];
-                        out[4 * i / 3 + 1] = v[i + 1];
-                        out[4 * i / 3 + 2] = v[i + 2];
-                        out[4 * i / 3 + 3] = 0.0;
-                    }
-                    out
-                }
-                None => { vec![0.0; vertex_positions.len()] }
-            };
-
-            let vertex_tangents = match get_f32_semantic(&glb, &prim, Semantic::Tangents) {
-                Some(v) => { v }
-                None => { vec![0.0; vertex_positions.len() / 3 * 4] }
-            };
-            let vertex_uvs = match get_f32_semantic(&glb, &prim, Semantic::TexCoords(0)) {
-                Some(v) => { v }
-                None => { vec![0.0; vertex_positions.len() / 3 * 2] }
-            };
-
-            fn tex_fn(vk: &mut VulkanGraphicsDevice, glb: &Gltf, image: gltf::Image) -> OzyImage {
-                println!("{}", image.name().unwrap_or("IMAGE HAS NO NAME"));
+            fn load_gltf_image_to_ozy_image(vk: &mut VulkanGraphicsDevice, glb: &Gltf, image: gltf::Image) -> OzyImage {
                 let source = image.source();
                 let png_bytes = png_bytes_from_source(glb, source);
                 let decoder = png::Decoder::new(png_bytes.as_slice()).read_info().unwrap();
@@ -770,6 +795,8 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
                 }
             }
 
+            let vertex_data = uninterleaved_primitive_vertex_data(&glb, &prim);
+
             let mat = prim.material();
             let mat_idx = mat.index().unwrap();
             if materials[mat_idx].base_color[0] > 68.0 {
@@ -779,7 +806,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
                         let image = t.texture().source();
                         let idx = image.index();
                         if textures[idx].bc7_bytes.len() == 0 {
-                            textures[idx] = tex_fn(vk, &glb, image);
+                            textures[idx] = load_gltf_image_to_ozy_image(vk, &glb, image);
                         }
                         Some(idx as u32)
                     }
@@ -791,7 +818,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
                         let image = t.texture().source();
                         let idx = image.index();
                         if textures[idx].bc7_bytes.len() == 0 {
-                            textures[idx] = tex_fn(vk, &glb, image);
+                            textures[idx] = load_gltf_image_to_ozy_image(vk, &glb, image);
                         }
                         Some(idx as u32)
                     }
@@ -803,7 +830,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
                         let image = t.texture().source();
                         let idx = image.index();
                         if textures[idx].bc7_bytes.len() == 0 {
-                            textures[idx] = tex_fn(vk, &glb, image);
+                            textures[idx] = load_gltf_image_to_ozy_image(vk, &glb, image);
                         }
                         Some(idx as u32)
                     }
@@ -815,7 +842,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
                         let image = t.texture().source();
                         let idx = image.index();
                         if textures[idx].bc7_bytes.len() == 0 {
-                            textures[idx] = tex_fn(vk, &glb, image);
+                            textures[idx] = load_gltf_image_to_ozy_image(vk, &glb, image);
                         }
                         Some(idx as u32)
                     }
@@ -835,14 +862,14 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
                 materials[mat_idx] = ozy_mat;
             }
 
-            let indices = load_primitive_index_buffer(&glb, &prim);
+            println!("Mesh id: {}\tPrimitive index count: {}\tMaterial name: {:?}", mesh.index(), vertex_data.indices.len(), mat.name());
 
             let ozy_prim = OzyPrimitive {
-                indices,
-                vertex_positions,
-                vertex_normals,
-                vertex_tangents,
-                vertex_uvs,
+                indices: vertex_data.indices,
+                vertex_positions: vertex_data.positions,
+                vertex_normals: vertex_data.normals,
+                vertex_tangents: vertex_data.tangents,
+                vertex_uvs: vertex_data.uvs,
                 material_idx: mat_idx as u32
             };
             primitives.push(ozy_prim);
@@ -854,7 +881,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
     if !dir.exists() {
         std::fs::create_dir(dir).unwrap();
     }
-    let mut output_file = OpenOptions::new().write(true).create(true).open(output_location).unwrap();
+    let mut output_file = BufWriter::new(OpenOptions::new().write(true).create(true).open(output_location).unwrap());
     let material_count = materials.len() as u32;
     let primitive_count = primitives.len() as u32;
     let texture_count = textures.len() as u32;
@@ -905,48 +932,7 @@ pub fn optimize_glb_mesh(vk: &mut VulkanGraphicsDevice, path: &str) {
 
 fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, out_primitive_array: &mut Vec<GLTFPrimitive>, texture_bytes: &mut [Vec<u8>]) {
     for prim in mesh.primitives() {
-        //We always expect an index buffer to be present
-        let index_buffer = load_primitive_index_buffer(glb, &prim);
-        //We always expect position data to be present
-        use gltf::Semantic;
-        let position_vec = match get_f32_semantic(&glb, &prim, Semantic::Positions) {
-            Some(v) => {
-                let mut out = vec![0.0; v.len() * 4 / 3];
-                for i in (0..v.len()).step_by(3) {
-                    out[4 * i / 3] =     v[i];
-                    out[4 * i / 3 + 1] = v[i + 1];
-                    out[4 * i / 3 + 2] = v[i + 2];
-                    out[4 * i / 3 + 3] = 1.0;
-                }
-                out
-            }
-            None => {
-                crash_with_error_dialog("GLTF primitive was missing position attribute.");
-            }
-        };
-        let normal_vec = match get_f32_semantic(&glb, &prim, Semantic::Normals) {
-            Some(v) => {
-                //Align to float4
-                let mut out = vec![0.0; v.len() * 4 / 3];
-                for i in (0..v.len()).step_by(3) {
-                    out[4 * i / 3] =     v[i];
-                    out[4 * i / 3 + 1] = v[i + 1];
-                    out[4 * i / 3 + 2] = v[i + 2];
-                    out[4 * i / 3 + 3] = 0.0;
-                }
-                out
-            }
-            None => { vec![0.0; position_vec.len()] }
-        };
-
-        let tangent_vec = match get_f32_semantic(&glb, &prim, Semantic::Tangents) {
-            Some(v) => { v }
-            None => { vec![0.0; position_vec.len() / 3 * 4] }
-        };
-        let texcoord_vec = match get_f32_semantic(&glb, &prim, Semantic::TexCoords(0)) {
-            Some(v) => { v }
-            None => { vec![0.0; position_vec.len() / 3 * 2] }
-        };
+        let vertex_data = uninterleaved_primitive_vertex_data(glb, &prim);
 
         //Handle material data
         let mat = prim.material();
@@ -1028,11 +1014,11 @@ fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, out_primitive_array: &mut Vec<G
             emissive_imagetype: GLTFImageType::PNG
         };
         let p = GLTFPrimitive {
-            vertex_positions: position_vec,
-            vertex_normals: normal_vec,
-            vertex_tangents: tangent_vec,
-            vertex_uvs: texcoord_vec,
-            indices: index_buffer,
+            vertex_positions: vertex_data.positions,
+            vertex_normals: vertex_data.normals,
+            vertex_tangents: vertex_data.tangents,
+            vertex_uvs: vertex_data.uvs,
+            indices: vertex_data.indices,
             material: mat
         };
         out_primitive_array.push(p);

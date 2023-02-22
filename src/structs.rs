@@ -6,6 +6,7 @@ use crate::{*, render::{ModelKey}, physics::PhysicsComponent};
 pub struct Camera {
     pub position: glm::TVec3<f32>,
     pub orientation: glm::TVec2<f32>,
+    pub fov: f32
 }
 
 impl Camera {
@@ -13,6 +14,7 @@ impl Camera {
         Camera {
             position: pos,
             orientation: glm::zero(),
+            fov: glm::half_pi()
         }
     }
 

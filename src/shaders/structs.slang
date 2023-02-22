@@ -58,13 +58,13 @@ struct AtmosphereUniforms {
     float stars_threshold;
 }
 
-//Variables that are constant for a given frame
+// Variables that are constant for a given frame
 struct FrameUniforms {
+    float4x4 clip_from_screen;
     float4x4 clip_from_world;
     float4x4 clip_from_view;
     float4x4 view_from_world;
     float4x4 clip_from_skybox;
-    float4x4 clip_from_screen;
     float4 camera_position;
     DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
     uint directional_light_count;

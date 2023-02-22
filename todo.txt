@@ -1,18 +1,21 @@
 Todo:
+    Make generic error macro
     Fix Imgui flickering bugs
     Change shadow map data such as cascade distances to be data-driven
+    Add orbit cam tweaking controls
+    Parallax mapping family of techniques
     Deferred/Batched GPU uploading
         Sort of have deferred uploading for PNGs
     Move glTF->OzyMesh optimization off of main thread
     Physically-based bloom
     Ray-marched volumetric sunlight
-    Scene graph
     Add UserConfiguration struct
         Window size
     Add ability to mix and match mesh materials
     Irradiance maps
         Simple environment probe for indirect diffuse/specular light
     Generate terrain with compute shader
+        Convert to heightmap representation
     Add render pass abstraction
     
 Known issues:

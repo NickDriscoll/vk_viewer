@@ -66,6 +66,13 @@ impl WindowManager {
                 crash_with_error_dialog("FIFO present mode not supported on your system.");
             }
             let present_mode = desired_present_mode;
+            println!("{:#?}", surf_capabilities);
+
+            let min_image_count = if surf_capabilities.max_image_count > 2 {
+                3
+            } else {
+                surf_capabilities.min_image_count
+            };
 
             vk_swapchain_image_format = surf_format.format;
             vk_swapchain_extent = vk::Extent2D {
@@ -74,7 +81,7 @@ impl WindowManager {
             };
             let create_info = vk::SwapchainCreateInfoKHR {
                 surface: vk_surface,
-                min_image_count: surf_capabilities.min_image_count,
+                min_image_count,
                 image_format: vk_swapchain_image_format,
                 image_color_space: surf_format.color_space,
                 image_extent: surf_capabilities.current_extent,
@@ -82,7 +89,7 @@ impl WindowManager {
                 image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
                 image_sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 1,
-                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                p_queue_family_indices: &vk.queue_family_index,
                 pre_transform: surf_capabilities.current_transform,
                 composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
                 present_mode,
@@ -268,7 +275,7 @@ pub struct Renderer {
 
     pub uniform_data: EnvironmentUniforms,
 
-    //Various GPU allocated buffers
+    //Vertex buffers
     pub position_buffer: GPUBuffer,
     position_buffer_blocks: SlotMap<PositionBufferBlockKey, BufferBlock>,
     position_offset: u64,               //In f32s
@@ -279,6 +286,8 @@ pub struct Renderer {
     pub uv_buffer: GPUBuffer,
     uv_offset: u64,                     //In f32s
     pub imgui_buffer: GPUBuffer,
+
+
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
@@ -320,6 +329,10 @@ impl Renderer {
 
     pub fn get_model(&self, key: ModelKey) -> Option<&Model> {
         self.models.get(key)
+    }
+    
+    pub fn get_primitive(&self, key: PrimitiveKey) -> Option<&Primitive> {
+        self.primitives.get(key)
     }
 
     pub unsafe fn cleanup(&mut self, vk: &mut VulkanGraphicsDevice) {
@@ -1251,11 +1264,7 @@ impl Renderer {
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 
-    pub fn get_primitive(&self, key: PrimitiveKey) -> Option<&Primitive> {
-        self.primitives.get(key)
-    }
-
-    pub fn prepare_frame(&mut self, vk: &mut VulkanGraphicsDevice, window_size: glm::TVec2<u32>, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) -> InFlightFrameData {
+    pub fn prepare_frame(&mut self, vk: &mut VulkanGraphicsDevice, window_size: glm::TVec2<u32>, camera: &Camera, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) -> InFlightFrameData {
         //Process raw draw calls into draw stream
         {
             //Create map of ModelKeys to the instance data for all instances of that model
@@ -1301,6 +1310,9 @@ impl Renderer {
             self.drawstream.sort_unstable();
         }
 
+        //Wait for LRU frame to finish
+        let frame_info = self.next_frame(vk);
+
         //Process delete queue
         let mut i = 0;
         while i < self.delete_queue.len() {
@@ -1329,9 +1341,6 @@ impl Renderer {
                 i += 1;
             }
         }
-
-        //Wait for LRU frame to finish
-        let frame_info = self.next_frame(vk);
 
         //Update bindless texture sampler descriptors
         if self.global_images.was_updated() {
@@ -1395,7 +1404,7 @@ impl Renderer {
             );
 
             let projection_matrix = glm::perspective_fov_rh_zo(
-                glm::half_pi::<f32>(),
+                camera.fov,
                 window_size.x as f32,
                 window_size.y as f32,
                 Renderer::NEAR_CLIP_DISTANCE,

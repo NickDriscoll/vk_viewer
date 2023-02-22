@@ -88,6 +88,9 @@ impl InputSystem {
                 Event::Window { win_event, .. } => {
                     match win_event {
                         WindowEvent::Resized(_, _) => { out.resize_window = true; }
+                        WindowEvent::Minimized => {
+                            println!("min");
+                        }
                         _ => {}
                     }
                 }

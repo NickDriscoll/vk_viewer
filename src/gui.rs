@@ -30,7 +30,8 @@ pub struct DevGui {
     pub do_entity_window: bool,
     pub do_asset_window: bool,
     pub do_mat_list: bool,
-    pub do_sun_window: bool
+    pub do_sun_window: bool,
+    pub do_camera_window: bool
 }
 
 impl DevGui {
@@ -249,11 +250,27 @@ impl DevGui {
         regen_terrain
     }
 
+    pub fn do_camera_window(&mut self, ui: &Ui, camera: &mut Camera) {
+        if !self.do_camera_window { return; }
+        if let Some(token) = ui.window("Camera").begin() {
+            ui.slider("FOV", 0.001, glm::pi(), &mut camera.fov);
+
+            token.end();
+        }
+    }
+
     pub fn do_sun_window(&mut self, ui: &Ui, sun: &mut SunLight) {
-        ui.slider("Sun pitch speed", 0.0, 1.0, &mut sun.pitch_speed);
-        ui.slider("Sun pitch", 0.0, glm::two_pi::<f32>(), &mut sun.pitch);
-        ui.slider("Sun yaw speed", -1.0, 1.0, &mut sun.yaw_speed);
-        ui.slider("Sun yaw", 0.0, glm::two_pi::<f32>(), &mut sun.yaw);
+        if !self.do_sun_window { return; }
+        if let Some(token) = ui.window("Sun controls").begin() {
+            ui.slider("Sun pitch speed", 0.0, 1.0, &mut sun.pitch_speed);
+            ui.slider("Sun pitch", 0.0, glm::two_pi::<f32>(), &mut sun.pitch);
+            ui.slider("Sun yaw speed", -1.0, 1.0, &mut sun.yaw_speed);
+            ui.slider("Sun yaw", 0.0, glm::two_pi::<f32>(), &mut sun.yaw);
+            ui.separator();
+            if DevGui::do_standard_button(ui, "Close") { self.do_sun_window = false; }
+
+            token.end();
+        }
     }
 
     //This is where we upload the Dear Imgui geometry for the current frame
@@ -312,13 +329,14 @@ impl DevGui {
             }
         }
 
-        self.frames[self.current_frame] = DevGuiFrame {
+        let new_frame = DevGuiFrame {
             offsets,
             start_offset,
             end_offset: current_offset,
             index_buffers,
             draw_cmd_lists
         };
+        self.frames[self.current_frame] = new_frame;
     }
 
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
@@ -347,16 +365,14 @@ impl DevGui {
 
                         let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
                         let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];
-                        let scissor_rect = {
-                            vk::Rect2D {
-                                offset: vk::Offset2D {
-                                    x: cmd_params.clip_rect[0] as i32,
-                                    y: cmd_params.clip_rect[1] as i32
-                                },
-                                extent: vk::Extent2D {
-                                    width: ext_x as u32,
-                                    height: ext_y as u32
-                                }
+                        let scissor_rect = vk::Rect2D {
+                            offset: vk::Offset2D {
+                                x: cmd_params.clip_rect[0] as i32,
+                                y: cmd_params.clip_rect[1] as i32
+                            },
+                            extent: vk::Extent2D {
+                                width: ext_x as u32,
+                                height: ext_y as u32
                             }
                         };
                         vk.device.cmd_set_scissor(command_buffer, 0, &[scissor_rect]);

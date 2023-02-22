@@ -222,16 +222,15 @@ impl InstanceData {
     }
 }
 
-//Values that will be uniform over a particular simulation frame
+//Values that will be uniform over a particular simulation tick
 #[derive(Default)]
 #[repr(C)]
 pub struct EnvironmentUniforms {
+    pub clip_from_screen: glm::TMat4<f32>,
     pub clip_from_world: glm::TMat4<f32>,
     pub clip_from_view: glm::TMat4<f32>,
     pub view_from_world: glm::TMat4<f32>,
     pub clip_from_skybox: glm::TMat4<f32>,
-    pub clip_from_screen: glm::TMat4<f32>,
-    //pub sun_shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT * MAX_DIRECTIONAL_LIGHTS],
     pub camera_position: glm::TVec4<f32>,
     pub directional_lights: [DirectionalLight; MAX_DIRECTIONAL_LIGHTS],
     pub directional_light_count: u32,
@@ -245,12 +244,7 @@ pub struct EnvironmentUniforms {
     pub sunview_idx: u32,
     pub exposure: f32,
     pub ambient_factor: f32,
-    pub real_sky: f32,
-    //pub pad0: f32,
-    //pub pad1: f32,
-    //pub pad2: f32,
-    //pub pad3: f32,
-    //pub sun_shadow_distances: [f32; (CascadedShadowMap::CASCADE_COUNT + 1) * MAX_DIRECTIONAL_LIGHTS],
+    pub real_sky: f32
 }
 
 pub struct CascadedShadowMap {
@@ -260,6 +254,7 @@ pub struct CascadedShadowMap {
     format: vk::Format,
     texture_index: u32,
     resolution: u32,
+    projection_depth: f32,
     clip_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH],
     view_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH]
 }
@@ -388,6 +383,7 @@ impl CascadedShadowMap {
         };
         
         let texture_index = renderer.global_images.insert(gpu_image) as u32;
+        let projection_depth = 500.0;
 
         CascadedShadowMap {
             framebuffer,
@@ -396,6 +392,7 @@ impl CascadedShadowMap {
             format,
             texture_index,
             resolution,
+            projection_depth,
             clip_distances,
             view_distances
         }
@@ -421,42 +418,47 @@ impl CascadedShadowMap {
             let z1 = self.view_distances[i + 1];
     
             //Computing the view-space coords of the sub-frustum vertices
-            let x0 = -z0 * f32::tan(fovx);
-            let x1 = z0 * f32::tan(fovx);
-            let x2 = -z1 * f32::tan(fovx);
-            let x3 = z1 * f32::tan(fovx);
-            let y0 = -z0 * f32::tan(fovy);
-            let y1 = z0 * f32::tan(fovy);
-            let y2 = -z1 * f32::tan(fovy);
-            let y3 = z1 * f32::tan(fovy);
+            let tan_x = f32::tan(fovx);
+            let tan_y = f32::tan(fovy);
+            let x0 = -z0 * tan_x;
+            let x1 = z0 * tan_x;
+            let x2 = -z1 * tan_x;
+            let x3 = z1 * tan_x;
+            let y0 = -z0 * tan_y;
+            let y1 = z0 * tan_y;
+            let y2 = -z1 * tan_y;
+            let y3 = z1 * tan_y;
     
             //The extreme vertices of the sub-frustum
             let shadow_view_space_points = [
                 shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
                 shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
                 shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
-                shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
+                shadow_from_view * glm::vec4(x1, y1, z0, 1.0),
                 shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
                 shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
                 shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
-                shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
+                shadow_from_view * glm::vec4(x3, y3, z1, 1.0)
             ];
     
             //Determine the view-space boundaries of the orthographic projection
             let mut min_x = f32::INFINITY;
             let mut min_y = f32::INFINITY;
+            let mut min_z = f32::INFINITY;
             let mut max_x = f32::NEG_INFINITY;
             let mut max_y = f32::NEG_INFINITY;
+            let mut max_z = f32::NEG_INFINITY;
             for point in shadow_view_space_points.iter() {
                 if max_x < point.x { max_x = point.x; }
                 if min_x > point.x { min_x = point.x; }
                 if max_y < point.y { max_y = point.y; }
                 if min_y > point.y { min_y = point.y; }
+                if min_z > point.z { min_z = point.z; }
+                if max_z < point.z { max_z = point.z; }
             }
     
-            let projection_depth = 500.0;
             let shadow_projection = glm::ortho_rh_zo(
-                min_x, max_x, min_y, max_y, -projection_depth, projection_depth
+                min_x, max_x, min_y, max_y, -self.projection_depth, self.projection_depth
             );
             let shadow_projection = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,

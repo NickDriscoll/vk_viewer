@@ -745,8 +745,9 @@ fn main() {
                     
                     }
                     if let Some(mt) = imgui_ui.begin_menu("View") {
-                        if imgui_ui.menu_item("Asset window") { dev_gui.do_asset_window = true; }
-                        if imgui_ui.menu_item("Props window") { dev_gui.do_entity_window = true; }
+                        if imgui_ui.menu_item("Asset optimization") { dev_gui.do_asset_window = true; }
+                        if imgui_ui.menu_item("Camera") { dev_gui.do_camera_window = true; }
+                        if imgui_ui.menu_item("Entities") { dev_gui.do_entity_window = true; }
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Cheats") {
@@ -770,10 +771,6 @@ fn main() {
                 let color_token = imgui_ui.push_style_color(imgui::StyleColor::Text, color);
                 imgui_ui.text(message);
                 color_token.pop();
-    
-                if let Some(sun) = renderer.get_directional_light_mut(sunlight_key) {
-                    dev_gui.do_sun_window(&imgui_ui, sun);
-                }
                 
                 imgui_ui.slider("Ambient factor", 0.0, 500.0, &mut renderer.uniform_data.ambient_factor);    
                 imgui_ui.slider("Stars threshold", 0.0, 16.0, &mut renderer.uniform_data.stars_threshold);
@@ -791,13 +788,14 @@ fn main() {
                     for e in simulation_state.entities.iter() {
                         let key = e.0;
                         let entity = e.1;
-                        if entity.name.contains("fired totoro") {
+                        if entity.name.to_lowercase().contains("dynamic totoro") {
                             remove_keys.push(key);
                         }
                     }
                     for key in remove_keys {
                         simulation_state.entities.remove(key);
                     }
+                    totoro_counter = 0;
                 }
                 
                 #[cfg(target_os = "windows")]
@@ -823,11 +821,17 @@ fn main() {
                 t.end();
             }
         }
+    
+        if let Some(sun) = renderer.get_directional_light_mut(sunlight_key) {
+            dev_gui.do_sun_window(&imgui_ui, sun);
+        }
+
+        dev_gui.do_camera_window(&imgui_ui, &mut camera);
 
         match dev_gui.do_asset_window(&imgui_ui, "./data/models") {
             AssetWindowResponse::OptimizeGLB(path) => {
                 println!("Optimizing {}", path);
-                asset::optimize_glb_mesh(&mut vk, &path);
+                asset::optimize_glb(&mut vk, &path);
             }
             AssetWindowResponse::None => {}
         }
@@ -1000,7 +1004,7 @@ fn main() {
         dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, &mut imgui_context);
         
         //Does all work that needs to happen before the render passes
-        let frame_info = renderer.prepare_frame(&mut vk, window_size, &view_from_world, timer.elapsed_time);
+        let frame_info = renderer.prepare_frame(&mut vk, window_size, &camera, &view_from_world, timer.elapsed_time);
 
         //Draw
         unsafe {
@@ -1149,7 +1153,6 @@ fn main() {
             vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &0u32.to_le_bytes());
             vk.device.cmd_draw(frame_info.main_command_buffer, 36, 1, 0, 0);
             vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
-
 
             //Luminance binning compute pass
             vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::COMPUTE, lum_binning_pipeline);
