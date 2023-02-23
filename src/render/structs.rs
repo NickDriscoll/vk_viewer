@@ -254,23 +254,38 @@ pub struct CascadedShadowMap {
     format: vk::Format,
     texture_index: u32,
     resolution: u32,
-    projection_depth: f32,
-    clip_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH],
-    view_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH]
+    projection_depth: f32
 }
 
 impl CascadedShadowMap {
     pub const CASCADE_COUNT: usize = 6;
 
-    pub fn clip_distances(&self) -> [f32; SHADOW_DISTANCE_ARRAY_LENGTH] { self.clip_distances }
-    pub fn view_distances(&self) -> [f32; SHADOW_DISTANCE_ARRAY_LENGTH] { self.view_distances }
+    pub fn view_distances(&self, camera: &Camera) -> [f32; SHADOW_DISTANCE_ARRAY_LENGTH] {
+        //Manually picking the cascade distances because math is hard
+        //The shadow cascade distances are negative bc they are in view space
+        let mut view_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
+        view_distances[0] = -(camera.near_distance);
+        view_distances[1] = -(camera.near_distance + 10.0);
+        view_distances[2] = -(camera.near_distance + 30.0);
+        view_distances[3] = -(camera.near_distance + 73.0);
+        view_distances[4] = -(camera.near_distance + 123.0);
+        view_distances[5] = -(camera.near_distance + 222.0);
+        view_distances[6] = -(camera.near_distance + 500.0);
 
-    pub fn update_view_distances(&mut self, clipping_from_view: &glm::TMat4<f32>, view_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH]) {
+        view_distances
+    }
+
+    pub fn clip_distances(&self, camera: &Camera, projection: &glm::TMat4<f32>) -> [f32; SHADOW_DISTANCE_ARRAY_LENGTH] {
+        let view_distances = self.view_distances(camera);
+
+        //Compute the clip space distances
+        let mut clip_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
         for i in 0..view_distances.len() {
-            let p = clipping_from_view * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
-            self.clip_distances[i] = p.z;
+            let p = projection * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
+            clip_distances[i] = p.z;
         }
-        self.view_distances = view_distances;
+
+         clip_distances
     }
 
     pub fn framebuffer(&self) -> vk::Framebuffer { self.framebuffer }
@@ -351,24 +366,6 @@ impl CascadedShadowMap {
             vk.device.create_framebuffer(&fb_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
         };
 
-        //Manually picking the cascade distances because math is hard
-        //The shadow cascade distances are negative bc they are in view space
-        let mut view_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
-        view_distances[0] = -(Renderer::NEAR_CLIP_DISTANCE);
-        view_distances[1] = -(Renderer::NEAR_CLIP_DISTANCE + 10.0);
-        view_distances[2] = -(Renderer::NEAR_CLIP_DISTANCE + 30.0);
-        view_distances[3] = -(Renderer::NEAR_CLIP_DISTANCE + 73.0);
-        view_distances[4] = -(Renderer::NEAR_CLIP_DISTANCE + 123.0);
-        view_distances[5] = -(Renderer::NEAR_CLIP_DISTANCE + 222.0);
-        view_distances[6] = -(Renderer::NEAR_CLIP_DISTANCE + 500.0);
-
-        //Compute the clip space distances
-        let mut clip_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
-        for i in 0..view_distances.len() {
-            let p = clipping_from_view * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
-            clip_distances[i] = p.z;
-        }
-
         let sampler = vk.get_sampler(renderer.shadow_sampler).unwrap();
         let gpu_image = vkdevice::GPUImage {
             image,
@@ -393,18 +390,20 @@ impl CascadedShadowMap {
             texture_index,
             resolution,
             projection_depth,
-            clip_distances,
-            view_distances
         }
     }
 
     pub fn compute_shadow_cascade_matrices(
         &self,
+        camera: &Camera,
         light_direction: &glm::TVec3<f32>,
         v_mat: &glm::TMat4<f32>,
         projection: &glm::TMat4<f32>
     ) -> [glm::TMat4<f32>; Self::CASCADE_COUNT] {
         let mut out_mats = [glm::identity(); Self::CASCADE_COUNT];
+        
+        let view_distances = self.view_distances(camera);
+        let clip_distances = self.clip_distances(camera, projection);
 
         let shadow_view = glm::look_at(&(light_direction * 20.0), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));    
         let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
@@ -414,8 +413,8 @@ impl CascadedShadowMap {
         //Loop computes the shadow matrices for this frame
         for i in 0..Self::CASCADE_COUNT {
             //Near and far distances for this sub-frustum
-            let z0 = self.view_distances[i];
-            let z1 = self.view_distances[i + 1];
+            let z0 = view_distances[i];
+            let z1 = view_distances[i + 1];
     
             //Computing the view-space coords of the sub-frustum vertices
             let tan_x = f32::tan(fovx);

@@ -305,8 +305,8 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub const NEAR_CLIP_DISTANCE: f32 = 0.1;
-    pub const FAR_CLIP_DISTANCE: f32 = 1000.0;
+    //pub const NEAR_CLIP_DISTANCE: f32 = 0.1;
+    //pub const FAR_CLIP_DISTANCE: f32 = 1000.0;
     pub const FRAMES_IN_FLIGHT: usize = 2;
 
     pub fn current_in_flight_frame(&self) -> usize { self.in_flight_frame }
@@ -1407,8 +1407,8 @@ impl Renderer {
                 camera.fov,
                 window_size.x as f32,
                 window_size.y as f32,
-                Renderer::NEAR_CLIP_DISTANCE,
-                Renderer::FAR_CLIP_DISTANCE
+                camera.near_distance,
+                camera.far_distance
             );
             uniforms.clip_from_view = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
@@ -1437,11 +1437,12 @@ impl Renderer {
 
                 if let Some(shadow_map) = &light.shadow_map {
                     matrices = shadow_map.compute_shadow_cascade_matrices(
+                        camera,
                         &direction,
                         &uniforms.view_from_world,
                         &uniforms.clip_from_view
                     );
-                    dists = shadow_map.clip_distances();
+                    dists = shadow_map.clip_distances(camera, &uniforms.clip_from_view);
                 }
 
                 uniforms.directional_lights[i].shadow_matrices = matrices;

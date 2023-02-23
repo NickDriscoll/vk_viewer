@@ -6,7 +6,9 @@ use crate::{*, render::{ModelKey}, physics::PhysicsComponent};
 pub struct Camera {
     pub position: glm::TVec3<f32>,
     pub orientation: glm::TVec2<f32>,
-    pub fov: f32
+    pub fov: f32,
+    pub near_distance: f32,
+    pub far_distance: f32
 }
 
 impl Camera {
@@ -14,7 +16,9 @@ impl Camera {
         Camera {
             position: pos,
             orientation: glm::zero(),
-            fov: glm::half_pi()
+            fov: glm::half_pi(),
+            near_distance: 0.1,
+            far_distance: 1000.0
         }
     }
 
@@ -148,8 +152,6 @@ new_key_type! { pub struct ModelMatrixKey; }
 new_key_type! { pub struct ModelIndexKey; }
 new_key_type! { pub struct EntityKey; }
 pub struct SimulationSOA {
-    pub model_matrices: DenseSlotMap<ModelMatrixKey, glm::TMat4<f32>>,
-    pub model_indices: DenseSlotMap<ModelIndexKey, Vec<usize>>,
     pub entities: DenseSlotMap<EntityKey, Entity>,
     pub timescale: f32
 }
@@ -157,8 +159,6 @@ pub struct SimulationSOA {
 impl SimulationSOA {
     pub fn new() -> Self {
         SimulationSOA{
-            model_matrices: DenseSlotMap::with_key(),
-            model_indices: DenseSlotMap::with_key(),
             entities: DenseSlotMap::with_key(),
             timescale: 1.0
         }
