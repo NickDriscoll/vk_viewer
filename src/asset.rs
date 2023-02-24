@@ -1,3 +1,4 @@
+use gltf::image::Source;
 use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
 use ozy::io::{OzyMaterial, OzyPrimitive, OzyImage};
@@ -560,6 +561,18 @@ pub struct UninterleavedVertexData {
     uvs: Vec<f32>
 }
 
+#[derive(Default)]
+pub struct RawImageData {
+    pub color_index: Option<usize>,
+    pub color_bytes: Vec<u8>,
+    pub normal_index: Option<usize>,
+    pub normal_bytes: Vec<u8>,
+    pub arm_index: Option<usize>,
+    pub arm_bytes: Vec<u8>,
+    pub emissive_index: Option<usize>,
+    pub emissive_bytes: Vec<u8>
+}
+
 #[derive(Debug)]
 pub enum GLTFImageType {
     PNG
@@ -623,7 +636,7 @@ pub struct GLTFSceneData {
     pub meshes: Vec<GLTFMeshData>
 }
 
-fn png_bytes_from_source(glb: &Gltf, source: gltf::image::Source) -> Vec<u8> {
+fn image_bytes_from_source(glb: &Gltf, source: gltf::image::Source) -> Vec<u8> {
     let mut bytes;
     match source {
         gltf::image::Source::View {view, mime_type} => unsafe {
@@ -772,7 +785,7 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
 
     let parent_dir = Path::new(path).parent().unwrap();
     let name = Path::new(path).file_stem().unwrap().to_string_lossy();
-    let output_location = format!("{}/.optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
+    let output_location = format!("{}/optimized/{}.ozy", parent_dir.as_os_str().to_str().unwrap(), name);
     let mut textures = vec![OzyImage::default(); glb.images().count()];
     let mut materials = vec![OzyMaterial::default(); glb.materials().count()];
     let mut primitives = Vec::with_capacity(64);
@@ -780,7 +793,7 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
         for prim in mesh.primitives() {
             fn load_gltf_image_to_ozy_image(vk: &mut VulkanGraphicsDevice, glb: &Gltf, image: gltf::Image) -> OzyImage {
                 let source = image.source();
-                let png_bytes = png_bytes_from_source(glb, source);
+                let png_bytes = image_bytes_from_source(glb, source);
                 let decoder = png::Decoder::new(png_bytes.as_slice()).read_info().unwrap();
                 let info = decoder.info();
                 let width = info.width;
@@ -795,59 +808,57 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
                 }
             }
 
+            fn ozy_image_from_png(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> OzyImage {
+                let decoder = png::Decoder::new(png_bytes).read_info().unwrap();
+                let info = decoder.info();
+                let width = info.width;
+                let height = info.height;
+                let mipmap_count = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).clamp(1, u32::MAX);
+                let bc7_bytes = png2bc7_synchronous(vk, png_bytes);
+                OzyImage {
+                    width,
+                    height,
+                    mipmap_count,
+                    bc7_bytes
+                }
+            }
+
             let vertex_data = uninterleaved_primitive_vertex_data(&glb, &prim);
 
             let mat = prim.material();
             let mat_idx = mat.index().unwrap();
             if materials[mat_idx].base_color[0] > 68.0 {
-                let pbr = mat.pbr_metallic_roughness();            
-                let color_bc7_idx = match pbr.base_color_texture() {
-                    Some(t) => {
-                        let image = t.texture().source();
-                        let idx = image.index();
-                        if textures[idx].bc7_bytes.len() == 0 {
-                            textures[idx] = load_gltf_image_to_ozy_image(vk, &glb, image);
-                        }
-                        Some(idx as u32)
-                    }
-                    None => { None }
-                };
+                let pbr = mat.pbr_metallic_roughness();
 
-                let normal_bc7_idx = match mat.normal_texture() {
-                    Some(t) => {
-                        let image = t.texture().source();
-                        let idx = image.index();
-                        if textures[idx].bc7_bytes.len() == 0 {
-                            textures[idx] = load_gltf_image_to_ozy_image(vk, &glb, image);
-                        }
-                        Some(idx as u32)
+                let image_data = load_raw_image_data(&glb, &prim);
+                let mut color_bc7_idx = None;
+                let mut normal_bc7_idx = None;
+                let mut arm_bc7_idx = None;
+                let mut emissive_bc7_idx = None;
+                if let Some(idx) = image_data.color_index {
+                    color_bc7_idx = Some(idx as u32);
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        textures[idx] = ozy_image_from_png(vk, &image_data.color_bytes);
                     }
-                    None => { None }
-                };
-
-                let arm_bc7_idx = match pbr.metallic_roughness_texture() {
-                    Some(t) => {
-                        let image = t.texture().source();
-                        let idx = image.index();
-                        if textures[idx].bc7_bytes.len() == 0 {
-                            textures[idx] = load_gltf_image_to_ozy_image(vk, &glb, image);
-                        }
-                        Some(idx as u32)
+                }
+                if let Some(idx) = image_data.normal_index {
+                    normal_bc7_idx = Some(idx as u32);
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        textures[idx] = ozy_image_from_png(vk, &image_data.normal_bytes);
                     }
-                    None => { None }
-                };
-
-                let emissive_bc7_idx = match mat.emissive_texture() {
-                    Some(t) => {
-                        let image = t.texture().source();
-                        let idx = image.index();
-                        if textures[idx].bc7_bytes.len() == 0 {
-                            textures[idx] = load_gltf_image_to_ozy_image(vk, &glb, image);
-                        }
-                        Some(idx as u32)
+                }
+                if let Some(idx) = image_data.arm_index {
+                    arm_bc7_idx = Some(idx as u32);
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        textures[idx] = ozy_image_from_png(vk, &image_data.arm_bytes);
                     }
-                    None => { None }
-                };
+                }
+                if let Some(idx) = image_data.emissive_index {
+                    emissive_bc7_idx = Some(idx as u32);
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        textures[idx] = ozy_image_from_png(vk, &image_data.emissive_bytes);
+                    }
+                }
 
                 let ozy_mat = OzyMaterial {
                     base_color: pbr.base_color_factor(),
@@ -930,87 +941,106 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
     }
 }
 
+fn load_raw_image_data(glb: &Gltf, prim: &gltf::Primitive) -> RawImageData {
+    let mut image_data = RawImageData::default();
+
+    let mat = prim.material();
+    let pbr_model = mat.pbr_metallic_roughness();
+    image_data.color_index = match pbr_model.base_color_texture() {
+        Some(t) => {
+            let image = t.texture().source();
+            let idx = image.index();
+            let source = image.source();
+            image_data.color_bytes = image_bytes_from_source(&glb, source);
+            Some(idx)
+        }
+        None => { None }
+    };
+
+    image_data.normal_index = match mat.normal_texture() {
+        Some(t) => {
+            let image = t.texture().source();
+            let idx = image.index();
+            let source = image.source();
+            image_data.normal_bytes = image_bytes_from_source(&glb, source);
+            Some(idx)
+        }
+        None => { None }
+    };
+
+    let mut metalrough_glb_index = -1;
+    image_data.arm_index = match pbr_model.metallic_roughness_texture() {
+        Some(t) => {
+            let image = t.texture().source();
+            let idx = image.index();
+            metalrough_glb_index = idx as i32;
+            let source = image.source();
+            image_data.arm_bytes = image_bytes_from_source(&glb, source);
+            Some(idx)
+        }
+        None => { None }
+    };
+    if let Some(occulusion_texture) = mat.occlusion_texture() {
+        let image = occulusion_texture.texture().source();
+        if metalrough_glb_index != image.index() as i32 {
+            crash_with_error_dialog("Unimplemented case of ao not being packed with metallic_roughness.");
+        }
+    }
+
+    image_data.emissive_index = match mat.emissive_texture() {
+        Some(t) => {
+            let image = t.texture().source();
+            let idx = image.index();
+            let source = image.source();
+            image_data.emissive_bytes = image_bytes_from_source(&glb, source);
+            Some(idx)
+        }
+        None => { None }
+    };
+
+    image_data
+}
+
 fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, out_primitive_array: &mut Vec<GLTFPrimitive>, texture_bytes: &mut [Vec<u8>]) {
     for prim in mesh.primitives() {
-        let vertex_data = uninterleaved_primitive_vertex_data(glb, &prim);
-
-        //Handle material data
         let mat = prim.material();
         let pbr_model = mat.pbr_metallic_roughness();
+        let vertex_data = uninterleaved_primitive_vertex_data(glb, &prim);
 
-        let color_index = match pbr_model.base_color_texture() {
-            Some(t) => {
-                let image = t.texture().source();
-                let idx = image.index();
-                let source = image.source();
-                if texture_bytes[idx].len() == 0 {
-                    texture_bytes[idx] = png_bytes_from_source(&glb, source);
-                }
-                Some(idx)
-            }
-            None => { None }
-        };
-
-        let normal_index = match mat.normal_texture() {
-            Some(t) => {
-                let image = t.texture().source();
-                let idx = image.index();
-                let source = image.source();
-                if texture_bytes[idx].len() == 0 {
-                    texture_bytes[idx] = png_bytes_from_source(&glb, source);
-                }
-                Some(idx)
-            }
-            None => { None }
-        };
-
-        let mut metalrough_glb_index = -1;
-        let metallic_roughness_index = match pbr_model.metallic_roughness_texture() {
-            Some(t) => {
-                let image = t.texture().source();
-                let idx = image.index();
-                metalrough_glb_index = idx as i32;
-                let source = image.source();
-                if texture_bytes[idx].len() == 0 {
-                    texture_bytes[idx] = png_bytes_from_source(&glb, source);
-                }
-                Some(idx)
-            }
-            None => { None }
-        };
-        if let Some(occulusion_texture) = mat.occlusion_texture() {
-            let image = occulusion_texture.texture().source();
-            if metalrough_glb_index != image.index() as i32 {
-                crash_with_error_dialog("Unimplemented case of ao not being packed with metallic_roughness.");
+        let image_data = load_raw_image_data(glb, &prim);
+        if let Some(idx) = image_data.color_index {
+            if texture_bytes[idx].len() == 0 {
+                texture_bytes[idx] = image_data.color_bytes;
             }
         }
-
-        let emissive_factor = mat.emissive_factor();
-        let emissive_index = match mat.emissive_texture() {
-            Some(t) => {
-                let image = t.texture().source();
-                let idx = image.index();
-                let source = image.source();
-                if texture_bytes[idx].len() == 0 {
-                    texture_bytes[idx] = png_bytes_from_source(&glb, source);
-                }
-                Some(idx)
+        if let Some(idx) = image_data.normal_index {
+            if texture_bytes[idx].len() == 0 {
+                texture_bytes[idx] = image_data.normal_bytes;
             }
-            None => { None }
-        };
+        }
+        if let Some(idx) = image_data.arm_index {
+            if texture_bytes[idx].len() == 0 {
+                texture_bytes[idx] = image_data.arm_bytes;
+            }
+        }
+        if let Some(idx) = image_data.emissive_index {
+            if texture_bytes[idx].len() == 0 {
+                texture_bytes[idx] = image_data.emissive_bytes;
+            }
+        }
 
         let mat = GLTFMaterial {
             base_color: pbr_model.base_color_factor(),
             base_roughness: pbr_model.roughness_factor(),
             base_metalness: pbr_model.metallic_factor(),
-            emissive_factor,
-            color_index,
+            emissive_factor: mat.emissive_factor(),
+            color_index: image_data.color_index,
             color_imagetype: GLTFImageType::PNG,
-            normal_index,
+            normal_index: image_data.normal_index,
             normal_imagetype: GLTFImageType::PNG,
-            metallic_roughness_index,
+            metallic_roughness_index: image_data.arm_index,
             metallic_roughness_imagetype: GLTFImageType::PNG,
-            emissive_index,
+            emissive_index: image_data.emissive_index,
             emissive_imagetype: GLTFImageType::PNG
         };
         let p = GLTFPrimitive {

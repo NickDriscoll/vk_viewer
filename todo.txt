@@ -1,5 +1,6 @@
 Todo:
     Make generic error macro
+    Add MSAA
     Fix Imgui flickering bugs
     Change shadow map data such as cascade distances to be data-driven
     Add orbit cam tweaking controls
