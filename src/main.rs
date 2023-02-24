@@ -429,7 +429,7 @@ fn main() {
         let atm_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(atm_shader_stages).build_info();
         let shadow_info = GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
-                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::BACK).build_info();
+                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
         let postfx_info = GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
                             .set_shader_stages(postfx_shader_stages).build_info();
                             
@@ -542,8 +542,8 @@ fn main() {
         simulation_state.entities.insert(e)
     };
 
-    let mut lookat_dist = 7.5;
-    let mut lookat_pos = lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
+    //let mut lookat_dist = 7.5;
+    //let mut lookat_pos = lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
 
     //Load totoro as glb
     let totoro_data = asset::gltf_meshdata("./data/models/totoro_backup.glb");
@@ -573,14 +573,15 @@ fn main() {
         simulation_state.entities.insert(e)
     };
 
-    let mut focused_entity = Some(main_totoro_key);
-
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
-    let mut last_view_from_world = glm::identity();
+    //let mut last_view_from_world = glm::identity();
+
+    camera.focused_entity = Some(main_totoro_key);
+    //let mut focused_entity = Some(main_totoro_key);
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
@@ -806,7 +807,7 @@ fn main() {
                 }
 
                 if DevGui::do_standard_button(&imgui_ui, "Unfocus camera") {
-                    focused_entity = None;
+                    camera.focused_entity = None;
                 }
 
                 let mut state = renderer.uniform_data.real_sky != 0.0;
@@ -836,7 +837,7 @@ fn main() {
             AssetWindowResponse::None => {}
         }
 
-        match dev_gui.do_entity_window(&imgui_ui, window_size, &mut simulation_state.entities, focused_entity, &mut physics_engine.rigid_body_set) {
+        match dev_gui.do_entity_window(&imgui_ui, window_size, &mut simulation_state.entities, camera.focused_entity, &mut physics_engine.rigid_body_set) {
             EntityWindowResponse::LoadGLTF(path) => {
                 let mesh_data = asset::gltf_meshdata(&path);
                 let model = renderer.upload_gltf_model(&mut vk, &mesh_data, pbr_pipeline);
@@ -870,7 +871,7 @@ fn main() {
                     simulation_state.entities.remove(key);
                 }
             }
-            EntityWindowResponse::FocusCamera(k) => { focused_entity = k; }
+            EntityWindowResponse::FocusCamera(k) => { camera.focused_entity = k; }
             EntityWindowResponse::Interacted => {}
             EntityWindowResponse::None => {}
         }
@@ -881,13 +882,6 @@ fn main() {
         physics_engine.integration_parameters.dt = scaled_delta_time;
         physics_engine.step();
 
-        let view_movement_vector = glm::mat4(
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-            0.0, -1.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 1.0
-        ) * glm::vec3_to_vec4(&user_input.movement_vector);
-
         //Move the main totoro back to the center if it's too far from the center of the world
         if let Some(entity) = simulation_state.entities.get_mut(main_totoro_key) {
             if let Some(body) = physics_engine.rigid_body_set.get(entity.physics_component.rigid_body_handle) {
@@ -897,82 +891,7 @@ fn main() {
             }
         }
 
-        //Compute this frame's view matrix
-        let view_from_world = match focused_entity {
-            Some(key) => {
-                match simulation_state.entities.get(key) {
-                    Some(prop) => {
-                        let min = 3.0;
-                        let max = 200.0;
-                        lookat_dist -= 0.1 * lookat_dist * user_input.scroll_amount;
-                        lookat_dist = f32::clamp(lookat_dist, min, max);
-                        
-                        let lookat = glm::look_at(&lookat_pos, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
-                        let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-user_input.orientation_delta.x, user_input.orientation_delta.y, 0.0, 0.0);
-            
-                        lookat_pos += lookat_dist * glm::vec4_to_vec3(&world_space_offset);
-                        let camera_pos = glm::normalize(&lookat_pos);
-                        lookat_pos = lookat_dist * camera_pos;
-                        
-                        let min = -0.95;
-                        let max = 0.95;
-                        let lookat_dot = glm::dot(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
-                        if lookat_dot > max {
-                            let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
-                            let current_angle = f32::acos(lookat_dot);
-                            let amount = f32::acos(max) - current_angle;
-            
-                            let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&lookat_pos);
-                            lookat_pos = glm::vec4_to_vec3(&new_pos);
-                        } else if lookat_dot < min {
-                            let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
-                            let current_angle = f32::acos(lookat_dot);
-                            let amount = f32::acos(min) - current_angle;
-            
-                            let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(lookat_pos));                
-                            lookat_pos = glm::vec4_to_vec3(&new_pos);
-                        }
-
-                        let lookat_target = match physics_engine.rigid_body_set.get(prop.physics_component.rigid_body_handle) {
-                            Some(body) => {
-                                body.translation()
-                            }
-                            None => {
-                                crash_with_error_dialog("All entities should have a rigid body component");
-                            }
-                        };
-            
-                        let pos = lookat_pos + lookat_target;
-                        let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
-                        renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
-                        m
-                    }
-                    None => {
-                        //Freecam update                
-                        const FREECAM_SPEED: f32 = 3.0;
-                        let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
-                        camera.position += glm::vec4_to_vec3(&delta_pos);
-                        camera.orientation += user_input.orientation_delta;
-        
-                        camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
-                        renderer.uniform_data.camera_position = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
-                        camera.make_view_matrix()
-                    }
-                }
-            }
-            None => {
-                //Freecam update                
-                const FREECAM_SPEED: f32 = 3.0;
-                let delta_pos = FREECAM_SPEED * glm::affine_inverse(last_view_from_world) * view_movement_vector * timer.delta_time;
-                camera.position += glm::vec4_to_vec3(&delta_pos);
-                camera.orientation += user_input.orientation_delta;
-
-                camera.orientation.y = camera.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
-                renderer.uniform_data.camera_position = glm::vec4(camera.position.x, camera.position.y, camera.position.z, 1.0);
-                camera.make_view_matrix()
-            }
-        };
-        last_view_from_world = view_from_world;
+        let view_from_world = camera.update(&simulation_state, &physics_engine, &mut renderer, &user_input, timer.delta_time);
         renderer.uniform_data.view_from_world = view_from_world;
 
         //Push drawcalls for entities

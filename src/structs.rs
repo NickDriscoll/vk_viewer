@@ -1,38 +1,137 @@
 use ozy::structs::UninterleavedVertexArrays;
 use slotmap::new_key_type;
 
-use crate::{*, render::{ModelKey}, physics::PhysicsComponent};
+use crate::{*, render::{ModelKey}, physics::PhysicsComponent, input::UserInput};
 
 pub struct Camera {
     pub position: glm::TVec3<f32>,
     pub orientation: glm::TVec2<f32>,
     pub fov: f32,
     pub near_distance: f32,
-    pub far_distance: f32
+    pub far_distance: f32,
+    forward: glm::TVec3<f32>,
+    pub lookat_dist: f32,
+    pub focused_entity: Option<EntityKey>,
+    pub last_view_from_world: glm::TMat4<f32>
 }
 
 impl Camera {
+    pub const FREECAM_SPEED: f32 = 3.0;
+
     pub fn new(pos: glm::TVec3<f32>) -> Self {
         Camera {
             position: pos,
             orientation: glm::zero(),
             fov: glm::half_pi(),
             near_distance: 0.1,
-            far_distance: 1000.0
+            far_distance: 1000.0,
+            forward: glm::vec3(0.0, 1.0, 0.0),
+            lookat_dist: 7.5,
+            focused_entity: None,
+            last_view_from_world: glm::identity()
         }
     }
 
-    pub fn make_view_matrix(&self) -> glm::TMat4<f32> {
-        glm::rotation(-glm::half_pi::<f32>(), &glm::vec3(1.0, 0.0, 0.0)) *
-        glm::rotation(self.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
-        glm::rotation(self.orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
-        glm::translation(&-self.position)
+    pub fn look_direction(&self) -> glm::TVec3<f32> {
+        self.forward
     }
 
-    pub fn look_direction(&self) -> glm::TVec3<f32> {
-        let view_mat = self.make_view_matrix();
+    pub fn view_matrix() {
+
+    }
+
+    pub fn update(&mut self, simulation_state: &SimulationSOA, physics_engine: &PhysicsEngine, renderer: &mut Renderer, user_input: &UserInput, delta_time: f32) -> glm::TMat4<f32> {
+        let view_movement_vector = glm::mat4(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, -1.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 1.0
+        ) * glm::vec3_to_vec4(&user_input.movement_vector);
+
+        let matrix = match self.focused_entity {
+            Some(key) => {
+                match simulation_state.entities.get(key) {
+                    Some(prop) => {
+                        let min = 3.0;
+                        let max = 200.0;
+                        self.lookat_dist -= 0.1 * self.lookat_dist * user_input.scroll_amount;
+                        self.lookat_dist = f32::clamp(self.lookat_dist, min, max);
+                        
+                        let lookat = glm::look_at(&self.position, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+                        let world_space_offset = glm::affine_inverse(lookat) * glm::vec4(-user_input.orientation_delta.x, user_input.orientation_delta.y, 0.0, 0.0);
+            
+                        self.position += self.lookat_dist * glm::vec4_to_vec3(&world_space_offset);
+                        let camera_pos = glm::normalize(&self.position);
+                        self.position = self.lookat_dist * camera_pos;
+                        
+                        let min = -0.95;
+                        let max = 0.95;
+                        let lookat_dot = glm::dot(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+                        if lookat_dot > max {
+                            let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+                            let current_angle = f32::acos(lookat_dot);
+                            let amount = f32::acos(max) - current_angle;
+            
+                            let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&self.position);
+                            self.position = glm::vec4_to_vec3(&new_pos);
+                        } else if lookat_dot < min {
+                            let rotation_vector = -glm::cross(&camera_pos, &glm::vec3(0.0, 0.0, 1.0));
+                            let current_angle = f32::acos(lookat_dot);
+                            let amount = f32::acos(min) - current_angle;
+            
+                            let new_pos = glm::rotation(amount, &rotation_vector) * glm::vec3_to_vec4(&(self.position));                
+                            self.position = glm::vec4_to_vec3(&new_pos);
+                        }
+
+                        let lookat_target = match physics_engine.rigid_body_set.get(prop.physics_component.rigid_body_handle) {
+                            Some(body) => {
+                                body.translation()
+                            }
+                            None => {
+                                crash_with_error_dialog("All entities should have a rigid body component");
+                            }
+                        };
+            
+                        let pos = self.position + lookat_target;
+                        let m = glm::look_at(&pos, &lookat_target, &glm::vec3(0.0, 0.0, 1.0));
+                        renderer.uniform_data.camera_position = glm::vec4(pos.x, pos.y, pos.z, 1.0);
+                        m
+                    }
+                    None => {
+                        //Freecam update
+                        let delta_pos = Self::FREECAM_SPEED * glm::affine_inverse(self.last_view_from_world) * view_movement_vector * delta_time;
+                        self.position += glm::vec4_to_vec3(&delta_pos);
+                        self.orientation += user_input.orientation_delta;
+        
+                        self.orientation.y = self.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
+                        renderer.uniform_data.camera_position = glm::vec4(self.position.x, self.position.y, self.position.z, 1.0);
+                        glm::rotation(-glm::half_pi::<f32>(), &glm::vec3(1.0, 0.0, 0.0)) *
+                        glm::rotation(self.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
+                        glm::rotation(self.orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
+                        glm::translation(&-self.position)
+                    }
+                }
+            }
+            None => {
+                //Freecam update
+                let delta_pos = Self::FREECAM_SPEED * glm::affine_inverse(self.last_view_from_world) * view_movement_vector * delta_time;
+                self.position += glm::vec4_to_vec3(&delta_pos);
+                self.orientation += user_input.orientation_delta;
+
+                self.orientation.y = self.orientation.y.clamp(-glm::half_pi::<f32>(), glm::half_pi::<f32>());
+                renderer.uniform_data.camera_position = glm::vec4(self.position.x, self.position.y, self.position.z, 1.0);
+                glm::rotation(-glm::half_pi::<f32>(), &glm::vec3(1.0, 0.0, 0.0)) *
+                glm::rotation(self.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
+                glm::rotation(self.orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
+                glm::translation(&-self.position)
+            }
+        };
+        self.last_view_from_world = matrix;
+
         let dir = glm::vec3(0.0, 0.0, -1.0);
-        glm::vec4_to_vec3(&(glm::affine_inverse(view_mat) * glm::vec3_to_vec4(&dir)))
+        self.forward = glm::vec4_to_vec3(&(glm::affine_inverse(matrix) * glm::vec3_to_vec4(&dir)));
+
+        matrix
     }
 }
 

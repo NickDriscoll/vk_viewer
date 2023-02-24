@@ -1090,7 +1090,7 @@ impl Renderer {
             return key;
         }
         
-        let mut primitive_keys = vec![];
+        let mut primitive_keys = Vec::with_capacity(data.primitives.len());
         let mut tex_id_map = HashMap::new();
         for prim in &data.primitives {
             let ozy_material = &data.materials[prim.material_idx as usize];
@@ -1175,8 +1175,8 @@ impl Renderer {
         self.directional_lights.get_mut(key)
     }
 
-    pub fn delete_directional_light(&mut self, key: DirectionalLightKey) {
-        self.directional_lights.remove(key);
+    pub fn delete_directional_light(&mut self, key: DirectionalLightKey) -> Option<SunLight> {
+        self.directional_lights.remove(key)
     }
 
     fn next_frame(&mut self, vk: &mut VulkanGraphicsDevice) -> InFlightFrameData {
