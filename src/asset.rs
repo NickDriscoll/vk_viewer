@@ -1,4 +1,3 @@
-use gltf::image::Source;
 use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
 use ozy::io::{OzyMaterial, OzyPrimitive, OzyImage};
@@ -791,23 +790,6 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
     let mut primitives = Vec::with_capacity(64);
     for mesh in glb.meshes() {
         for prim in mesh.primitives() {
-            fn load_gltf_image_to_ozy_image(vk: &mut VulkanGraphicsDevice, glb: &Gltf, image: gltf::Image) -> OzyImage {
-                let source = image.source();
-                let png_bytes = image_bytes_from_source(glb, source);
-                let decoder = png::Decoder::new(png_bytes.as_slice()).read_info().unwrap();
-                let info = decoder.info();
-                let width = info.width;
-                let height = info.height;
-                let mipmap_count = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).clamp(1, u32::MAX);
-                let bc7_bytes = png2bc7_synchronous(vk, &png_bytes);
-                OzyImage {
-                    width,
-                    height,
-                    mipmap_count,
-                    bc7_bytes
-                }
-            }
-
             fn ozy_image_from_png(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> OzyImage {
                 let decoder = png::Decoder::new(png_bytes).read_info().unwrap();
                 let info = decoder.info();
