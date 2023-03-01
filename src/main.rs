@@ -105,7 +105,7 @@ fn main() {
 
     let shadow_pass = unsafe {
         let depth_description = vk::AttachmentDescription {
-            format: vk::Format::D32_SFLOAT,
+            format: vk::Format::D16_UNORM,
             samples: vk::SampleCountFlags::TYPE_1,
             load_op: vk::AttachmentLoadOp::CLEAR,
             store_op: vk::AttachmentStoreOp::STORE,
@@ -374,7 +374,6 @@ fn main() {
         &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0),
         shadow_pass
     );
-    renderer.uniform_data.sun_shadowmap_idx = sun_shadow_map.texture_index() as u32;
 
     let sunlight_key = renderer.new_directional_light(
         SunLight {
@@ -451,7 +450,7 @@ fn main() {
         let stage = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/lum_binning.spv");
         let create_info = vk::ComputePipelineCreateInfo {
             stage,
-            layout: graphics_pipeline_layout,
+            layout: compute_pipeline_layout,
             ..Default::default()
         };
         vk.device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], vkdevice::MEMORY_ALLOCATOR).unwrap()[0]
@@ -578,10 +577,7 @@ fn main() {
 
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
-    //let mut last_view_from_world = glm::identity();
-
     camera.focused_entity = Some(main_totoro_key);
-    //let mut focused_entity = Some(main_totoro_key);
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
 
@@ -891,8 +887,7 @@ fn main() {
             }
         }
 
-        let view_from_world = camera.update(&simulation_state, &physics_engine, &mut renderer, &user_input, timer.delta_time);
-        renderer.uniform_data.view_from_world = view_from_world;
+        renderer.uniform_data.view_from_world = camera.update(&simulation_state, &physics_engine, &mut renderer, &user_input, timer.delta_time);
 
         //Push drawcalls for entities
         for (_, entity) in simulation_state.entities.iter() {
@@ -923,7 +918,7 @@ fn main() {
         dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, &mut imgui_context);
         
         //Does all work that needs to happen before the render passes
-        let frame_info = renderer.prepare_frame(&mut vk, window_size, &camera, &view_from_world, timer.elapsed_time);
+        let frame_info = renderer.prepare_frame(&mut vk, window_size, &camera, timer.elapsed_time);
 
         //Draw
         unsafe {
@@ -1071,6 +1066,7 @@ fn main() {
             vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
             vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &0u32.to_le_bytes());
             vk.device.cmd_draw(frame_info.main_command_buffer, 36, 1, 0, 0);
+            
             vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
 
             //Luminance binning compute pass

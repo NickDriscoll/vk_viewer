@@ -1,6 +1,6 @@
 use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
-use ozy::io::{OzyMaterial, OzyPrimitive, OzyImage};
+use ozy::io::{OzyMaterial, OzyPrimitive, OzyImage, UninterleavedVertexData};
 use ozy::render::PositionNormalTangentUvPrimitive;
 use std::io::BufWriter;
 use std::ptr;
@@ -552,14 +552,6 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanGraphicsDevice, path: &str) 
     out_file.write(&bc7_bytes).unwrap();
 }
 
-pub struct UninterleavedVertexData {
-    indices: Vec<u32>,
-    positions: Vec<f32>,
-    normals: Vec<f32>,
-    tangents: Vec<f32>,
-    uvs: Vec<f32>
-}
-
 #[derive(Default)]
 pub struct RawImageData {
     pub color_index: Option<usize>,
@@ -795,7 +787,7 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
                 let info = decoder.info();
                 let width = info.width;
                 let height = info.height;
-                let mipmap_count = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).clamp(1, u32::MAX);
+                let mipmap_count = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).max(1);
                 let bc7_bytes = png2bc7_synchronous(vk, png_bytes);
                 OzyImage {
                     width,
@@ -855,7 +847,7 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
                 materials[mat_idx] = ozy_mat;
             }
 
-            println!("Mesh id: {}\tPrimitive index count: {}\tMaterial name: {:?}", mesh.index(), vertex_data.indices.len(), mat.name());
+            println!("Mesh id: {}\nPrimitive index count: {}\nMaterial name: {:?}\n", mesh.index(), vertex_data.indices.len(), mat.name());
 
             let ozy_prim = OzyPrimitive {
                 indices: vertex_data.indices,

@@ -25,9 +25,9 @@ pub struct DirectionalLight {
     pub shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT],
     pub shadow_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH],
     pub direction: glm::TVec3<f32>,
-    pad0: f32,
+    pub shadow_map_index: u32,
     pub irradiance: glm::TVec3<f32>,
-    pad1: f32
+    pad0: f32
 }
 
 impl DirectionalLight {
@@ -36,9 +36,9 @@ impl DirectionalLight {
             shadow_matrices: [glm::identity(); CascadedShadowMap::CASCADE_COUNT],
             shadow_distances: [0.0; SHADOW_DISTANCE_ARRAY_LENGTH],
             direction,
-            pad0: 0.0,
+            shadow_map_index: 0,
             irradiance,
-            pad1: 0.0
+            pad0: 0.0
         }
     }
 }
@@ -119,7 +119,7 @@ pub struct DrawCall {
     pub primitive_key: PrimitiveKey,
     pub pipeline: vk::Pipeline,
     pub instance_count: u32,
-    pub first_instance: u32
+    pub first_instance: u32         //Used to index into global instance data buffer I.E. world and normal matrices etc.
 }
 
 impl PartialEq for DrawCall {
@@ -234,7 +234,6 @@ pub struct EnvironmentUniforms {
     pub camera_position: glm::TVec4<f32>,
     pub directional_lights: [DirectionalLight; MAX_DIRECTIONAL_LIGHTS],
     pub directional_light_count: u32,
-    pub sun_shadowmap_idx: u32,
     pub time: f32,
     pub stars_threshold: f32, // modifies the number of stars that are visible
 	pub stars_exposure: f32,  // modifies the overall strength of the stars
@@ -244,7 +243,8 @@ pub struct EnvironmentUniforms {
     pub sunview_idx: u32,
     pub exposure: f32,
     pub ambient_factor: f32,
-    pub real_sky: f32
+    pub real_sky: f32,
+    pad0: u32
 }
 
 pub struct CascadedShadowMap {
@@ -301,7 +301,7 @@ impl CascadedShadowMap {
         clipping_from_view: &glm::TMat4<f32>,
         render_pass: vk::RenderPass
     ) -> Self {
-        let format = vk::Format::D32_SFLOAT;
+        let format = vk::Format::D16_UNORM;
 
         let allocation;
         let image = unsafe {
@@ -443,17 +443,13 @@ impl CascadedShadowMap {
             //Determine the view-space boundaries of the orthographic projection
             let mut min_x = f32::INFINITY;
             let mut min_y = f32::INFINITY;
-            let mut min_z = f32::INFINITY;
             let mut max_x = f32::NEG_INFINITY;
             let mut max_y = f32::NEG_INFINITY;
-            let mut max_z = f32::NEG_INFINITY;
             for point in shadow_view_space_points.iter() {
                 if max_x < point.x { max_x = point.x; }
                 if min_x > point.x { min_x = point.x; }
                 if max_y < point.y { max_y = point.y; }
                 if min_y > point.y { min_y = point.y; }
-                if min_z > point.z { min_z = point.z; }
-                if max_z < point.z { max_z = point.z; }
             }
     
             let shadow_projection = glm::ortho_rh_zo(

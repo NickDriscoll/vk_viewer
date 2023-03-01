@@ -32,12 +32,12 @@ impl Camera {
         }
     }
 
-    pub fn look_direction(&self) -> glm::TVec3<f32> {
-        self.forward
+    pub fn look_direction(&self) -> &glm::TVec3<f32> {
+        &self.forward
     }
 
-    pub fn view_matrix() {
-
+    pub fn view_matrix(&self) -> &glm::TMat4<f32> {
+        &self.last_view_from_world
     }
 
     pub fn update(&mut self, simulation_state: &SimulationSOA, physics_engine: &PhysicsEngine, renderer: &mut Renderer, user_input: &UserInput, delta_time: f32) -> glm::TMat4<f32> {

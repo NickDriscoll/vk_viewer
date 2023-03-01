@@ -88,7 +88,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         sun_color = lerp(sky_color, halo_color, 0.2);
 
         float2 sun_shadowing = compute_cascade_shadowing(
-            global_array_textures[uniforms.sun_shadowmap_idx],
+            global_array_textures[light.shadow_map_index],
             normal,
             light.direction.xyz,
             input.sunshadow_space_positions,

@@ -597,14 +597,8 @@ impl VulkanGraphicsDevice {
                 ash::extensions::khr::Surface::name().as_ptr(),
                 platform_surface_extension
             ];
-
-            #[cfg(master)]
+            
             let layer_names = [];
-
-            #[cfg(not(master))]
-            let layer_names = unsafe  {[
-                CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr(),
-            ]};
             
             let vk_create_info = vk::InstanceCreateInfo {
                 p_application_info: &app_info,

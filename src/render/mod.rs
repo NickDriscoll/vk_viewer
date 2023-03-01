@@ -1264,7 +1264,7 @@ impl Renderer {
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 
-    pub fn prepare_frame(&mut self, vk: &mut VulkanGraphicsDevice, window_size: glm::TVec2<u32>, camera: &Camera, view_from_world: &glm::TMat4<f32>, elapsed_time: f32) -> InFlightFrameData {
+    pub fn prepare_frame(&mut self, vk: &mut VulkanGraphicsDevice, window_size: glm::TVec2<u32>, camera: &Camera, elapsed_time: f32) -> InFlightFrameData {
         //Process raw draw calls into draw stream
         {
             //Create map of ModelKeys to the instance data for all instances of that model
@@ -1288,10 +1288,15 @@ impl Renderer {
             let mut current_first_instance = 0;
             for (model_key, instances) in model_instances.iter_mut() {
                 let instance_count = instances.len() as u32;
+                //let mut new_drawcalls = Vec::with_capacity(model_instances.len());
                 if let Some(model) = self.models.get(*model_key) {
                     for prim_key in model.primitive_keys.iter() {
                         if let Some(primitive) = self.primitives.get(*prim_key) {
-                            let pipeline = self.global_materials[primitive.material_idx.try_into().unwrap()].as_ref().unwrap().pipeline;
+                            //Want to check for duplicate primitives somehow
+
+
+                            let material = self.global_materials[primitive.material_idx.try_into().unwrap()].as_ref().unwrap();
+                            let pipeline = material.pipeline;
                             let dc = DrawCall {
                                 primitive_key: *prim_key,
                                 pipeline,
@@ -1417,11 +1422,11 @@ impl Renderer {
                 0.0, 0.0, 0.0, 1.0,
             ) * projection_matrix;
     
-            uniforms.clip_from_world = uniforms.clip_from_view * view_from_world;
+            uniforms.clip_from_world = uniforms.clip_from_view * camera.view_matrix();
 
             //Push directional light data
             let mut i = 0;
-            for light in self.directional_lights.iter() {
+            for light in self.directional_lights.iter_mut() {
                 let light = light.1;
                 let irradiance = light.irradiance;
                 let direction = 
@@ -1443,11 +1448,11 @@ impl Renderer {
                         &uniforms.clip_from_view
                     );
                     dists = shadow_map.clip_distances(camera, &uniforms.clip_from_view);
+                    uniforms.directional_lights[i].shadow_map_index = shadow_map.texture_index();
                 }
 
                 uniforms.directional_lights[i].shadow_matrices = matrices;
                 uniforms.directional_lights[i].shadow_distances = dists;
-
                 i += 1;
             }
             uniforms.directional_light_count = self.directional_lights.len() as u32;
@@ -1455,7 +1460,7 @@ impl Renderer {
             //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
             //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
             //that the sky is infinitely far away
-            uniforms.clip_from_skybox = uniforms.clip_from_view * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_from_world));
+            uniforms.clip_from_skybox = uniforms.clip_from_view * glm::mat3_to_mat4(&glm::mat4_to_mat3(camera.view_matrix()));
 
             uniforms.time = elapsed_time;
 

@@ -68,7 +68,6 @@ struct FrameUniforms {
     float4 camera_position;
     DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
     uint directional_light_count;
-    uint sun_shadowmap_idx;
     float time;
     float stars_threshold;
     float stars_exposure;
@@ -79,6 +78,7 @@ struct FrameUniforms {
     float exposure;
     float ambient_factor;
     bool real_sky;
+    uint pad0;
 }
 
 struct Camera {
@@ -115,7 +115,7 @@ struct DirectionalLight {
     float4x4 shadow_matrices[SHADOW_CASCADE_COUNT];
     float4 shadow_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4];
     float3 direction;
-    float pad0;
+    uint shadow_map_index;
     float3 irradiance;
-    float pad1;
+    float pad0;
 };
