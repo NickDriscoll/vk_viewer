@@ -1,6 +1,7 @@
 import structs;
 import lighting;
 import routines;
+import atmosphere;
 import bindings.frame_uniforms;
 import bindings.material_buffer;
 import bindings.global_textures;
@@ -75,6 +76,13 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     for (uint i = 0; i < uniforms.directional_light_count; i++) {
         uint light_idx = i;
         DirectionalLight light = uniforms.directional_lights[i];
+        float nighttime_factor = smoothstep(-0.1, 0.1, light.direction.z);
+
+        ray_t ray = {
+            float3(0.0, 0.0, earth_radius) + input.position,
+            light.direction
+        };
+        float3 sky_sample = gather_atmosphere_irradiance(ray, light.direction.xyz, light.irradiance.rgb);
 
         // Compute sun color
         float sunzenith_dot = light.direction.z * 0.5 + 0.5;
@@ -94,43 +102,16 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
             input.sunshadow_space_positions,
             uniforms.directional_lights[i].shadow_distances,
             input.clip_space_z,
-            0
+            i
         );
-        final_radiance += sun_shadowing.x * directional_lighting(params, light);
 
-        if (!uniforms.real_sky) {
-            // Apply fog like GL_EXP2
-            final_radiance = exp2_fog(uniforms, input.position, final_radiance, sun_color);
-        }
+        final_radiance += nighttime_factor * sun_shadowing.x * normalize(sky_sample) * directional_lighting(params, light);
     }
 
     float3 ambient = float3(uniforms.ambient_factor) * params.albedo * ao;
-    //float3 ambient = float3(uniforms.ambient_factor) * params.albedo;
     final_radiance += ambient;
 
-    //Determine which cascade the fragment is in
-    float3 adj_shadow_space_pos;
-    int shadow_cascade = -1;
-    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
-        uint cascade_index = i + (SHADOW_CASCADE_COUNT * 0);
-        float cascade_distance = uniforms.directional_lights[i].shadow_distances[(cascade_index + 1) / 4][(cascade_index + 1) % 4];
-        if (input.clip_space_z < cascade_distance) {
-            adj_shadow_space_pos = float3(float2(input.sunshadow_space_positions[i].xy * 0.5 + 0.5), input.sunshadow_space_positions[i].z);
-            if (!(
-                adj_shadow_space_pos.z < 0.0 ||
-                adj_shadow_space_pos.z > 1.0 ||
-                adj_shadow_space_pos.x < 0.0 ||
-                adj_shadow_space_pos.x > 1.0 ||
-                adj_shadow_space_pos.y < 0.0 ||
-                adj_shadow_space_pos.y > 1.0
-            )) {
-                shadow_cascade = i;
-            }
-            break;
-        }
-    }
-    float2 f_shadow_pos = adj_shadow_space_pos.xy;
-    float3 sample_uv = float3(f_shadow_pos.xy, (float)shadow_cascade);
-
+    // final_radiance = lerp(final_radiance, world_normal * length(final_radiance), 0.1);
     return float4(final_radiance, 1.0);
+    //return float4(float3(500.0 * smoothstep(-0.1, 0.1, uniforms.directional_lights[0].direction.z)), 1.0);
 }

@@ -54,7 +54,7 @@ static const float3 SKYBOX_NONINDEXED_POSITIONS[] = {
 };
 
 [[vk::push_constant]]
-cbuffer PushConstants
+cbuffer AtmospherePushConstants
 {
     uint sun_idx;
 }
@@ -159,7 +159,7 @@ bool get_sun_light(
     return true;
 }
 
-float3 get_incident_light(ray_t ray, float3 sun_dir, float3 sun_irradiance) {
+float3 gather_atmosphere_irradiance(ray_t ray, float3 sun_dir, float3 sun_irradiance) {
     const int num_samples = 16;
 
     // "pierce" the atmosphere with the viewing ray
@@ -246,10 +246,10 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
     float3 sky_sample;
     if (uniforms.real_sky) {
         ray_t ray = {
-            float3(0.0, 0.0, earth_radius + 1.0),
+            float3(0.0, 0.0, earth_radius) + uniforms.camera_position.xyz,
             view_direction
         };
-        sky_sample = get_incident_light(ray, sun.direction.xyz, sun.irradiance.rgb);
+        sky_sample = gather_atmosphere_irradiance(ray, sun.direction.xyz, sun.irradiance.rgb);
     } else {
         sky_sample = sample_fake_sky(
             sun.direction.xyz,
@@ -260,9 +260,10 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
         );
     }
 
-    float sun_closeness = dot(view_direction, sun.direction.xyz);
-    float3 sun_color = sun.irradiance * smoothstep(0.99950, 1.0, sun_closeness);
     float3 stars_color = sample_sky_stars(uniforms, view_direction, sun.direction.z);
+    float sun_closeness = dot(view_direction, sun.direction.xyz);
+    float3 sun_color = normalize(sky_sample) * sun.irradiance * smoothstep(0.99950, 1.0, sun_closeness);
+    sun_color = max(sun_color, float3(0.0));
     float3 final_color = sun_color + sky_sample + stars_color;
 
     return float4(final_color, 1.0);

@@ -65,8 +65,5 @@ float3 directional_lighting(PBRSurface surface, DirectionalLight light)
     // Compute outgoing radiance
     float3 Lo = (kd * f_lambert(surface.albedo) + cook_torrence) * light.irradiance * shading_light_dot;
 
-    // Directional lights can't contribute when they're under the world
-    Lo *= 1.0 - smoothstep(0.1, -0.05, light.direction.z);
-
     return Lo;
 }

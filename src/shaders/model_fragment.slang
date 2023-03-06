@@ -1,6 +1,7 @@
 import structs;
 import lighting;
 import routines;
+import atmosphere;
 import bindings.frame_uniforms;
 import bindings.material_buffer;
 import bindings.global_textures;
@@ -52,6 +53,13 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
 
     for (uint i = 0; i < uniforms.directional_light_count; i++) {
         DirectionalLight light = uniforms.directional_lights[i];
+        float nighttime_factor = smoothstep(-0.1, 0.1, light.direction.z);
+
+        ray_t ray = {
+            float3(0.0, 0.0, earth_radius) + input.position,
+            light.direction
+        };
+        float3 sky_sample = gather_atmosphere_irradiance(ray, light.direction.xyz, light.irradiance.rgb);
 
         // Compute sun color
         float sunzenith_dot = light.direction.z * 0.5 + 0.5;
@@ -71,14 +79,9 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
             input.sunshadow_space_positions,
             uniforms.directional_lights[i].shadow_distances,
             input.clip_space_z,
-            0
+            i
         );
-        final_radiance += sun_shadowing.x * directional_lighting(params, light);
-
-        if (!uniforms.real_sky) {
-            // Apply fog like GL_EXP2
-            final_radiance = exp2_fog(uniforms, input.position, final_radiance, sun_color);
-        }
+        final_radiance += nighttime_factor * sun_shadowing.x * normalize(sky_sample) * directional_lighting(params, light);
     }
 
     //Emissive contribution
