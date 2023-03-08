@@ -313,7 +313,7 @@ impl CascadedShadowMap {
 
             let create_info = vk::ImageCreateInfo {
                 queue_family_index_count: 1,
-                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                p_queue_family_indices: [vk.main_queue_family_index].as_ptr(),
                 flags: vk::ImageCreateFlags::empty(),
                 image_type: vk::ImageType::TYPE_2D,
                 format,
@@ -607,6 +607,12 @@ impl GraphicsPipelineBuilder {
             shader_stages: self.shader_stages.clone(),
             render_pass: self.render_pass
         }
+    }
+
+    pub fn set_msaa_samples(self, samples: vk::SampleCountFlags) -> Self {
+        let mut t = self;
+        t.multisample_state.rasterization_samples = samples;
+        t
     }
 
     pub fn set_cull_mode(self, flags: vk::CullModeFlags) -> Self {

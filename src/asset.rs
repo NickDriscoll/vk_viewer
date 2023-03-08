@@ -88,7 +88,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_
         p_command_buffers: &command_buffer,
         ..Default::default()
     };
-    let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+    let queue = vk.device.get_device_queue(vk.main_queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
 
     DeferredImage {
@@ -362,7 +362,7 @@ pub unsafe fn upload_image(vk: &mut VulkanGraphicsDevice, image: &GPUImage, raw_
         p_command_buffers: &vk.command_buffers[0],
         ..Default::default()
     };
-    let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+    let queue = vk.device.get_device_queue(vk.main_queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], vk.command_buffer_fence).unwrap();
     vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     staging_buffer.free(vk);
@@ -399,7 +399,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
         usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         queue_family_index_count: 1,
-        p_queue_family_indices: &vk.queue_family_index,
+        p_queue_family_indices: &vk.main_queue_family_index,
         initial_layout: vk::ImageLayout::UNDEFINED,
         ..Default::default()
     };
@@ -449,7 +449,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
             p_command_buffers: &command_buffer,
             ..Default::default()
         };
-        let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+        let queue = vk.device.get_device_queue(vk.main_queue_family_index, 0);
         let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
         vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
         vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();

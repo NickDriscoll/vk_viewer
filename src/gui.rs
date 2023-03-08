@@ -278,9 +278,11 @@ impl DevGui {
         let mut index_buffers = Vec::with_capacity(16);
         let mut draw_cmd_lists = Vec::with_capacity(16);
         let mut offsets = Vec::with_capacity(16);
+
         let imgui_draw_data = context.render();
 
-        let most_recent_dead_frame = &self.frames[self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT];
+        let most_recent_dead_frame_idx = self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT;
+        let most_recent_dead_frame = &self.frames[most_recent_dead_frame_idx];
 
         let enough_free_space_at_beginning = imgui_draw_data.total_vtx_count as u64 <= most_recent_dead_frame.start_offset;
         let start_offset = if enough_free_space_at_beginning {

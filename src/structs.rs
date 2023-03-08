@@ -241,6 +241,13 @@ impl Entity {
         }
     }
 
+    pub fn set_scale(&mut self, scale: f32, physics_engine: &mut PhysicsEngine) {
+        if let Some(body) = physics_engine.rigid_body_set.get_mut(self.physics_component.rigid_body_handle) {
+            
+        }
+        self.physics_component.scale = scale;
+    }
+
     pub fn set_physics_component(mut self, component: PhysicsComponent) -> Self {
         self.physics_component = component;
         self

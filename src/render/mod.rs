@@ -31,7 +31,7 @@ impl WindowManager {
     
         //Check that we can do swapchain present on this window
         unsafe {
-            if !vk.ext_surface.get_physical_device_surface_support(vk.physical_device, vk.queue_family_index, vk_surface).unwrap() {
+            if !vk.ext_surface.get_physical_device_surface_support(vk.physical_device, vk.main_queue_family_index, vk_surface).unwrap() {
                 crash_with_error_dialog("Swapchain present is unavailable on the selected device queue.\nThe application will now exit.");
             }
         }
@@ -89,7 +89,7 @@ impl WindowManager {
                 image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
                 image_sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 1,
-                p_queue_family_indices: &vk.queue_family_index,
+                p_queue_family_indices: &vk.main_queue_family_index,
                 pre_transform: surf_capabilities.current_transform,
                 composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
                 present_mode,
@@ -164,7 +164,9 @@ impl WindowManager {
 pub struct FrameBuffer {
     pub framebuffer_object: vk::Framebuffer,
     pub color_buffer: vk::Image,
+    pub color_resolve_buffer: vk::Image,
     pub color_buffer_view: vk::ImageView,
+    pub color_resolve_view: vk::ImageView,
     pub depth_buffer: vk::Image,
     pub depth_buffer_view: vk::ImageView,
     pub texture_index: u32
@@ -706,7 +708,6 @@ impl Renderer {
         let global_materials = FreeList::with_capacity(256);
 
         let mut uniforms = EnvironmentUniforms::default();
-        uniforms.exposure = 1.0;
         uniforms.real_sky = 1.0;
 
         //Load environment textures
@@ -730,7 +731,8 @@ impl Renderer {
             depth: 1
         };
 
-        let framebuffers = Self::create_hdr_framebuffers(vk, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images);
+        let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.sampled_image_color_sample_counts);
+        let framebuffers = Self::create_hdr_framebuffers(vk, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images, sample_count);
         
         //Initialize per-frame rendering state
         let in_flight_frame_data = {
@@ -786,7 +788,7 @@ impl Renderer {
             usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 1,
-            p_queue_family_indices: &vk.queue_family_index,
+            p_queue_family_indices: &vk.main_queue_family_index,
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
@@ -851,7 +853,7 @@ impl Renderer {
         }
     }
 
-    fn create_hdr_framebuffers(vk: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler_key: SamplerKey, global_images: &mut FreeList<GPUImage>) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
+    fn create_hdr_framebuffers(vk: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler_key: SamplerKey, global_images: &mut FreeList<GPUImage>, sample_count: vk::SampleCountFlags) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
         let hdr_color_format = vk::Format::R16G16B16A16_SFLOAT;
         let vk_depth_format = vk::Format::D32_SFLOAT;
 
@@ -859,14 +861,14 @@ impl Renderer {
         let depth_buffer_image = unsafe {
             let create_info = vk::ImageCreateInfo {
                 queue_family_index_count: 1,
-                p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                p_queue_family_indices: [vk.main_queue_family_index].as_ptr(),
                 flags: vk::ImageCreateFlags::empty(),
                 image_type: vk::ImageType::TYPE_2D,
                 format: vk_depth_format,
                 extent,
                 mip_levels: 1,
                 array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
+                samples: sample_count,
                 usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
@@ -898,15 +900,40 @@ impl Renderer {
         };
 
         let mut color_buffers = [vk::Image::default(); Self::FRAMES_IN_FLIGHT];
+        let mut color_resolve_buffers = [vk::Image::default(); Self::FRAMES_IN_FLIGHT];
         let mut color_buffer_views = [vk::ImageView::default(); Self::FRAMES_IN_FLIGHT];
+        let mut color_resolve_views = [vk::ImageView::default(); Self::FRAMES_IN_FLIGHT];
         let mut hdr_framebuffers = [vk::Framebuffer::default(); Self::FRAMES_IN_FLIGHT];
         let mut framebuffers = [FrameBuffer::default(); Self::FRAMES_IN_FLIGHT];
         for i in 0..Self::FRAMES_IN_FLIGHT {
-            let allocation;
+            let primary_color_allocation;
             let primary_color_buffer = unsafe {
                 let create_info = vk::ImageCreateInfo {
                     queue_family_index_count: 1,
-                    p_queue_family_indices: [vk.queue_family_index].as_ptr(),
+                    p_queue_family_indices: [vk.main_queue_family_index].as_ptr(),
+                    flags: vk::ImageCreateFlags::empty(),
+                    image_type: vk::ImageType::TYPE_2D,
+                    format: hdr_color_format,
+                    extent,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: sample_count,
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    ..Default::default()
+                };
+
+                let image = vk.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+                primary_color_allocation = vkdevice::allocate_image_memory(vk, image);
+                image
+            };
+            color_buffers[i] = primary_color_buffer;
+
+            let primary_resolve_allocation;
+            let primary_resolve_buffer = unsafe {
+                let create_info = vk::ImageCreateInfo {
+                    queue_family_index_count: 1,
+                    p_queue_family_indices: [vk.main_queue_family_index].as_ptr(),
                     flags: vk::ImageCreateFlags::empty(),
                     image_type: vk::ImageType::TYPE_2D,
                     format: hdr_color_format,
@@ -920,35 +947,52 @@ impl Renderer {
                 };
 
                 let image = vk.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-                allocation = vkdevice::allocate_image_memory(vk, image);
+                primary_resolve_allocation = vkdevice::allocate_image_memory(vk, image);
                 image
             };
-            color_buffers[i] = primary_color_buffer;
+            color_resolve_buffers[i] = primary_resolve_buffer;
 
             let color_buffer_view = unsafe {
-                let image_subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1
-                };
                 let view_info = vk::ImageViewCreateInfo {
                     image: primary_color_buffer,
                     format: hdr_color_format,
                     view_type: vk::ImageViewType::TYPE_2D,
                     components: vkdevice::COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: image_subresource_range,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1
+                    },
                     ..Default::default()
                 };
-
                 vk.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
             };
             color_buffer_views[i] = color_buffer_view;
+
+            let color_resolve_view = unsafe {
+                let view_info = vk::ImageViewCreateInfo {
+                    image: primary_resolve_buffer,
+                    format: hdr_color_format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkdevice::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1
+                    },
+                    ..Default::default()
+                };
+                vk.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+            };
+            color_resolve_views[i] = color_resolve_view;
         
             //Create framebuffer
             let framebuffer_object = unsafe {
-                let attachments = [color_buffer_view, depth_buffer_view];
+                let attachments = [color_buffer_view, depth_buffer_view, color_resolve_view];
                 let fb_info = vk::FramebufferCreateInfo {
                     render_pass: hdr_render_pass,
                     attachment_count: attachments.len() as u32,
@@ -964,22 +1008,24 @@ impl Renderer {
 
             let sampler = vk.get_sampler(sampler_key).unwrap();
             let gpu_image = GPUImage {
-                image: primary_color_buffer,
-                view: Some(color_buffer_view),
+                image: primary_resolve_buffer,
+                view: Some(color_resolve_view),
                 width: extent.width,
                 height: extent.height,
                 mip_count: 1,
                 format: hdr_color_format,
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 sampler,
-                allocation
+                allocation: primary_color_allocation
             };
             let texture_index = global_images.insert(gpu_image) as u32;
 
             framebuffers[i] = FrameBuffer {
                 framebuffer_object: hdr_framebuffers[i],
                 color_buffer: color_buffers[i],
+                color_resolve_buffer: color_resolve_buffers[i],
                 color_buffer_view: color_buffer_views[i],
+                color_resolve_view: color_resolve_views[i],
                 depth_buffer: depth_buffer_image,
                 depth_buffer_view,
                 texture_index
@@ -1200,7 +1246,8 @@ impl Renderer {
         vk.device.destroy_image_view(fbs[0].depth_buffer_view, vkdevice::MEMORY_ALLOCATOR);
         vk.device.destroy_image(fbs[0].depth_buffer, vkdevice::MEMORY_ALLOCATOR);
 
-        let framebuffers = Self::create_hdr_framebuffers(vk, extent, hdr_render_pass, self.material_sampler, &mut self.global_images);
+        let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.sampled_image_color_sample_counts);
+        let framebuffers = Self::create_hdr_framebuffers(vk, extent, hdr_render_pass, self.material_sampler, &mut self.global_images, sample_count);
         for i in 0..self.frames_in_flight.len() {
             self.frames_in_flight[i].framebuffer = framebuffers[i];
         }

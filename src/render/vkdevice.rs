@@ -60,6 +60,14 @@ pub struct VertexFetchOffsets {
     pub uv_offset: u32,
 }
 
+pub fn msaa_samples_from_limit(sample_limit: vk::SampleCountFlags) -> vk::SampleCountFlags {
+    if sample_limit.contains(vk::SampleCountFlags::TYPE_8) {
+        vk::SampleCountFlags::TYPE_8
+    } else {
+        vk::SampleCountFlags::TYPE_1
+    }
+}
+
 pub fn load_shader_stage(vk_device: &ash::Device, shader_stage_flags: vk::ShaderStageFlags, path: &str) -> vk::PipelineShaderStageCreateInfo {
     let msg = format!("Unable to read spv file {}\nDid a shader fail to compile?", path);
     let mut file = unwrap_result(File::open(path), &msg);
@@ -117,7 +125,7 @@ pub unsafe fn upload_raw_image(vk: &mut VulkanGraphicsDevice, sampler_key: Sampl
         usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         queue_family_index_count: 1,
-        p_queue_family_indices: &vk.queue_family_index,
+        p_queue_family_indices: &vk.main_queue_family_index,
         initial_layout: vk::ImageLayout::UNDEFINED,
         ..Default::default()
     };
@@ -246,7 +254,7 @@ impl GPUImage {
                 usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 1,
-                p_queue_family_indices: &vk.queue_family_index,
+                p_queue_family_indices: &vk.main_queue_family_index,
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 ..Default::default()
             };
@@ -307,7 +315,7 @@ impl GPUImage {
                 usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 1,
-                p_queue_family_indices: &vk.queue_family_index,
+                p_queue_family_indices: &vk.main_queue_family_index,
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 ..Default::default()
             };
@@ -354,7 +362,7 @@ impl GPUImage {
                 p_command_buffers: &vk.command_buffers[cbidx],
                 ..Default::default()
             };
-            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+            let queue = vk.device.get_device_queue(vk.main_queue_family_index, 0);
             vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
             vk.device.reset_fences(&[vk.command_buffer_fence]).unwrap();
             vk.device.queue_submit(queue, &[submit_info], vk.command_buffer_fence).unwrap();
@@ -382,7 +390,7 @@ impl GPUImage {
             usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 1,
-            p_queue_family_indices: &vk.queue_family_index,
+            p_queue_family_indices: &vk.main_queue_family_index,
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
@@ -484,7 +492,7 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanGraphicsDevice, dst_buffer: vk
         p_command_buffers: &vk.command_buffers[cbidx],
         ..Default::default()
     };
-    let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
+    let queue = vk.device.get_device_queue(vk.main_queue_family_index, 0);
     vk.device.queue_submit(queue, &[submit_info], vk.command_buffer_fence).unwrap();
     vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
     vk.command_buffer_indices.remove(cbidx);
@@ -542,7 +550,7 @@ pub struct VulkanGraphicsDevice {
     pub allocator: Allocator,
     pub ext_surface: ash::extensions::khr::Surface,
     pub ext_swapchain: ash::extensions::khr::Swapchain,
-    pub queue_family_index: u32,
+    pub main_queue_family_index: u32,
     pub command_pool: vk::CommandPool,
     pub command_buffer_indices: FreeList<u8>,
     pub command_buffers: Vec<vk::CommandBuffer>,
@@ -644,7 +652,11 @@ impl VulkanGraphicsDevice {
                 }
             }
 
-            vk_physical_device = phys_device.unwrap();
+            vk_physical_device = match phys_device {
+                Some(device) => { device }
+                None => { crash_with_error_dialog("Unable to selected physical device."); }
+            };
+
             vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
             
             //Get physical device features
@@ -669,7 +681,6 @@ impl VulkanGraphicsDevice {
                 tfd::message_box_ok("WARNING", "GPU compressed textures are not supported by this GPU.\nYou may be able to get away with this...", tfd::MessageBoxIcon::Warning);
             }
             buffer_device_address = buffer_address_features.buffer_device_address != vk::FALSE;
-            //buffer_device_address = false;
             
             if indexing_features.descriptor_binding_partially_bound == vk::FALSE || indexing_features.runtime_descriptor_array == vk::FALSE {
                 crash_with_error_dialog("Your GPU lacks the specific features required to do bindless rendering. Sorry.");
@@ -758,7 +769,7 @@ impl VulkanGraphicsDevice {
             allocator,
             ext_surface: vk_ext_surface,
             ext_swapchain: vk_ext_swapchain,
-            queue_family_index,
+            main_queue_family_index: queue_family_index,
             command_pool,
             command_buffer_indices: FreeList::with_capacity(command_buffer_count),
             command_buffers: general_command_buffers,

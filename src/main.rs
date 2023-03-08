@@ -42,8 +42,8 @@ use ozy::structs::{FrameTimer, OptionVec};
 
 use input::{InputSystemOutput, InputSystem};
 use physics::{PhysicsEngine, PhysicsComponent};
-use structs::{Camera, TerrainSpec, SimulationSOA};
-use render::vkdevice;
+use structs::{Camera, TerrainSpec, SimulationSOA, EntityKey};
+use render::vkdevice::{self, msaa_samples_from_limit};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
 
 use crate::routines::*;
@@ -98,7 +98,7 @@ fn main() {
     }
 
     //Initialize the Vulkan API
-    let mut vk = vkdevice::VulkanGraphicsDevice::init();
+    let mut gpu = vkdevice::VulkanGraphicsDevice::init();
 
     //Initialize the physics engine
     let mut physics_engine = PhysicsEngine::init();
@@ -157,7 +157,7 @@ fn main() {
             p_dependencies: &dependency,
             ..Default::default()
         };
-        vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+        gpu.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let probe_pass = unsafe {
@@ -208,11 +208,35 @@ fn main() {
             p_subpasses: &subpass,
             ..Default::default()
         };
-        vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+        gpu.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let hdr_forward_pass = unsafe {
+        let msaa_samples = msaa_samples_from_limit(gpu.physical_device_properties.limits.sampled_image_color_sample_counts);
+
         let color_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::R16G16B16A16_SFLOAT,
+            samples: msaa_samples,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::STORE,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            ..Default::default()
+        };
+        let depth_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::D32_SFLOAT,
+            samples: msaa_samples,
+            load_op: vk::AttachmentLoadOp::CLEAR,
+            store_op: vk::AttachmentStoreOp::DONT_CARE,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            ..Default::default()
+        };
+        let color_resolve_attachment_description = vk::AttachmentDescription {
             format: vk::Format::R16G16B16A16_SFLOAT,
             samples: vk::SampleCountFlags::TYPE_1,
             load_op: vk::AttachmentLoadOp::CLEAR,
@@ -223,18 +247,7 @@ fn main() {
             final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             ..Default::default()
         };
-
-        let depth_attachment_description = vk::AttachmentDescription {
-            format: vk::Format::D32_SFLOAT,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::DONT_CARE,
-            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
-            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            ..Default::default()
-        };
+        let attachments = [color_attachment_description, depth_attachment_description, color_resolve_attachment_description];
 
         let color_attachment_reference = vk::AttachmentReference {
             attachment: 0,
@@ -244,12 +257,17 @@ fn main() {
             attachment: 1,
             layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
         };
+        let color_resolve_attachment_reference = vk::AttachmentReference {
+            attachment: 2,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        };
 
         let subpass = vk::SubpassDescription {
             pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
             color_attachment_count: 1,
             p_color_attachments: &color_attachment_reference,
             p_depth_stencil_attachment: &depth_attachment_reference,
+            p_resolve_attachments: &color_resolve_attachment_reference,
             ..Default::default()
         };
 
@@ -266,7 +284,6 @@ fn main() {
             }
         ];
 
-        let attachments = [color_attachment_description, depth_attachment_description];
         let renderpass_info = vk::RenderPassCreateInfo {
             attachment_count: attachments.len() as u32,
             p_attachments: attachments.as_ptr(),
@@ -276,7 +293,7 @@ fn main() {
             p_dependencies: dependencies.as_ptr(),
             ..Default::default()
         };
-        vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+        gpu.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let swapchain_pass = unsafe {
@@ -312,11 +329,11 @@ fn main() {
             p_subpasses: &subpass,
             ..Default::default()
         };
-        vk.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+        gpu.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     //Initialize the renderer
-    let mut renderer = Renderer::init(&mut vk, &window, swapchain_pass, hdr_forward_pass);
+    let mut renderer = Renderer::init(&mut gpu, &window, swapchain_pass, hdr_forward_pass);
 
     //Create and upload Dear IMGUI font atlas
     unsafe {
@@ -324,7 +341,7 @@ fn main() {
         let atlas_texture = atlas.build_alpha8_texture();
         let atlas_format = vk::Format::R8_UNORM;
         let atlas_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-        let gpu_image = vkdevice::upload_raw_image(&mut vk, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
+        let gpu_image = vkdevice::upload_raw_image(&mut gpu, renderer.point_sampler, atlas_format, atlas_layout, atlas_texture.width, atlas_texture.height, atlas_texture.data);
         let index = renderer.global_images.insert(gpu_image);
         renderer.default_texture_idx = index as u32;
         
@@ -347,7 +364,7 @@ fn main() {
             ..Default::default()
         };
         
-        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
+        gpu.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let compute_pipeline_layout = unsafe {
@@ -364,11 +381,11 @@ fn main() {
             ..Default::default()
         };
      
-        vk.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
+        gpu.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
     let sun_shadow_map = CascadedShadowMap::new(
-        &mut vk,
+        &mut gpu,
         &mut renderer,
         2048,
         &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0),
@@ -377,7 +394,7 @@ fn main() {
 
     let sunlight_key = renderer.new_directional_light(
         SunLight {
-            pitch: 0.118,
+            pitch: 1.030,
             yaw: 0.783,
             pitch_speed: 0.003,
             yaw_speed: 0.0,
@@ -392,41 +409,42 @@ fn main() {
 
         //Load shaders
         let main_shader_stages = {
-            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
-            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/pbr_metallic_roughness.spv");
+            let v = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
+            let f = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/pbr_metallic_roughness.spv");
             vec![v, f]
         };
         
         let terrain_shader_stages = {
-            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
-            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/terrain.spv");
+            let v = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/vertex_main.spv");
+            let f = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/terrain.spv");
             vec![v, f]
         };
         
         let atm_shader_stages = {
-            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/atmosphere_vert.spv");
-            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/atmosphere_frag.spv");
+            let v = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/atmosphere_vert.spv");
+            let f = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/atmosphere_frag.spv");
             vec![v, f]
         };
 
         let s_shader_stages = {
-            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/shadow_vert.spv");
-            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/shadow_frag.spv");
+            let v = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/shadow_vert.spv");
+            let f = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/shadow_frag.spv");
             vec![v, f]
         };
 
         let postfx_shader_stages = {
-            let v = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/postfx_vert.spv");
-            let f = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/postfx_frag.spv");
+            let v = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/postfx_vert.spv");
+            let f = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/postfx_frag.spv");
             vec![v, f]
         };
 
+        let msaa_samples = msaa_samples_from_limit(gpu.physical_device_properties.limits.sampled_image_color_sample_counts);
         let main_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
-                        .set_shader_stages(main_shader_stages).build_info();
+                        .set_shader_stages(main_shader_stages).set_msaa_samples(msaa_samples).build_info();
         let terrain_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
-                            .set_shader_stages(terrain_shader_stages).build_info();
+                            .set_shader_stages(terrain_shader_stages).set_msaa_samples(msaa_samples).build_info();
         let atm_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
-                            .set_shader_stages(atm_shader_stages).build_info();
+                            .set_shader_stages(atm_shader_stages).set_msaa_samples(msaa_samples).build_info();
         let shadow_info = GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
                             .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
         let postfx_info = GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
@@ -434,7 +452,7 @@ fn main() {
                             
     
         let infos = [main_info, terrain_info, atm_info, shadow_info, postfx_info];
-        let pipelines = GraphicsPipelineBuilder::create_pipelines(&mut vk, &infos);
+        let pipelines = GraphicsPipelineBuilder::create_pipelines(&mut gpu, &infos);
 
         [
             pipelines[0],
@@ -447,13 +465,13 @@ fn main() {
 
     //Create compute pipelines
     let lum_binning_pipeline = unsafe {
-        let stage = vkdevice::load_shader_stage(&vk.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/lum_binning.spv");
+        let stage = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/lum_binning.spv");
         let create_info = vk::ComputePipelineCreateInfo {
             stage,
             layout: compute_pipeline_layout,
             ..Default::default()
         };
-        vk.device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], vkdevice::MEMORY_ALLOCATOR).unwrap()[0]
+        gpu.device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], vkdevice::MEMORY_ALLOCATOR).unwrap()[0]
     };
 
     let mut simulation_state = SimulationSOA::new();
@@ -489,9 +507,9 @@ fn main() {
         let pathp = Path::new(path);
 
         if !pathp.with_extension("dds").is_file() {
-            asset::compress_png_file_synchronous(&mut vk, path);
+            asset::compress_png_file_synchronous(&mut gpu, path);
         }
-        terrain_image_indices[i] = Some(vkdevice::load_bc7_texture(&mut vk, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap()));
+        terrain_image_indices[i] = Some(vkdevice::load_bc7_texture(&mut gpu, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap()));
     }
     let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
 
@@ -522,9 +540,9 @@ fn main() {
     
     //Upload terrain geometry
     let terrain_key = {
-        let terrain_offsets = upload_vertex_attributes(&mut vk, &mut renderer, &terrain_vertices);
+        let terrain_offsets = upload_vertex_attributes(&mut gpu, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
-        let index_buffer = routines::make_index_buffer(&mut vk, &terrain_indices);
+        let index_buffer = routines::make_index_buffer(&mut gpu, &terrain_indices);
         let prim_key = renderer.register_primitive(Primitive {
             shadow_type: ShadowType::OpaqueCaster,
             index_buffer,
@@ -549,7 +567,7 @@ fn main() {
     //let totoro_data = OzyMesh::from_file("./data/models/.optimized/totoro_backup.ozy");
 
     //Register each primitive with the renderer
-    let totoro_model = renderer.upload_gltf_model(&mut vk, &totoro_data, pbr_pipeline);
+    let totoro_model = renderer.upload_gltf_model(&mut gpu, &totoro_data, pbr_pipeline);
     //let totoro_model = renderer.upload_ozymesh(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
@@ -572,11 +590,20 @@ fn main() {
         simulation_state.entities.insert(e)
     };
 
+    //Load bistro
+    let bistro_key = {
+        let data = OzyMesh::from_file("./data/models/optimized/lumberyard_bistro_exterior.ozy");
+        let model = renderer.upload_ozymesh(&mut gpu, &data, pbr_pipeline);
+        let mut e = Entity::new(data.name, model, &mut physics_engine);
+        e.set_scale(5.0, &mut physics_engine);
+        simulation_state.entities.insert(e)
+    };
+
     //Create semaphore used to wait on swapchain image
-    let vk_swapchain_semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
+    let vk_swapchain_semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
-    let mut camera = Camera::new(glm::vec3(0.0f32, -30.0, 15.0));
+    let mut camera = Camera::new(glm::vec3(-23.5138, -0.8549, 6.1737));
     camera.focused_entity = Some(main_totoro_key);
 
     let mut timer = FrameTimer::new();      //Struct for doing basic framerate independence
@@ -591,7 +618,7 @@ fn main() {
     let bgm = unwrap_result(Music::from_file("./data/music/relaxing_botw.mp3"), "Error loading bgm");
     bgm.play(-1).unwrap();
 
-    let mut dev_gui = DevGui::new(&mut vk, swapchain_pass, graphics_pipeline_layout);
+    let mut dev_gui = DevGui::new(&mut gpu, swapchain_pass, graphics_pipeline_layout);
 
     let mut input_system = InputSystem::init(&sdl_context);
 
@@ -625,7 +652,7 @@ fn main() {
                 if let Some(model) = renderer.get_model(entity.model) {
                     let p_key = model.primitive_keys[0];
                     regenerate_terrain(
-                        &mut vk,
+                        &mut gpu,
                         &mut renderer,
                         &mut physics_engine,
                         &mut terrain_collider_handle,
@@ -667,19 +694,19 @@ fn main() {
         unsafe {
             if user_input.resize_window {
                 //Window resizing requires us to "flush the pipeline" as it were. wahh
-                vk.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
+                gpu.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
                 for framebuffer in renderer.window_manager.swapchain_framebuffers {
-                    vk.device.destroy_framebuffer(framebuffer, vkdevice::MEMORY_ALLOCATOR);
+                    gpu.device.destroy_framebuffer(framebuffer, vkdevice::MEMORY_ALLOCATOR);
                 }
                 for view in renderer.window_manager.swapchain_image_views {
-                    vk.device.destroy_image_view(view, vkdevice::MEMORY_ALLOCATOR);
+                    gpu.device.destroy_image_view(view, vkdevice::MEMORY_ALLOCATOR);
                 }
-                vk.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain, vkdevice::MEMORY_ALLOCATOR);
+                gpu.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain, vkdevice::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                renderer.window_manager = render::WindowManager::init(&mut vk, &window, swapchain_pass);
+                renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass);
 
                 //Recreate internal rendering buffers
                 let extent = vk::Extent3D {
@@ -687,7 +714,7 @@ fn main() {
                     height: renderer.window_manager.extent.height,
                     depth: 1
                 };
-                renderer.resize_hdr_framebuffers(&mut vk, extent, hdr_forward_pass);
+                renderer.resize_hdr_framebuffers(&mut gpu, extent, hdr_forward_pass);
 
                 window_size = glm::vec2(renderer.window_manager.extent.width, renderer.window_manager.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
@@ -713,7 +740,7 @@ fn main() {
                 if let Some(model) = renderer.get_model(entity.model) {
                     let p_key = model.primitive_keys[0];
                     regenerate_terrain(
-                        &mut vk,
+                        &mut gpu,
                         &mut renderer,
                         &mut physics_engine,
                         &mut terrain_collider_handle,
@@ -828,7 +855,7 @@ fn main() {
         match dev_gui.do_asset_window(&imgui_ui, "./data/models") {
             AssetWindowResponse::OptimizeGLB(path) => {
                 println!("Optimizing {}", path);
-                asset::optimize_glb(&mut vk, &path);
+                asset::optimize_glb(&mut gpu, &path);
             }
             AssetWindowResponse::None => {}
         }
@@ -836,7 +863,7 @@ fn main() {
         match dev_gui.do_entity_window(&imgui_ui, window_size, &mut simulation_state.entities, camera.focused_entity, &mut physics_engine.rigid_body_set) {
             EntityWindowResponse::LoadGLTF(path) => {
                 let mesh_data = asset::gltf_meshdata(&path);
-                let model = renderer.upload_gltf_model(&mut vk, &mesh_data, pbr_pipeline);
+                let model = renderer.upload_gltf_model(&mut gpu, &mesh_data, pbr_pipeline);
                 let spawn_point = camera.position + camera.look_direction() * 5.0;
                 let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
                 s.set_position(spawn_point, &mut physics_engine);
@@ -844,7 +871,7 @@ fn main() {
             }
             EntityWindowResponse::LoadOzyMesh(path) => {
                 let mesh_data = OzyMesh::from_file(&path);
-                let model = renderer.upload_ozymesh(&mut vk, &mesh_data, pbr_pipeline);
+                let model = renderer.upload_ozymesh(&mut gpu, &mesh_data, pbr_pipeline);
                 let spawn_point = camera.position + camera.look_direction() * 5.0;
                 let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
                 s.set_position(spawn_point, &mut physics_engine);
@@ -915,21 +942,21 @@ fn main() {
         }
 
         //Resolve the current Dear Imgui frame
-        dev_gui.resolve_imgui_frame(&mut vk, &mut renderer, &mut imgui_context);
-        
-        //Does all work that needs to happen before the render passes
-        let frame_info = renderer.prepare_frame(&mut vk, window_size, &camera, timer.elapsed_time);
+        dev_gui.resolve_imgui_frame(&mut gpu, &mut renderer, &mut imgui_context);
 
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_framebuffer_index = vk.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_framebuffer_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+        
+            //Does all work that needs to happen before the render passes
+            let frame_info = renderer.prepare_frame(&mut gpu, window_size, &camera, timer.elapsed_time);
 
             //Put command buffer in recording state
-            vk.device.begin_command_buffer(frame_info.main_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+            gpu.device.begin_command_buffer(frame_info.main_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             //Bindless descriptor setup for Shadow+HDR pass
-            let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
+            let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
             
             //Shadow render pass
             if let Some(sun) = renderer.get_directional_light(sunlight_key) {
@@ -943,7 +970,7 @@ fn main() {
                             }
                         }
                     };
-                    vk.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[render_area]);
+                    gpu.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[render_area]);
                     let clear_values = [vkdevice::DEPTH_STENCIL_CLEAR];
                     let rp_begin_info = vk::RenderPassBeginInfo {
                         render_pass: shadow_pass,
@@ -954,8 +981,8 @@ fn main() {
                         ..Default::default()
                     };
 
-                    vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-                    vk.device.cmd_bind_descriptor_sets(
+                    gpu.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+                    gpu.device.cmd_bind_descriptor_sets(
                         frame_info.main_command_buffer,
                         vk::PipelineBindPoint::GRAPHICS,
                         graphics_pipeline_layout,
@@ -963,7 +990,7 @@ fn main() {
                         &[renderer.bindless_descriptor_set],
                         &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
                     );
-                    vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
+                    gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
 
                     let viewport = vk::Viewport {
                         x: 0.0,
@@ -973,7 +1000,7 @@ fn main() {
                         min_depth: 0.0,
                         max_depth: 1.0
                     };
-                    vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
+                    gpu.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
                     for drawcall in renderer.drawlist_iter() {
                         if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
                             if let ShadowType::NonCaster = model.shadow_type { continue; }
@@ -983,13 +1010,13 @@ fn main() {
                                 model.position_offset.to_le_bytes(),
                                 model.uv_offset.to_le_bytes()
                             ].concat();
-                            vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
-                            vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                            vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                            gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
+                            gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                            gpu.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                         }
                     }
 
-                    vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
+                    gpu.device.cmd_end_render_pass(frame_info.main_command_buffer);
                 }
             }
             
@@ -1002,7 +1029,7 @@ fn main() {
                 min_depth: 0.0,
                 max_depth: 1.0
             };
-            vk.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
+            gpu.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
 
             //Set scissor rect to be same as render area
             let vk_render_area = {
@@ -1018,9 +1045,9 @@ fn main() {
                     height: window_size.y
                 }
             };
-            vk.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[scissor_area]);
+            gpu.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[scissor_area]);
 
-            let vk_clear_values = [vkdevice::COLOR_CLEAR, vkdevice::DEPTH_STENCIL_CLEAR];
+            let vk_clear_values = [vkdevice::COLOR_CLEAR, vkdevice::DEPTH_STENCIL_CLEAR, vkdevice::COLOR_CLEAR];
 
             //HDR render pass recording
             let rp_begin_info = vk::RenderPassBeginInfo {
@@ -1031,8 +1058,8 @@ fn main() {
                 p_clear_values: vk_clear_values.as_ptr(),
                 ..Default::default()
             };
-            vk.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-            vk.device.cmd_bind_descriptor_sets(
+            gpu.device.cmd_begin_render_pass(frame_info.main_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            gpu.device.cmd_bind_descriptor_sets(
                 frame_info.main_command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 graphics_pipeline_layout,
@@ -1045,7 +1072,7 @@ fn main() {
             let mut last_bound_pipeline = vk::Pipeline::default();
             for drawcall in renderer.drawlist_iter() {
                 if drawcall.pipeline != last_bound_pipeline {
-                    vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
+                    gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
                     last_bound_pipeline = drawcall.pipeline;
                 }
                 if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
@@ -1056,22 +1083,22 @@ fn main() {
                         model.normal_offset.to_le_bytes(),
                         model.uv_offset.to_le_bytes(),
                     ].concat();
-                    vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
-                    vk.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                    vk.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                    gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
+                    gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                    gpu.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }
 
             //Record atmosphere rendering commands
-            vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
-            vk.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &0u32.to_le_bytes());
-            vk.device.cmd_draw(frame_info.main_command_buffer, 36, 1, 0, 0);
+            gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, atmosphere_pipeline);
+            gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &0u32.to_le_bytes());
+            gpu.device.cmd_draw(frame_info.main_command_buffer, 36, 1, 0, 0);
             
-            vk.device.cmd_end_render_pass(frame_info.main_command_buffer);
+            gpu.device.cmd_end_render_pass(frame_info.main_command_buffer);
 
             //Luminance binning compute pass
-            vk.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::COMPUTE, lum_binning_pipeline);
-            vk.device.cmd_bind_descriptor_sets(
+            gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::COMPUTE, lum_binning_pipeline);
+            gpu.device.cmd_bind_descriptor_sets(
                 frame_info.main_command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
                 compute_pipeline_layout,
@@ -1079,12 +1106,12 @@ fn main() {
                 &[renderer.bindless_descriptor_set],
                 &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
             );
-            vk.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
+            gpu.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
 
             let group_count_x = 1;
             let group_count_y = 1;
-            vk.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);
-            vk.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
+            gpu.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);
+            gpu.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
 
             //Submit Shadow+HDR passes
             let submit_info = vk::SubmitInfo {
@@ -1094,14 +1121,14 @@ fn main() {
                 p_command_buffers: &frame_info.main_command_buffer,
                 ..Default::default()
             };
-            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-            vk.device.queue_submit(queue, &[submit_info], vk::Fence::default()).unwrap();
+            let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
+            gpu.device.queue_submit(queue, &[submit_info], vk::Fence::default()).unwrap();
 
             //PostFX pass
-            vk.device.begin_command_buffer(frame_info.swapchain_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+            gpu.device.begin_command_buffer(frame_info.swapchain_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             //Bindless descriptor setup for the swapchain command buffer
-            vk.device.cmd_bind_descriptor_sets(
+            gpu.device.cmd_bind_descriptor_sets(
                 frame_info.swapchain_command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 graphics_pipeline_layout,
@@ -1111,8 +1138,8 @@ fn main() {
             );
             
             //Set the viewport/scissor for the swapchain command buffer
-            vk.device.cmd_set_viewport(frame_info.swapchain_command_buffer, 0, &[viewport]);
-            vk.device.cmd_set_scissor(frame_info.swapchain_command_buffer, 0, &[scissor_area]);
+            gpu.device.cmd_set_viewport(frame_info.swapchain_command_buffer, 0, &[viewport]);
+            gpu.device.cmd_set_scissor(frame_info.swapchain_command_buffer, 0, &[scissor_area]);
 
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: swapchain_pass,
@@ -1122,18 +1149,18 @@ fn main() {
                 p_clear_values: vk_clear_values.as_ptr(),
                 ..Default::default()
             };
-            vk.device.cmd_begin_render_pass(frame_info.swapchain_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            gpu.device.cmd_begin_render_pass(frame_info.swapchain_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
-            vk.device.cmd_bind_pipeline(frame_info.swapchain_command_buffer, vk::PipelineBindPoint::GRAPHICS, postfx_pipeline);
-            vk.device.cmd_push_constants(frame_info.swapchain_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
-            vk.device.cmd_draw(frame_info.swapchain_command_buffer, 3, 1, 0, 0);
+            gpu.device.cmd_bind_pipeline(frame_info.swapchain_command_buffer, vk::PipelineBindPoint::GRAPHICS, postfx_pipeline);
+            gpu.device.cmd_push_constants(frame_info.swapchain_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
+            gpu.device.cmd_draw(frame_info.swapchain_command_buffer, 3, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands
-            dev_gui.record_draw_commands(&mut vk, frame_info.swapchain_command_buffer, graphics_pipeline_layout);
+            dev_gui.record_draw_commands(&mut gpu, frame_info.swapchain_command_buffer, graphics_pipeline_layout);
 
-            vk.device.cmd_end_render_pass(frame_info.swapchain_command_buffer);
+            gpu.device.cmd_end_render_pass(frame_info.swapchain_command_buffer);
 
-            vk.device.end_command_buffer(frame_info.swapchain_command_buffer).unwrap();
+            gpu.device.end_command_buffer(frame_info.swapchain_command_buffer).unwrap();
 
             let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: 1,
@@ -1146,9 +1173,9 @@ fn main() {
                 ..Default::default()
             };
 
-            let queue = vk.device.get_device_queue(vk.queue_family_index, 0);
-            vk.device.reset_fences(&[frame_info.fence]).unwrap();
-            vk.device.queue_submit(queue, &[submit_info], frame_info.fence).unwrap();
+            let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
+            gpu.device.reset_fences(&[frame_info.fence]).unwrap();
+            gpu.device.queue_submit(queue, &[submit_info], frame_info.fence).unwrap();
 
             let present_semaphores = [frame_info.semaphore, vk_swapchain_semaphore];
             let present_info = vk::PresentInfoKHR {
@@ -1159,7 +1186,7 @@ fn main() {
                 p_wait_semaphores: present_semaphores.as_ptr(),
                 ..Default::default()
             };
-            if let Err(e) = vk.ext_swapchain.queue_present(queue, &present_info) {
+            if let Err(e) = gpu.ext_swapchain.queue_present(queue, &present_info) {
                 println!("{}", e);
             }
         }
@@ -1167,6 +1194,6 @@ fn main() {
 
     //Cleanup
     unsafe {
-        renderer.cleanup(&mut vk);
+        renderer.cleanup(&mut gpu);
     }
 }
