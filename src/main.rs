@@ -36,15 +36,15 @@ use std::io::{Read, Write};
 use std::mem::size_of;
 use std::path::Path;
 use std::ptr;
-use std::time::SystemTime;
+use std::time::{SystemTime, Duration};
 
 use ozy::structs::{FrameTimer, OptionVec};
 
 use input::{InputSystemOutput, InputSystem};
 use physics::{PhysicsEngine, PhysicsComponent};
-use structs::{Camera, TerrainSpec, SimulationSOA, EntityKey};
+use structs::{Camera, TerrainSpec, SimulationSOA};
 use render::vkdevice::{self, msaa_samples_from_limit};
-use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
+use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, InstanceData};
 
 use crate::routines::*;
 use crate::asset::GLTFMeshData;
@@ -97,7 +97,7 @@ fn main() {
         io.key_map[imgui::Key::Z as usize] = Scancode::Z as u32;
     }
 
-    //Initialize the Vulkan API
+    //Init the graphics device
     let mut gpu = vkdevice::VulkanGraphicsDevice::init();
 
     //Initialize the physics engine
@@ -559,9 +559,6 @@ fn main() {
         simulation_state.entities.insert(e)
     };
 
-    //let mut lookat_dist = 7.5;
-    //let mut lookat_pos = lookat_dist * glm::normalize(&glm::vec3(-1.0f32, 0.0, 1.75));
-
     //Load totoro as glb
     let totoro_data = asset::gltf_meshdata("./data/models/totoro_backup.glb");
     //let totoro_data = OzyMesh::from_file("./data/models/.optimized/totoro_backup.ozy");
@@ -591,13 +588,14 @@ fn main() {
     };
 
     //Load bistro
-    let bistro_key = {
-        let data = OzyMesh::from_file("./data/models/optimized/lumberyard_bistro_exterior.ozy");
-        let model = renderer.upload_ozymesh(&mut gpu, &data, pbr_pipeline);
-        let mut e = Entity::new(data.name, model, &mut physics_engine);
-        e.set_scale(5.0, &mut physics_engine);
-        simulation_state.entities.insert(e)
-    };
+    // let bistro_key = {
+    //     let data = OzyMesh::from_file("./data/models/optimized/lumberyard_bistro_exterior.ozy");
+    //     let model = renderer.upload_ozymesh(&mut gpu, &data, pbr_pipeline);
+    //     let mut e = Entity::new(data.name, model, &mut physics_engine);
+    //     e.set_position(glm::vec3(0.0, 0.0, 100.0), &mut physics_engine);
+    //     e.set_scale(5.0, &mut physics_engine);
+    //     simulation_state.entities.insert(e)
+    // };
 
     //Create semaphore used to wait on swapchain image
     let vk_swapchain_semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
@@ -948,16 +946,13 @@ fn main() {
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
             let current_framebuffer_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
-        
+                    
             //Does all work that needs to happen before the render passes
             let frame_info = renderer.prepare_frame(&mut gpu, window_size, &camera, timer.elapsed_time);
 
-            //Put command buffer in recording state
+            //Put main command buffer in recording state
             gpu.device.begin_command_buffer(frame_info.main_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
-            //Bindless descriptor setup for Shadow+HDR pass
-            let dynamic_uniform_offset = renderer.current_in_flight_frame() as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
-            
             //Shadow render pass
             if let Some(sun) = renderer.get_directional_light(sunlight_key) {
                 if let Some(sun_shadow_map) = &sun.shadow_map {
@@ -988,7 +983,7 @@ fn main() {
                         graphics_pipeline_layout,
                         0,
                         &[renderer.bindless_descriptor_set],
-                        &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+                        &[frame_info.dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
                     );
                     gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_pipeline);
 
@@ -1001,8 +996,8 @@ fn main() {
                         max_depth: 1.0
                     };
                     gpu.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
-                    for drawcall in renderer.drawlist_iter() {
-                        if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
+                    for scall in renderer.drawlist_iter() {
+                        if let Some(model) = renderer.get_primitive(scall.primitive_key) {
                             if let ShadowType::NonCaster = model.shadow_type { continue; }
 
                             let pcs = [
@@ -1012,7 +1007,7 @@ fn main() {
                             ].concat();
                             gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
                             gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
-                            gpu.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                            gpu.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, scall.instance_count, 0, 0, scall.first_instance);
                         }
                     }
 
@@ -1065,7 +1060,7 @@ fn main() {
                 graphics_pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
-                &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+                &[frame_info.dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
             );
 
             //Iterate through draw calls
@@ -1104,7 +1099,7 @@ fn main() {
                 compute_pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
-                &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+                &[frame_info.dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
             );
             gpu.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
 
@@ -1134,7 +1129,7 @@ fn main() {
                 graphics_pipeline_layout,
                 0,
                 &[renderer.bindless_descriptor_set],
-                &[dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+                &[frame_info.dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
             );
             
             //Set the viewport/scissor for the swapchain command buffer

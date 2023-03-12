@@ -82,7 +82,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
             float3(0.0, 0.0, earth_radius) + input.position,
             light.direction
         };
-        float3 sky_sample = gather_atmosphere_irradiance(ray, light.direction.xyz, light.irradiance.rgb);
+        float3 sky_sample = normalize(gather_atmosphere_irradiance(ray, light.direction.xyz, light.irradiance.rgb));
 
         // Compute sun color
         float sunzenith_dot = light.direction.z * 0.5 + 0.5;
@@ -106,10 +106,10 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         );
 
         final_radiance += nighttime_factor * sun_shadowing.x * normalize(sky_sample) * directional_lighting(params, light);
-    }
 
-    float3 ambient = float3(uniforms.ambient_factor) * params.albedo * ao;
-    final_radiance += ambient;
+        float3 ambient = float3(uniforms.ambient_factor) * sky_sample * params.albedo * ao;
+        final_radiance += ambient;
+    }
 
     // final_radiance = lerp(final_radiance, world_normal * length(final_radiance), 0.1);
     return float4(final_radiance, 1.0);

@@ -61,8 +61,18 @@ pub struct VertexFetchOffsets {
 }
 
 pub fn msaa_samples_from_limit(sample_limit: vk::SampleCountFlags) -> vk::SampleCountFlags {
-    if sample_limit.contains(vk::SampleCountFlags::TYPE_8) {
+    if sample_limit.contains(vk::SampleCountFlags::TYPE_64) {
+        vk::SampleCountFlags::TYPE_64
+    } else if sample_limit.contains(vk::SampleCountFlags::TYPE_32) {
+        vk::SampleCountFlags::TYPE_32
+    } else if sample_limit.contains(vk::SampleCountFlags::TYPE_16) {
+        vk::SampleCountFlags::TYPE_16
+    } else if sample_limit.contains(vk::SampleCountFlags::TYPE_8) {
         vk::SampleCountFlags::TYPE_8
+    } else if sample_limit.contains(vk::SampleCountFlags::TYPE_4) {
+        vk::SampleCountFlags::TYPE_4
+    } else if sample_limit.contains(vk::SampleCountFlags::TYPE_2) {
+        vk::SampleCountFlags::TYPE_2
     } else {
         vk::SampleCountFlags::TYPE_1
     }

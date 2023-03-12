@@ -73,7 +73,7 @@ impl DevGui {
 
     pub fn do_asset_window(&mut self, ui: &Ui, path: &str) -> AssetWindowResponse {
         let mut response = AssetWindowResponse::None;
-        if !self.do_asset_window { return response; }
+        if !self.do_asset_window || !self.do_gui { return response; }
         if let Some(win_t) = ui.window("Asset manager").begin() {
             let p = Path::new(path);
             let mut i = 0;
@@ -112,7 +112,7 @@ impl DevGui {
 
     pub fn do_entity_window(&mut self, ui: &Ui, window_size: glm::TVec2<u32>, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>, rigid_body_set: &mut RigidBodySet) -> EntityWindowResponse {
         let mut out = EntityWindowResponse::None;
-        if !self.do_entity_window { return out; }
+        if !self.do_entity_window || !self.do_gui { return out; }
         
         let mut interacted = false;
         let window_x = window_size.x as f32;
@@ -205,7 +205,7 @@ impl DevGui {
     }
 
     pub fn do_material_list(&mut self, imgui_ui: &Ui, renderer: &mut Renderer) {
-        if !self.do_mat_list { return; }
+        if !self.do_mat_list || !self.do_gui { return; }
         if let Some(token) = imgui_ui.window("Loaded materials").begin() {
             for i in 0..renderer.global_materials.len() {
                 if let Some(mat) = &renderer.global_materials[i] {
@@ -251,7 +251,7 @@ impl DevGui {
     }
 
     pub fn do_camera_window(&mut self, ui: &Ui, camera: &mut Camera) {
-        if !self.do_camera_window { return; }
+        if !self.do_camera_window || !self.do_gui { return; }
         if let Some(token) = ui.window("Camera").begin() {
             ui.slider("FOV", 0.001, glm::pi(), &mut camera.fov);
 
@@ -260,13 +260,19 @@ impl DevGui {
     }
 
     pub fn do_sun_window(&mut self, ui: &Ui, sun: &mut SunLight) {
-        if !self.do_sun_window { return; }
+        if !self.do_sun_window || !self.do_gui { return; }
         if let Some(token) = ui.window("Sun controls").begin() {
             ui.slider("Sun pitch speed", 0.0, 1.0, &mut sun.pitch_speed);
             ui.slider("Sun pitch", 0.0, glm::two_pi::<f32>(), &mut sun.pitch);
             ui.slider("Sun yaw speed", -1.0, 1.0, &mut sun.yaw_speed);
             ui.slider("Sun yaw", 0.0, glm::two_pi::<f32>(), &mut sun.yaw);
             ui.separator();
+            if let Some(shadow_map) = &mut sun.shadow_map {
+                for i in 0..CascadedShadowMap::CASCADE_COUNT {
+                    ui.slider(format!("Cascade distance #{}", i), 0.0, 500.0, &mut shadow_map.distances[i]);
+                }
+                ui.separator();
+            }
             if DevGui::do_standard_button(ui, "Close") { self.do_sun_window = false; }
 
             token.end();
@@ -342,9 +348,6 @@ impl DevGui {
     }
 
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
-        //Early exit if the gui is deactivated
-        if !self.do_gui { return; }
-        
         //Destroy Dear ImGUI allocations from last dead frame
         {
             let last_frame = (self.current_frame + 1) % Self::FRAMES_IN_FLIGHT;
@@ -355,9 +358,12 @@ impl DevGui {
         }
 
         //Record Dear ImGUI drawing commands
-        vk.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
         let gui_frame = &self.frames[self.current_frame];
         for i in 0..gui_frame.draw_cmd_lists.len() {
+            if i == 0 {
+                vk.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+            }
+
             let cmd_list = &gui_frame.draw_cmd_lists[i];
             for cmd in cmd_list {
                 match cmd {

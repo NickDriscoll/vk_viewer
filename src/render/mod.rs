@@ -66,7 +66,6 @@ impl WindowManager {
                 crash_with_error_dialog("FIFO present mode not supported on your system.");
             }
             let present_mode = desired_present_mode;
-            println!("{:#?}", surf_capabilities);
 
             let min_image_count = if surf_capabilities.max_image_count > 2 {
                 3
@@ -180,7 +179,8 @@ pub struct InFlightFrameData {
     pub fence: vk::Fence,
     pub framebuffer: FrameBuffer,
     pub instance_data_start_offset: u64,
-    pub instance_data_size: u64
+    pub instance_data_size: u64,
+    pub dynamic_uniform_offset: u64
 }
 
 struct BufferBlock {
@@ -302,8 +302,8 @@ pub struct Renderer {
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
     pub samplers_descriptor_index: u32,
-    frames_in_flight: Vec<InFlightFrameData>,
-    in_flight_frame: usize
+    pub frames_in_flight: Vec<InFlightFrameData>,
+    pub in_flight_frame: usize
 }
 
 impl Renderer {
@@ -733,6 +733,7 @@ impl Renderer {
 
         let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.sampled_image_color_sample_counts);
         let framebuffers = Self::create_hdr_framebuffers(vk, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images, sample_count);
+        println!("MSAA sample count: {:?}", sample_count);
         
         //Initialize per-frame rendering state
         let in_flight_frame_data = {
@@ -762,7 +763,8 @@ impl Renderer {
                         fence,
                         framebuffer: framebuffers[i],
                         instance_data_start_offset: 0,
-                        instance_data_size: 0
+                        instance_data_size: 0,
+                        dynamic_uniform_offset: 0
                     };
                     c_buffer_datas.push(data);
                 }
@@ -1225,10 +1227,11 @@ impl Renderer {
         self.directional_lights.remove(key)
     }
 
-    fn next_frame(&mut self, vk: &mut VulkanGraphicsDevice) -> InFlightFrameData {
-        let cb = self.frames_in_flight[self.in_flight_frame];
+    fn next_frame(&mut self, gpu: &mut VulkanGraphicsDevice) -> InFlightFrameData {//Compute dynamic uniform buffer offset
+        let mut cb = self.frames_in_flight[self.in_flight_frame];
+        cb.dynamic_uniform_offset = self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
         unsafe {
-            vk.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap();
+            gpu.device.wait_for_fences(&[cb.fence], true, vk::DeviceSize::MAX).unwrap();
         }
         self.in_flight_frame += 1;
         self.in_flight_frame %= Self::FRAMES_IN_FLIGHT;
@@ -1311,7 +1314,7 @@ impl Renderer {
         Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
     }
 
-    pub fn prepare_frame(&mut self, vk: &mut VulkanGraphicsDevice, window_size: glm::TVec2<u32>, camera: &Camera, elapsed_time: f32) -> InFlightFrameData {
+    pub fn prepare_frame(&mut self, gpu: &mut VulkanGraphicsDevice, window_size: glm::TVec2<u32>, camera: &Camera, elapsed_time: f32) -> InFlightFrameData {
         //Process raw draw calls into draw stream
         {
             //Create map of ModelKeys to the instance data for all instances of that model
@@ -1335,13 +1338,9 @@ impl Renderer {
             let mut current_first_instance = 0;
             for (model_key, instances) in model_instances.iter_mut() {
                 let instance_count = instances.len() as u32;
-                //let mut new_drawcalls = Vec::with_capacity(model_instances.len());
                 if let Some(model) = self.models.get(*model_key) {
                     for prim_key in model.primitive_keys.iter() {
                         if let Some(primitive) = self.primitives.get(*prim_key) {
-                            //Want to check for duplicate primitives somehow
-
-
                             let material = self.global_materials[primitive.material_idx.try_into().unwrap()].as_ref().unwrap();
                             let pipeline = material.pipeline;
                             let dc = DrawCall {
@@ -1351,19 +1350,37 @@ impl Renderer {
                                 first_instance: current_first_instance
                             };
                             self.drawstream.push(dc);
-                            self.instance_data.append(instances);
                         }
                     }
                 }
+                self.instance_data.append(instances);
                 current_first_instance += instance_count;
             }
 
             //Sort DrawCalls according to their pipeline
-            self.drawstream.sort_unstable();
+            //self.drawstream.sort();
+        }
+
+        let start_offset;
+        {
+            let last_frame_idx = self.in_flight_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT;
+            let last_frame_data = &mut self.frames_in_flight[last_frame_idx];
+            let start_of_first_live_data = last_frame_data.instance_data_start_offset;
+            
+            let instance_data_bytes = slice_to_bytes(self.instance_data.as_slice());
+            start_offset = if start_of_first_live_data >= instance_data_bytes.len() as u64 {
+                0
+            } else {
+                last_frame_data.instance_data_start_offset + last_frame_data.instance_data_size
+            };
+            let start_offset = size_to_alignment!(start_offset, gpu.physical_device_properties.limits.min_storage_buffer_offset_alignment);
+
+            self.frames_in_flight[self.in_flight_frame].instance_data_start_offset = start_offset;
+            self.frames_in_flight[self.in_flight_frame].instance_data_size = instance_data_bytes.len() as u64;
         }
 
         //Wait for LRU frame to finish
-        let frame_info = self.next_frame(vk);
+        let frame_info = self.next_frame(gpu);
 
         //Process delete queue
         let mut i = 0;
@@ -1380,10 +1397,10 @@ impl Renderer {
                                 }
                             }
                         }
-                        free_tex(vk, &mut self.global_images, material.color_idx);
-                        free_tex(vk, &mut self.global_images, material.normal_idx);
-                        free_tex(vk, &mut self.global_images, material.metal_roughness_idx);
-                        free_tex(vk, &mut self.global_images, material.emissive_idx);
+                        free_tex(gpu, &mut self.global_images, material.color_idx);
+                        free_tex(gpu, &mut self.global_images, material.normal_idx);
+                        free_tex(gpu, &mut self.global_images, material.metal_roughness_idx);
+                        free_tex(gpu, &mut self.global_images, material.emissive_idx);
                     }
                 }
 
@@ -1429,7 +1446,7 @@ impl Renderer {
                 dst_binding: self.samplers_descriptor_index,
                 ..Default::default()
             };
-            unsafe { vk.device.update_descriptor_sets(&[sampler_write], &[]); }
+            unsafe { gpu.device.update_descriptor_sets(&[sampler_write], &[]); }
         }
 
         //Update bindless material definitions
@@ -1441,7 +1458,7 @@ impl Renderer {
                 }
             }
 
-            self.material_buffer.write_buffer(vk, &upload_mats);
+            self.material_buffer.write_buffer(gpu, &upload_mats);
         }
         
         //Update uniform/storage buffers
@@ -1511,27 +1528,14 @@ impl Renderer {
 
             uniforms.time = elapsed_time;
 
-            let dynamic_offset = (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64;
+            let dynamic_offset = (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64;
             
             let uniform_bytes = struct_to_bytes(&self.uniform_data);
-            self.uniform_buffer.write_subbuffer_elements(vk, uniform_bytes, dynamic_offset);
+            self.uniform_buffer.write_subbuffer_elements(gpu, uniform_bytes, dynamic_offset);
         };
 
         //Update instance data storage buffer
-        {
-            let instance_data_bytes = slice_to_bytes(&self.instance_data);
-            let last_frame_data = &mut self.frames_in_flight[self.in_flight_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT];
-            let start_of_first_live_data = last_frame_data.instance_data_start_offset;
-            let start_offset = if start_of_first_live_data > instance_data_bytes.len() as u64 {
-                0
-            } else {
-                last_frame_data.instance_data_start_offset + last_frame_data.instance_data_size
-            };
-            let start_offset = size_to_alignment!(start_offset, vk.physical_device_properties.limits.min_storage_buffer_offset_alignment);
-
-            self.frames_in_flight[self.in_flight_frame].instance_data_start_offset = start_offset;
-            self.instance_buffer.write_subbuffer_bytes(vk, instance_data_bytes, start_offset);
-        }
+        self.instance_buffer.write_subbuffer_bytes(gpu, slice_to_bytes(self.instance_data.as_slice()), start_offset);
         
         frame_info
     }

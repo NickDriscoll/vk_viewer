@@ -248,6 +248,7 @@ pub struct EnvironmentUniforms {
 }
 
 pub struct CascadedShadowMap {
+    pub distances: [f32; Self::CASCADE_COUNT],
     framebuffer: vk::Framebuffer,
     image: vk::Image,
     image_view: vk::ImageView,
@@ -265,12 +266,12 @@ impl CascadedShadowMap {
         //The shadow cascade distances are negative bc they are in view space
         let mut view_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
         view_distances[0] = -(camera.near_distance);
-        view_distances[1] = -(camera.near_distance + 10.0);
-        view_distances[2] = -(camera.near_distance + 30.0);
-        view_distances[3] = -(camera.near_distance + 73.0);
-        view_distances[4] = -(camera.near_distance + 123.0);
-        view_distances[5] = -(camera.near_distance + 222.0);
-        view_distances[6] = -(camera.near_distance + 500.0);
+        view_distances[1] = -(camera.near_distance + self.distances[0]);
+        view_distances[2] = -(camera.near_distance + self.distances[1]);
+        view_distances[3] = -(camera.near_distance + self.distances[2]);
+        view_distances[4] = -(camera.near_distance + self.distances[3]);
+        view_distances[5] = -(camera.near_distance + self.distances[4]);
+        view_distances[6] = -(camera.near_distance + self.distances[5]);
 
         view_distances
     }
@@ -382,7 +383,10 @@ impl CascadedShadowMap {
         let texture_index = renderer.global_images.insert(gpu_image) as u32;
         let projection_depth = 500.0;
 
+        let distances = [2.780, 8.338, 23.465, 79.422, 115.523, 324.909];
+
         CascadedShadowMap {
+            distances,
             framebuffer,
             image,
             image_view,
