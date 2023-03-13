@@ -35,7 +35,7 @@ pub struct DevGui {
 }
 
 impl DevGui {
-    pub const FRAMES_IN_FLIGHT: usize = Renderer::FRAMES_IN_FLIGHT + 1;
+    //pub const FRAMES_IN_FLIGHT: usize = Renderer::FRAMES_IN_FLIGHT + 1;
     pub const FLOATS_PER_VERTEX: usize = 8;
 
     pub fn do_standard_button<S: AsRef<str>>(ui: &Ui, label: S) -> bool { ui.button_with_size(label, [0.0, 32.0]) }
@@ -43,8 +43,8 @@ impl DevGui {
     pub fn new(vk: &mut VulkanGraphicsDevice, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
         use render::GraphicsPipelineBuilder;
 
-        let mut frames = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
-        for _ in 0..Self::FRAMES_IN_FLIGHT {
+        let mut frames = Vec::with_capacity(Renderer::FRAMES_IN_FLIGHT);
+        for _ in 0..Renderer::FRAMES_IN_FLIGHT {
             frames.push(DevGuiFrame::default());
         }
         
@@ -287,7 +287,7 @@ impl DevGui {
 
         let imgui_draw_data = context.render();
 
-        let most_recent_dead_frame_idx = self.current_frame.overflowing_sub(Self::FRAMES_IN_FLIGHT - 1).0 % Self::FRAMES_IN_FLIGHT;
+        let most_recent_dead_frame_idx = self.current_frame.overflowing_sub(Renderer::FRAMES_IN_FLIGHT - 1).0 % Renderer::FRAMES_IN_FLIGHT;
         let most_recent_dead_frame = &self.frames[most_recent_dead_frame_idx];
 
         let enough_free_space_at_beginning = imgui_draw_data.total_vtx_count as u64 <= most_recent_dead_frame.start_offset;
@@ -350,7 +350,7 @@ impl DevGui {
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
         //Destroy Dear ImGUI allocations from last dead frame
         {
-            let last_frame = (self.current_frame + 1) % Self::FRAMES_IN_FLIGHT;
+            let last_frame = (self.current_frame + 1) % Renderer::FRAMES_IN_FLIGHT;
             let geo_count = self.frames[last_frame].index_buffers.len();
             for geo in self.frames[last_frame].index_buffers.drain(0..geo_count) {
                 geo.free(vk);
@@ -400,7 +400,7 @@ impl DevGui {
             }
         }
 
-        self.current_frame = (self.current_frame + 1) % Self::FRAMES_IN_FLIGHT;
+        self.current_frame = (self.current_frame + 1) % Renderer::FRAMES_IN_FLIGHT;
     }
 }
 
