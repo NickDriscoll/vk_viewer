@@ -1358,7 +1358,7 @@ impl Renderer {
             }
 
             //Sort DrawCalls according to their pipeline
-            //self.drawstream.sort();
+            self.drawstream.sort_unstable();
         }
 
         let start_offset;
@@ -1379,7 +1379,78 @@ impl Renderer {
             self.frames_in_flight[self.in_flight_frame].instance_data_size = instance_data_bytes.len() as u64;
         }
 
+        //Update uniform/storage buffers
+        let dynamic_uniform_offset = {
+            let uniforms = &mut self.uniform_data;
+            //Update static scene data
+            uniforms.clip_from_screen = glm::mat4(
+                2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
+                0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            );
+
+            let projection_matrix = glm::perspective_fov_rh_zo(
+                camera.fov,
+                window_size.x as f32,
+                window_size.y as f32,
+                camera.near_distance,
+                camera.far_distance
+            );
+            uniforms.clip_from_view = glm::mat4(
+                1.0, 0.0, 0.0, 0.0,
+                0.0, -1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ) * projection_matrix;
+    
+            uniforms.clip_from_world = uniforms.clip_from_view * camera.view_matrix();
+
+            //Push directional light data
+            let mut i = 0;
+            for light in self.directional_lights.iter_mut() {
+                let light = light.1;
+                let irradiance = light.irradiance;
+                let direction = 
+                    glm::rotation(light.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+                    glm::rotation(light.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+                    glm::vec4(-1.0, 0.0, 0.0, 0.0);
+                let direction = glm::vec4_to_vec3(&direction);
+
+                uniforms.directional_lights[i] = DirectionalLight::new(direction, irradiance);
+
+                let mut matrices = [glm::identity(); CascadedShadowMap::CASCADE_COUNT];
+                let mut dists = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
+
+                if let Some(shadow_map) = &light.shadow_map {
+                    matrices = shadow_map.compute_shadow_cascade_matrices(
+                        camera,
+                        &direction,
+                        &uniforms.view_from_world,
+                        &uniforms.clip_from_view
+                    );
+                    dists = shadow_map.clip_distances(camera, &uniforms.clip_from_view);
+                    uniforms.directional_lights[i].shadow_map_index = shadow_map.texture_index();
+                }
+
+                uniforms.directional_lights[i].shadow_matrices = matrices;
+                uniforms.directional_lights[i].shadow_distances = dists;
+                i += 1;
+            }
+            uniforms.directional_light_count = self.directional_lights.len() as u32;
+            
+            //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
+            //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
+            //that the sky is infinitely far away
+            uniforms.clip_from_skybox = uniforms.clip_from_view * glm::mat3_to_mat4(&glm::mat4_to_mat3(camera.view_matrix()));
+
+            uniforms.time = elapsed_time;
+
+            (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64
+        };
+
         //Wait for LRU frame to finish
+        //This function increments in_flight_frame so it has to be called after the instance/uniform buffer calculations
         let frame_info = self.next_frame(gpu);
 
         //Process delete queue
@@ -1461,78 +1532,10 @@ impl Renderer {
             self.material_buffer.write_buffer(gpu, &upload_mats);
         }
         
-        //Update uniform/storage buffers
-        {
-            let uniforms = &mut self.uniform_data;
-            //Update static scene data
-            uniforms.clip_from_screen = glm::mat4(
-                2.0 / window_size.x as f32, 0.0, 0.0, -1.0,
-                0.0, 2.0 / window_size.y as f32, 0.0, -1.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0
-            );
+        //The actual updating has to occur after prepare_frame() so that the offset values are computed correctly.
 
-            let projection_matrix = glm::perspective_fov_rh_zo(
-                camera.fov,
-                window_size.x as f32,
-                window_size.y as f32,
-                camera.near_distance,
-                camera.far_distance
-            );
-            uniforms.clip_from_view = glm::mat4(
-                1.0, 0.0, 0.0, 0.0,
-                0.0, -1.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0,
-            ) * projection_matrix;
-    
-            uniforms.clip_from_world = uniforms.clip_from_view * camera.view_matrix();
-
-            //Push directional light data
-            let mut i = 0;
-            for light in self.directional_lights.iter_mut() {
-                let light = light.1;
-                let irradiance = light.irradiance;
-                let direction = 
-                    glm::rotation(light.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-                    glm::rotation(light.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
-                    glm::vec4(-1.0, 0.0, 0.0, 0.0);
-                let direction = glm::vec4_to_vec3(&direction);
-
-                uniforms.directional_lights[i] = DirectionalLight::new(direction, irradiance);
-
-                let mut matrices = [glm::identity(); CascadedShadowMap::CASCADE_COUNT];
-                let mut dists = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
-
-                if let Some(shadow_map) = &light.shadow_map {
-                    matrices = shadow_map.compute_shadow_cascade_matrices(
-                        camera,
-                        &direction,
-                        &uniforms.view_from_world,
-                        &uniforms.clip_from_view
-                    );
-                    dists = shadow_map.clip_distances(camera, &uniforms.clip_from_view);
-                    uniforms.directional_lights[i].shadow_map_index = shadow_map.texture_index();
-                }
-
-                uniforms.directional_lights[i].shadow_matrices = matrices;
-                uniforms.directional_lights[i].shadow_distances = dists;
-                i += 1;
-            }
-            uniforms.directional_light_count = self.directional_lights.len() as u32;
-            
-            //Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
-            //The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
-            //that the sky is infinitely far away
-            uniforms.clip_from_skybox = uniforms.clip_from_view * glm::mat3_to_mat4(&glm::mat4_to_mat3(camera.view_matrix()));
-
-            uniforms.time = elapsed_time;
-
-            let dynamic_offset = (self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment)) as u64;
-            
-            let uniform_bytes = struct_to_bytes(&self.uniform_data);
-            self.uniform_buffer.write_subbuffer_elements(gpu, uniform_bytes, dynamic_offset);
-        };
+        //Update uniform buffer
+        self.uniform_buffer.write_subbuffer_elements(gpu, struct_to_bytes(&self.uniform_data), dynamic_uniform_offset);
 
         //Update instance data storage buffer
         self.instance_buffer.write_subbuffer_bytes(gpu, slice_to_bytes(self.instance_data.as_slice()), start_offset);
