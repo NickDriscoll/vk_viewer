@@ -296,7 +296,7 @@ impl CascadedShadowMap {
     pub fn view(&self) -> vk::ImageView { self.image_view }
 
     pub fn new(
-        vk: &mut vkdevice::VulkanGraphicsDevice,
+        gpu: &mut vkdevice::VulkanGraphicsDevice,
         renderer: &mut Renderer,
         resolution: u32,
         clipping_from_view: &glm::TMat4<f32>,
@@ -314,7 +314,7 @@ impl CascadedShadowMap {
 
             let create_info = vk::ImageCreateInfo {
                 queue_family_index_count: 1,
-                p_queue_family_indices: [vk.main_queue_family_index].as_ptr(),
+                p_queue_family_indices: [gpu.main_queue_family_index].as_ptr(),
                 flags: vk::ImageCreateFlags::empty(),
                 image_type: vk::ImageType::TYPE_2D,
                 format,
@@ -328,8 +328,8 @@ impl CascadedShadowMap {
                 ..Default::default()
             };
 
-            let depth_image = vk.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-            allocation = vkdevice::allocate_image_memory(vk, depth_image);
+            let depth_image = gpu.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            allocation = vkdevice::allocate_image_memory(gpu, depth_image);
             depth_image
         };
 
@@ -348,7 +348,7 @@ impl CascadedShadowMap {
                 },
                 ..Default::default()
             };
-            vk.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+            gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
         };
 
         //Create framebuffer
@@ -364,10 +364,10 @@ impl CascadedShadowMap {
                 ..Default::default()
             };
             
-            vk.device.create_framebuffer(&fb_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+            gpu.device.create_framebuffer(&fb_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
         };
 
-        let sampler = vk.get_sampler(renderer.shadow_sampler).unwrap();
+        let sampler = gpu.get_sampler(renderer.shadow_sampler).unwrap();
         let gpu_image = vkdevice::GPUImage {
             image,
             view: Some(image_view),
@@ -644,7 +644,7 @@ impl GraphicsPipelineBuilder {
         }
     }
 
-    pub unsafe fn create_pipelines(vk: &mut VulkanGraphicsDevice, infos: &[PipelineCreateInfo]) -> Vec<vk::Pipeline> {
+    pub unsafe fn create_pipelines(gpu: &mut VulkanGraphicsDevice, infos: &[PipelineCreateInfo]) -> Vec<vk::Pipeline> {
         let mut vertex_input_configs = Vec::with_capacity(infos.len());
         let mut vertex_input_states = Vec::with_capacity(infos.len());
         let mut dynamic_states = Vec::with_capacity(infos.len());
@@ -698,7 +698,7 @@ impl GraphicsPipelineBuilder {
             real_create_infos.push(create_info);
         }
 
-        vk.device.create_graphics_pipelines(vk::PipelineCache::null(), &real_create_infos, vkdevice::MEMORY_ALLOCATOR).unwrap()
+        gpu.device.create_graphics_pipelines(vk::PipelineCache::null(), &real_create_infos, vkdevice::MEMORY_ALLOCATOR).unwrap()
     }
 
 }

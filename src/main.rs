@@ -565,7 +565,7 @@ fn main() {
 
     //Register each primitive with the renderer
     let totoro_model = renderer.upload_gltf_model(&mut gpu, &totoro_data, pbr_pipeline);
-    //let totoro_model = renderer.upload_ozymesh(&mut vk, &totoro_data, vk_3D_graphics_pipeline);
+    //let totoro_model = renderer.upload_ozymesh(&mut gpu, &totoro_data, vk_3D_graphics_pipeline);
 
     //Make totoro collider
     let main_totoro_key = {

@@ -21,17 +21,17 @@ pub struct WindowManager {
 }
 
 impl WindowManager {
-    pub fn init(vk: &mut VulkanGraphicsDevice, sdl_window: &sdl2::video::Window, render_pass: vk::RenderPass) -> Self {
+    pub fn init(gpu: &mut VulkanGraphicsDevice, sdl_window: &sdl2::video::Window, render_pass: vk::RenderPass) -> Self {
         //Use SDL to create the Vulkan surface
         let vk_surface = {
             use ash::vk::Handle;
-            let raw_surf = sdl_window.vulkan_create_surface(vk.instance.handle().as_raw() as usize).unwrap();
+            let raw_surf = sdl_window.vulkan_create_surface(gpu.instance.handle().as_raw() as usize).unwrap();
             vk::SurfaceKHR::from_raw(raw_surf)
         };
     
         //Check that we can do swapchain present on this window
         unsafe {
-            if !vk.ext_surface.get_physical_device_surface_support(vk.physical_device, vk.main_queue_family_index, vk_surface).unwrap() {
+            if !gpu.ext_surface.get_physical_device_surface_support(gpu.physical_device, gpu.main_queue_family_index, vk_surface).unwrap() {
                 crash_with_error_dialog("Swapchain present is unavailable on the selected device queue.\nThe application will now exit.");
             }
         }
@@ -40,9 +40,9 @@ impl WindowManager {
         let vk_swapchain_image_format;
         let vk_swapchain_extent;
         let vk_swapchain = unsafe {
-            let present_modes = vk.ext_surface.get_physical_device_surface_present_modes(vk.physical_device, vk_surface).unwrap();
-            let surf_capabilities = vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, vk_surface).unwrap();
-            let surf_formats = vk.ext_surface.get_physical_device_surface_formats(vk.physical_device, vk_surface).unwrap();
+            let present_modes = gpu.ext_surface.get_physical_device_surface_present_modes(gpu.physical_device, vk_surface).unwrap();
+            let surf_capabilities = gpu.ext_surface.get_physical_device_surface_capabilities(gpu.physical_device, vk_surface).unwrap();
+            let surf_formats = gpu.ext_surface.get_physical_device_surface_formats(gpu.physical_device, vk_surface).unwrap();
             
             //Search for an SRGB swapchain format
             let mut surf_format = vk::SurfaceFormatKHR::default();
@@ -88,19 +88,19 @@ impl WindowManager {
                 image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
                 image_sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 1,
-                p_queue_family_indices: &vk.main_queue_family_index,
+                p_queue_family_indices: &gpu.main_queue_family_index,
                 pre_transform: surf_capabilities.current_transform,
                 composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
                 present_mode,
                 ..Default::default()
             };
 
-            let sc = vk.ext_swapchain.create_swapchain(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            let sc = gpu.ext_swapchain.create_swapchain(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
             sc
         };
         
         let vk_swapchain_image_views = unsafe {
-            let vk_swapchain_images = vk.ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
+            let vk_swapchain_images = gpu.ext_swapchain.get_swapchain_images(vk_swapchain).unwrap();
 
             let mut image_views = Vec::with_capacity(vk_swapchain_images.len());
             for i in 0..vk_swapchain_images.len() {
@@ -120,7 +120,7 @@ impl WindowManager {
                     ..Default::default()
                 };
 
-                image_views.push(vk.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap());
+                image_views.push(gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap());
             }
 
             image_views
@@ -142,7 +142,7 @@ impl WindowManager {
             let mut fbs = Vec::with_capacity(vk_swapchain_image_views.len());
             for view in vk_swapchain_image_views.iter() {
                 attachment = view.clone();
-                fbs.push(vk.device.create_framebuffer(&fb_info, vkdevice::MEMORY_ALLOCATOR).unwrap())
+                fbs.push(gpu.device.create_framebuffer(&fb_info, vkdevice::MEMORY_ALLOCATOR).unwrap())
             }
     
             fbs
@@ -337,8 +337,8 @@ impl Renderer {
         self.primitives.get(key)
     }
 
-    pub unsafe fn cleanup(&mut self, vk: &mut VulkanGraphicsDevice) {
-        vk.device.wait_for_fences(&self.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
+    pub unsafe fn cleanup(&mut self, gpu: &mut VulkanGraphicsDevice) {
+        gpu.device.wait_for_fences(&self.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
     }
 
     pub fn increment_model_count(&mut self, key: ModelKey) {
@@ -347,25 +347,25 @@ impl Renderer {
         }
     }
 
-    pub fn init(vk: &mut VulkanGraphicsDevice, window: &sdl2::video::Window, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
+    pub fn init(gpu: &mut VulkanGraphicsDevice, window: &sdl2::video::Window, swapchain_render_pass: vk::RenderPass, hdr_render_pass: vk::RenderPass) -> Self {
         //Allocate buffer for frame-constant uniforms
-        let uniform_buffer_alignment = vk.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
+        let uniform_buffer_alignment = gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
         let uniform_buffer_size = Self::FRAMES_IN_FLIGHT as u64 * size_to_alignment!(size_of::<EnvironmentUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
         let uniform_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             uniform_buffer_size,
             uniform_buffer_alignment,
             vk::BufferUsageFlags::UNIFORM_BUFFER,
             MemoryLocation::CpuToGpu
         );
         
-        let storage_buffer_alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
+        let storage_buffer_alignment = gpu.physical_device_properties.limits.min_storage_buffer_offset_alignment;
         
         //Allocate buffer for instance data
         let max_instances = 1024 * 4;
         let buffer_size = (size_of::<render::InstanceData>() * max_instances * Self::FRAMES_IN_FLIGHT) as vk::DeviceSize;
         let instance_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             buffer_size,
             storage_buffer_alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -376,7 +376,7 @@ impl Renderer {
         let global_material_slots = 1024 * 4;
         let buffer_size = (global_material_slots * size_of::<MaterialData>()) as vk::DeviceSize;
         let material_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             buffer_size,
             storage_buffer_alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
@@ -384,12 +384,12 @@ impl Renderer {
         );
 
         let max_vertices = 1024 * 1024 * 16;
-        let alignment = vk.physical_device_properties.limits.min_storage_buffer_offset_alignment;
+        let alignment = gpu.physical_device_properties.limits.min_storage_buffer_offset_alignment;
         let usage_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
 
         //Allocate position buffer
         let position_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
             alignment,
             usage_flags,
@@ -398,7 +398,7 @@ impl Renderer {
 
         //Allocate tangent buffer
         let tangent_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
             alignment,
             usage_flags,
@@ -407,7 +407,7 @@ impl Renderer {
 
         //Allocate normal buffer
         let normal_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
             alignment,
             usage_flags,
@@ -416,7 +416,7 @@ impl Renderer {
 
         //Allocate uv buffer
         let uv_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             max_vertices * size_of::<glm::TVec2<f32>>() as u64,
             alignment,
             usage_flags,
@@ -426,7 +426,7 @@ impl Renderer {
         //Allocate imgui buffer
         let max_imgui_vertices = 1024 * 1024;
         let imgui_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             DevGui::FLOATS_PER_VERTEX as u64 * max_imgui_vertices * size_of::<f32>() as u64,
             alignment,
             usage_flags,
@@ -434,7 +434,7 @@ impl Renderer {
         );
         
         let compute_buffer = GPUBuffer::allocate(
-            vk,
+            gpu,
             (3840 * 2160 * size_of::<u32>()) as u64,
             alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -578,7 +578,7 @@ impl Renderer {
                 p_pool_sizes: pool_sizes.as_ptr(),
                 ..Default::default()
             };
-            let descriptor_pool = vk.device.create_descriptor_pool(&descriptor_pool_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            let descriptor_pool = gpu.device.create_descriptor_pool(&descriptor_pool_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
 
             let mut flag_list = vec![vk::DescriptorBindingFlags::default(); bindings.len()];
             flag_list[samplers_descriptor_index as usize] = vk::DescriptorBindingFlags::PARTIALLY_BOUND;
@@ -595,7 +595,7 @@ impl Renderer {
                 ..Default::default()
             };
 
-            descriptor_set_layout = vk.device.create_descriptor_set_layout(&descriptor_layout, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            descriptor_set_layout = gpu.device.create_descriptor_set_layout(&descriptor_layout, vkdevice::MEMORY_ALLOCATOR).unwrap();
 
             let vk_alloc_info = vk::DescriptorSetAllocateInfo {
                 descriptor_pool,
@@ -603,7 +603,7 @@ impl Renderer {
                 p_set_layouts: &descriptor_set_layout,
                 ..Default::default()
             };
-            let descriptor_sets = vk.device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
+            let descriptor_sets = gpu.device.allocate_descriptor_sets(&vk_alloc_info).unwrap();
 
             for i in 0..buffer_descriptor_descs.len() {
                 let desc = &buffer_descriptor_descs[i];
@@ -621,7 +621,7 @@ impl Renderer {
                     dst_binding: i as u32,
                     ..Default::default()
                 };
-                vk.device.update_descriptor_sets(&[write], &[]);
+                gpu.device.update_descriptor_sets(&[write], &[]);
             }
 
             descriptor_sets[0]
@@ -646,7 +646,7 @@ impl Renderer {
                 unnormalized_coordinates: vk::FALSE,
                 ..Default::default()
             };
-            let mat = vk.create_sampler(&sampler_info).unwrap();
+            let mat = gpu.create_sampler(&sampler_info).unwrap();
             
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::NEAREST,
@@ -655,7 +655,7 @@ impl Renderer {
                 anisotropy_enable: vk::FALSE,
                 ..sampler_info
             };
-            let font = vk.create_sampler(&sampler_info).unwrap();
+            let font = gpu.create_sampler(&sampler_info).unwrap();
 
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::LINEAR,
@@ -673,7 +673,7 @@ impl Renderer {
                 unnormalized_coordinates: vk::FALSE,
                 ..Default::default()
             };
-            let shadow = vk.create_sampler(&sampler_info).unwrap();
+            let shadow = gpu.create_sampler(&sampler_info).unwrap();
 
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::LINEAR,
@@ -692,17 +692,17 @@ impl Renderer {
                 unnormalized_coordinates: vk::FALSE,
                 ..Default::default()
             };
-            let cubemap = vk.create_sampler(&sampler_info).unwrap();
+            let cubemap = gpu.create_sampler(&sampler_info).unwrap();
 
             (mat, font, shadow, cubemap)
         };
 
         let format = vk::Format::R8G8B8A8_UNORM;
         let layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-        let default_color_idx = unsafe { global_images.insert(vkdevice::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
-        let default_metalrough_idx = unsafe { global_images.insert(vkdevice::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
-        let default_emissive_idx = unsafe { global_images.insert(vkdevice::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x00, 0x00, 0x00, 0xFF])) as u32};
-        let default_normal_idx = unsafe { global_images.insert(vkdevice::upload_raw_image(vk, point_sampler, format, layout, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
+        let default_color_idx = unsafe { global_images.insert(vkdevice::upload_raw_image(gpu, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
+        let default_metalrough_idx = unsafe { global_images.insert(vkdevice::upload_raw_image(gpu, point_sampler, format, layout, 1, 1, &[0xFF, 0xFF, 0xFF, 0xFF])) as u32};
+        let default_emissive_idx = unsafe { global_images.insert(vkdevice::upload_raw_image(gpu, point_sampler, format, layout, 1, 1, &[0x00, 0x00, 0x00, 0xFF])) as u32};
+        let default_normal_idx = unsafe { global_images.insert(vkdevice::upload_raw_image(gpu, point_sampler, format, layout, 1, 1, &[0x80, 0x80, 0xFF, 0xFF])) as u32};
 
         //Create free list for materials
         let global_materials = FreeList::with_capacity(256);
@@ -712,9 +712,9 @@ impl Renderer {
 
         //Load environment textures
         {
-            let sunzenith_index = vkdevice::load_bc7_texture(vk, &mut global_images, material_sampler, "./data/textures/sunzenith_gradient.dds");
-            let viewzenith_index = vkdevice::load_bc7_texture(vk, &mut global_images, material_sampler, "./data/textures/viewzenith_gradient.dds");
-            let sunview_index = vkdevice::load_bc7_texture(vk, &mut global_images, material_sampler, "./data/textures/sunview_gradient.dds");
+            let sunzenith_index = vkdevice::load_bc7_texture(gpu, &mut global_images, material_sampler, "./data/textures/sunzenith_gradient.dds");
+            let viewzenith_index = vkdevice::load_bc7_texture(gpu, &mut global_images, material_sampler, "./data/textures/viewzenith_gradient.dds");
+            let sunview_index = vkdevice::load_bc7_texture(gpu, &mut global_images, material_sampler, "./data/textures/sunview_gradient.dds");
             
             uniforms.sunzenith_idx = sunzenith_index;
             uniforms.viewzenith_idx = viewzenith_index;
@@ -722,17 +722,17 @@ impl Renderer {
         }
 
         //Create the main swapchain for window present
-        let window_manager = WindowManager::init(vk, &window, swapchain_render_pass);
+        let window_manager = WindowManager::init(gpu, &window, swapchain_render_pass);
         
-        let surf_capabilities = unsafe { vk.ext_surface.get_physical_device_surface_capabilities(vk.physical_device, window_manager.surface).unwrap() };
+        let surf_capabilities = unsafe { gpu.ext_surface.get_physical_device_surface_capabilities(gpu.physical_device, window_manager.surface).unwrap() };
         let primary_framebuffer_extent = vk::Extent3D {
             width: surf_capabilities.current_extent.width,
             height: surf_capabilities.current_extent.height,
             depth: 1
         };
 
-        let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.framebuffer_color_sample_counts);
-        let framebuffers = Self::create_hdr_framebuffers(vk, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images, sample_count);
+        let sample_count = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
+        let framebuffers = Self::create_hdr_framebuffers(gpu, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images, sample_count);
         println!("MSAA sample count: {:?}", sample_count);
         
         //Initialize per-frame rendering state
@@ -740,12 +740,12 @@ impl Renderer {
             //Data for each in-flight frame
             let command_buffers = {
                 let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
-                    command_pool: vk.command_pool,
+                    command_pool: gpu.command_pool,
                     command_buffer_count: 2 * Self::FRAMES_IN_FLIGHT as u32,
                     level: vk::CommandBufferLevel::PRIMARY,
                     ..Default::default()
                 };
-                let command_buffers = unsafe { vk.device.allocate_command_buffers(&command_buffer_alloc_info).unwrap() };
+                let command_buffers = unsafe { gpu.device.allocate_command_buffers(&command_buffer_alloc_info).unwrap() };
                 
                 let mut c_buffer_datas = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
                 for i in 0..Self::FRAMES_IN_FLIGHT {
@@ -753,8 +753,8 @@ impl Renderer {
                         flags: vk::FenceCreateFlags::SIGNALED,
                         ..Default::default()
                     };
-                    let fence = unsafe { vk.device.create_fence(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap() };
-                    let semaphore = unsafe { vk.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
+                    let fence = unsafe { gpu.device.create_fence(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap() };
+                    let semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
                     
                     let data = InFlightFrameData {
                         main_command_buffer: command_buffers[2 * i],
@@ -790,11 +790,11 @@ impl Renderer {
             usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 1,
-            p_queue_family_indices: &vk.main_queue_family_index,
+            p_queue_family_indices: &gpu.main_queue_family_index,
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
-        let mut irradiance_image = GPUImage::allocate(vk, &irradiance_map_info, cubemap_sampler);
+        let mut irradiance_image = GPUImage::allocate(gpu, &irradiance_map_info, cubemap_sampler);
         let irradiance_view_info = vk::ImageViewCreateInfo {
             image: irradiance_image.image,
             view_type: vk::ImageViewType::CUBE,
@@ -809,7 +809,7 @@ impl Renderer {
             },
             ..Default::default()
         };
-        irradiance_image.view = unsafe { Some(vk.device.create_image_view(&irradiance_view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()) };
+        irradiance_image.view = unsafe { Some(gpu.device.create_image_view(&irradiance_view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()) };
         let irradiance_map_idx = global_images.insert(irradiance_image) as u32;
 
         Renderer {
@@ -855,7 +855,7 @@ impl Renderer {
         }
     }
 
-    fn create_hdr_framebuffers(vk: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler_key: SamplerKey, global_images: &mut FreeList<GPUImage>, sample_count: vk::SampleCountFlags) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
+    fn create_hdr_framebuffers(gpu: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler_key: SamplerKey, global_images: &mut FreeList<GPUImage>, sample_count: vk::SampleCountFlags) -> [FrameBuffer; Self::FRAMES_IN_FLIGHT] {
         let hdr_color_format = vk::Format::R16G16B16A16_SFLOAT;
         let vk_depth_format = vk::Format::D32_SFLOAT;
 
@@ -863,7 +863,7 @@ impl Renderer {
         let depth_buffer_image = unsafe {
             let create_info = vk::ImageCreateInfo {
                 queue_family_index_count: 1,
-                p_queue_family_indices: [vk.main_queue_family_index].as_ptr(),
+                p_queue_family_indices: [gpu.main_queue_family_index].as_ptr(),
                 flags: vk::ImageCreateFlags::empty(),
                 image_type: vk::ImageType::TYPE_2D,
                 format: vk_depth_format,
@@ -876,8 +876,8 @@ impl Renderer {
                 ..Default::default()
             };
 
-            let depth_image = vk.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-            vkdevice::allocate_image_memory(vk, depth_image);
+            let depth_image = gpu.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            vkdevice::allocate_image_memory(gpu, depth_image);
             depth_image
         };
 
@@ -898,7 +898,7 @@ impl Renderer {
                 ..Default::default()
             };
 
-            vk.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+            gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
         };
 
         let mut color_buffers = [vk::Image::default(); Self::FRAMES_IN_FLIGHT];
@@ -912,7 +912,7 @@ impl Renderer {
             let primary_color_buffer = unsafe {
                 let create_info = vk::ImageCreateInfo {
                     queue_family_index_count: 1,
-                    p_queue_family_indices: [vk.main_queue_family_index].as_ptr(),
+                    p_queue_family_indices: [gpu.main_queue_family_index].as_ptr(),
                     flags: vk::ImageCreateFlags::empty(),
                     image_type: vk::ImageType::TYPE_2D,
                     format: hdr_color_format,
@@ -925,8 +925,8 @@ impl Renderer {
                     ..Default::default()
                 };
 
-                let image = vk.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-                primary_color_allocation = vkdevice::allocate_image_memory(vk, image);
+                let image = gpu.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+                primary_color_allocation = vkdevice::allocate_image_memory(gpu, image);
                 image
             };
             color_buffers[i] = primary_color_buffer;
@@ -935,7 +935,7 @@ impl Renderer {
             let primary_resolve_buffer = unsafe {
                 let create_info = vk::ImageCreateInfo {
                     queue_family_index_count: 1,
-                    p_queue_family_indices: [vk.main_queue_family_index].as_ptr(),
+                    p_queue_family_indices: [gpu.main_queue_family_index].as_ptr(),
                     flags: vk::ImageCreateFlags::empty(),
                     image_type: vk::ImageType::TYPE_2D,
                     format: hdr_color_format,
@@ -948,8 +948,8 @@ impl Renderer {
                     ..Default::default()
                 };
 
-                let image = vk.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-                primary_resolve_allocation = vkdevice::allocate_image_memory(vk, image);
+                let image = gpu.device.create_image(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+                primary_resolve_allocation = vkdevice::allocate_image_memory(gpu, image);
                 image
             };
             color_resolve_buffers[i] = primary_resolve_buffer;
@@ -969,7 +969,7 @@ impl Renderer {
                     },
                     ..Default::default()
                 };
-                vk.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+                gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
             };
             color_buffer_views[i] = color_buffer_view;
 
@@ -988,7 +988,7 @@ impl Renderer {
                     },
                     ..Default::default()
                 };
-                vk.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+                gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
             };
             color_resolve_views[i] = color_resolve_view;
         
@@ -1004,11 +1004,11 @@ impl Renderer {
                     layers: 1,
                     ..Default::default()
                 };
-                vk.device.create_framebuffer(&fb_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
+                gpu.device.create_framebuffer(&fb_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
             };
             hdr_framebuffers[i] = framebuffer_object;
 
-            let sampler = vk.get_sampler(sampler_key).unwrap();
+            let sampler = gpu.get_sampler(sampler_key).unwrap();
             let gpu_image = GPUImage {
                 image: primary_resolve_buffer,
                 view: Some(color_resolve_view),
@@ -1037,12 +1037,12 @@ impl Renderer {
         framebuffers
     }
 
-    pub fn upload_gltf_model(&mut self, vk: &mut VulkanGraphicsDevice, data: &GLTFMeshData, pipeline: vk::Pipeline) -> ModelKey {
-        fn load_prim_png(vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &GLTFMeshData, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize) -> u32 {
+    pub fn upload_gltf_model(&mut self, gpu: &mut VulkanGraphicsDevice, data: &GLTFMeshData, pipeline: vk::Pipeline) -> ModelKey {
+        fn load_prim_png(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &GLTFMeshData, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize) -> u32 {
             match tex_id_map.get(&prim_tex_idx) {
                 Some(id) => { *id }
                 None => {
-                    let image = GPUImage::from_png_bytes(vk, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
+                    let image = GPUImage::from_png_bytes(gpu, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
                     let global_tex_id = renderer.global_images.insert(image) as u32;
                     tex_id_map.insert(prim_tex_idx, global_tex_id);
                     global_tex_id
@@ -1074,7 +1074,7 @@ impl Renderer {
             let mut inds = [None; 4];
             for i in 0..prim_tex_indices.len() {
                 if let Some(idx) = prim_tex_indices[i] {
-                    inds[i] = Some(load_prim_png(vk, self, data, &mut tex_id_map, idx));
+                    inds[i] = Some(load_prim_png(gpu, self, data, &mut tex_id_map, idx));
                 }
             }
 
@@ -1090,9 +1090,9 @@ impl Renderer {
             };
             let material_idx = self.global_materials.insert(material) as u32;
 
-            let offsets = upload_primitive_vertices(vk, self, prim);
+            let offsets = upload_primitive_vertices(gpu, self, prim);
 
-            let index_buffer = make_index_buffer(vk, &prim.indices);
+            let index_buffer = make_index_buffer(gpu, &prim.indices);
             let model_idx = self.register_primitive(Primitive {
                 shadow_type: ShadowType::OpaqueCaster,
                 index_buffer,
@@ -1110,8 +1110,8 @@ impl Renderer {
         model_key
     }
 
-    pub fn upload_ozymesh(&mut self, vk: &mut VulkanGraphicsDevice, data: &OzyMesh, pipeline: vk::Pipeline) -> ModelKey {
-        fn load_prim_bc7(vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &OzyMesh, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize, format: vk::Format) -> u32 {
+    pub fn upload_ozymesh(&mut self, gpu: &mut VulkanGraphicsDevice, data: &OzyMesh, pipeline: vk::Pipeline) -> ModelKey {
+        fn load_prim_bc7(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &OzyMesh, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize, format: vk::Format) -> u32 {
             match tex_id_map.get(&prim_tex_idx) {
                 Some(id) => { *id }
                 None => {
@@ -1119,7 +1119,7 @@ impl Renderer {
                     let height = data.textures[prim_tex_idx].height;
                     let mipmap_count = data.textures[prim_tex_idx].mipmap_count;
                     let raw_bytes = &data.textures[prim_tex_idx].bc7_bytes;
-                    let image = GPUImage::from_bc7_bytes(vk, raw_bytes, renderer.material_sampler, width, height, mipmap_count, format);
+                    let image = GPUImage::from_bc7_bytes(gpu, raw_bytes, renderer.material_sampler, width, height, mipmap_count, format);
                     let global_tex_id = renderer.global_images.insert(image) as u32;
                     tex_id_map.insert(prim_tex_idx, global_tex_id);
                     global_tex_id
@@ -1152,7 +1152,7 @@ impl Renderer {
             for i in 0..prim_tex_indices.len() {
                 if let Some(idx) = prim_tex_indices[i] {
                     let format = vk::Format::BC7_UNORM_BLOCK;
-                    inds[i] = Some(load_prim_bc7(vk, self, data, &mut tex_id_map, idx as usize, format));
+                    inds[i] = Some(load_prim_bc7(gpu, self, data, &mut tex_id_map, idx as usize, format));
                 }
             }
 
@@ -1168,9 +1168,9 @@ impl Renderer {
             };
             let material_idx = self.global_materials.insert(material) as u32;
 
-            let offsets = upload_primitive_vertices(vk, self, prim);
+            let offsets = upload_primitive_vertices(gpu, self, prim);
 
-            let index_buffer = make_index_buffer(vk, &prim.indices);
+            let index_buffer = make_index_buffer(gpu, &prim.indices);
             let model_idx = self.register_primitive(Primitive {
                 shadow_type: ShadowType::OpaqueCaster,
                 index_buffer,
@@ -1238,19 +1238,19 @@ impl Renderer {
         cb
     }
 
-    pub unsafe fn resize_hdr_framebuffers(&mut self, vk: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
+    pub unsafe fn resize_hdr_framebuffers(&mut self, gpu: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
         let fbs = self.framebuffers();
         for framebuffer in &fbs {
-            vk.device.destroy_framebuffer(framebuffer.framebuffer_object, vkdevice::MEMORY_ALLOCATOR);
-            vk.device.destroy_image_view(framebuffer.color_buffer_view, vkdevice::MEMORY_ALLOCATOR);
-            vk.device.destroy_image(framebuffer.color_buffer, vkdevice::MEMORY_ALLOCATOR);
+            gpu.device.destroy_framebuffer(framebuffer.framebuffer_object, vkdevice::MEMORY_ALLOCATOR);
+            gpu.device.destroy_image_view(framebuffer.color_buffer_view, vkdevice::MEMORY_ALLOCATOR);
+            gpu.device.destroy_image(framebuffer.color_buffer, vkdevice::MEMORY_ALLOCATOR);
             self.global_images.remove(framebuffer.texture_index as usize);
         }
-        vk.device.destroy_image_view(fbs[0].depth_buffer_view, vkdevice::MEMORY_ALLOCATOR);
-        vk.device.destroy_image(fbs[0].depth_buffer, vkdevice::MEMORY_ALLOCATOR);
+        gpu.device.destroy_image_view(fbs[0].depth_buffer_view, vkdevice::MEMORY_ALLOCATOR);
+        gpu.device.destroy_image(fbs[0].depth_buffer, vkdevice::MEMORY_ALLOCATOR);
 
-        let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.framebuffer_color_sample_counts);
-        let framebuffers = Self::create_hdr_framebuffers(vk, extent, hdr_render_pass, self.material_sampler, &mut self.global_images, sample_count);
+        let sample_count = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
+        let framebuffers = Self::create_hdr_framebuffers(gpu, extent, hdr_render_pass, self.material_sampler, &mut self.global_images, sample_count);
         for i in 0..self.frames_in_flight.len() {
             self.frames_in_flight[i].framebuffer = framebuffers[i];
         }
@@ -1260,58 +1260,58 @@ impl Renderer {
         self.primitives.insert(data)
     }
 
-    fn upload_vertex_attribute(vk: &mut VulkanGraphicsDevice, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
+    fn upload_vertex_attribute(gpu: &mut VulkanGraphicsDevice, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
         let old_offset = *offset;
         let new_offset = old_offset + data.len() as u64;
-        buffer.write_subbuffer_elements(vk, data, old_offset);
+        buffer.write_subbuffer_elements(gpu, data, old_offset);
         *offset = new_offset;
         old_offset.try_into().unwrap()
     }
     
-    pub fn append_vertex_positions(&mut self, vk: &mut VulkanGraphicsDevice, positions: &[f32]) -> u32 {
+    pub fn append_vertex_positions(&mut self, gpu: &mut VulkanGraphicsDevice, positions: &[f32]) -> u32 {
         let buffer_block = BufferBlock {
             start_offset: self.position_offset,
             length: positions.len() as u64
         };
         let block_key = self.position_buffer_blocks.insert(buffer_block);
-        Self::upload_vertex_attribute(vk, positions, &self.position_buffer, &mut self.position_offset) / 4
+        Self::upload_vertex_attribute(gpu, positions, &self.position_buffer, &mut self.position_offset) / 4
     }
     
-    pub fn append_vertex_tangents(&mut self, vk: &mut VulkanGraphicsDevice, tangents: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(vk, tangents, &self.tangent_buffer, &mut self.tangent_offset) / 4
+    pub fn append_vertex_tangents(&mut self, gpu: &mut VulkanGraphicsDevice, tangents: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(gpu, tangents, &self.tangent_buffer, &mut self.tangent_offset) / 4
     }
     
-    pub fn append_vertex_normals(&mut self, vk: &mut VulkanGraphicsDevice, normals: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(vk, normals, &self.normal_buffer, &mut self.normal_offset) / 4
+    pub fn append_vertex_normals(&mut self, gpu: &mut VulkanGraphicsDevice, normals: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(gpu, normals, &self.normal_buffer, &mut self.normal_offset) / 4
     }
     
-    pub fn append_vertex_uvs(&mut self, vk: &mut VulkanGraphicsDevice, uvs: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(vk, uvs, &self.uv_buffer, &mut self.uv_offset) / 2
+    pub fn append_vertex_uvs(&mut self, gpu: &mut VulkanGraphicsDevice, uvs: &[f32]) -> u32 {
+        Self::upload_vertex_attribute(gpu, uvs, &self.uv_buffer, &mut self.uv_offset) / 2
     }
 
-    pub fn replace_vertex_positions(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
+    pub fn replace_vertex_positions(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * 4;
-        Self::upload_vertex_attribute(vk, data, &self.position_buffer, &mut my_offset);
+        Self::upload_vertex_attribute(gpu, data, &self.position_buffer, &mut my_offset);
     }
 
-    pub fn replace_vertex_tangents(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
+    pub fn replace_vertex_tangents(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * 4;
-        Self::upload_vertex_attribute(vk, data, &self.tangent_buffer, &mut my_offset);
+        Self::upload_vertex_attribute(gpu, data, &self.tangent_buffer, &mut my_offset);
     }
 
-    pub fn replace_vertex_normals(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
+    pub fn replace_vertex_normals(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * 4;
-        Self::upload_vertex_attribute(vk, data, &self.normal_buffer, &mut my_offset);
+        Self::upload_vertex_attribute(gpu, data, &self.normal_buffer, &mut my_offset);
     }
 
-    pub fn replace_vertex_uvs(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
+    pub fn replace_vertex_uvs(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * 2;
-        Self::upload_vertex_attribute(vk, data, &self.uv_buffer, &mut my_offset);
+        Self::upload_vertex_attribute(gpu, data, &self.uv_buffer, &mut my_offset);
     }
 
-    pub fn replace_imgui_vertices(&mut self, vk: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
+    pub fn replace_imgui_vertices(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
         let mut my_offset = offset * DevGui::FLOATS_PER_VERTEX as u64;
-        Self::upload_vertex_attribute(vk, data, &self.imgui_buffer, &mut my_offset);
+        Self::upload_vertex_attribute(gpu, data, &self.imgui_buffer, &mut my_offset);
     }
 
     pub fn prepare_frame(&mut self, gpu: &mut VulkanGraphicsDevice, window_size: glm::TVec2<u32>, camera: &Camera, elapsed_time: f32) -> InFlightFrameData {
@@ -1461,10 +1461,10 @@ impl Renderer {
                 if let Some(primitive) = self.primitives.get(item.key) {
                     let mat_idx = primitive.material_idx.try_into().unwrap();
                     if let Some(material) = self.global_materials.remove(mat_idx) {
-                        fn free_tex(vk: &mut VulkanGraphicsDevice, global_images: &mut FreeList<GPUImage>, index: Option<u32>) {
+                        fn free_tex(gpu: &mut VulkanGraphicsDevice, global_images: &mut FreeList<GPUImage>, index: Option<u32>) {
                             if let Some(idx) = index {
                                 if let Some(image) = global_images.remove(idx.try_into().unwrap()) {
-                                    image.free(vk);
+                                    image.free(gpu);
                                 }
                             }
                         }

@@ -53,16 +53,16 @@ pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
     }
 }
 
-pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
+pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
-    let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-    staging_buffer.write_buffer(vk, &raw_bytes);
+    let staging_buffer = GPUBuffer::allocate(gpu, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+    staging_buffer.write_buffer(gpu, &raw_bytes);
 
     //Create image
-    let sampler = vk.get_sampler(sampler_key).unwrap();
-    let image = vk.device.create_image(image_create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-    let allocation = vkdevice::allocate_image_memory(vk, image);
+    let sampler = gpu.get_sampler(sampler_key).unwrap();
+    let image = gpu.device.create_image(image_create_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+    let allocation = vkdevice::allocate_image_memory(gpu, image);
     let vim = GPUImage {
         image,
         view: None,
@@ -75,21 +75,21 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_
         allocation
     };
 
-    let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
-    let command_buffer_idx = vk.command_buffer_indices.insert(0);
+    let fence = gpu.device.create_fence(&vk::FenceCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
+    let command_buffer_idx = gpu.command_buffer_indices.insert(0);
 
-    let command_buffer = vk.command_buffers[command_buffer_idx];
-    vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-    record_image_upload_commands(vk, command_buffer, &vim, layout, &staging_buffer);
-    vk.device.end_command_buffer(command_buffer).unwrap();
+    let command_buffer = gpu.command_buffers[command_buffer_idx];
+    gpu.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+    record_image_upload_commands(gpu, command_buffer, &vim, layout, &staging_buffer);
+    gpu.device.end_command_buffer(command_buffer).unwrap();
     
     let submit_info = vk::SubmitInfo {
         command_buffer_count: 1,
         p_command_buffers: &command_buffer,
         ..Default::default()
     };
-    let queue = vk.device.get_device_queue(vk.main_queue_family_index, 0);
-    vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
+    let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
+    gpu.device.queue_submit(queue, &[submit_info], fence).unwrap();
 
     DeferredImage {
         fence,
@@ -100,7 +100,7 @@ pub unsafe fn upload_image_deferred(vk: &mut VulkanGraphicsDevice, image_create_
 }
 
 //staging_buffer already has the image bytes uploaded to it
-pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, gpu_image: &GPUImage, layout: vk::ImageLayout, staging_buffer: &GPUBuffer) {
+pub unsafe fn record_image_upload_commands(gpu: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, gpu_image: &GPUImage, layout: vk::ImageLayout, staging_buffer: &GPUBuffer) {
     let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
@@ -116,7 +116,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, comman
         },
         ..Default::default()
     };
-    vk.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     let mut cumulative_offset = 0;
     let mut copy_regions = vec![vk::BufferImageCopy::default(); gpu_image.mip_count as usize];
@@ -148,7 +148,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, comman
         cumulative_offset += w * h;
     }
 
-    vk.device.cmd_copy_buffer_to_image(command_buffer, staging_buffer.buffer(), gpu_image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    gpu.device.cmd_copy_buffer_to_image(command_buffer, staging_buffer.buffer(), gpu_image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -166,7 +166,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, comman
         subresource_range,
         ..Default::default()
     };
-    vk.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     //Generate mipmaps
     let image_memory_barrier = vk::ImageMemoryBarrier {
@@ -184,7 +184,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, comman
         },
         ..Default::default()
     };
-    vk.device.cmd_pipeline_barrier(
+    gpu.device.cmd_pipeline_barrier(
         command_buffer,
         vk::PipelineStageFlags::TOP_OF_PIPE,
         vk::PipelineStageFlags::TRANSFER,
@@ -209,7 +209,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, comman
             },
             ..Default::default()
         };
-        vk.device.cmd_pipeline_barrier(
+        gpu.device.cmd_pipeline_barrier(
             command_buffer,
             vk::PipelineStageFlags::TRANSFER,
             vk::PipelineStageFlags::TRANSFER,
@@ -246,7 +246,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, comman
                 dst_offsets
             }
         ];
-        vk.device.cmd_blit_image(
+        gpu.device.cmd_blit_image(
             command_buffer,
             gpu_image.image,
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -273,20 +273,20 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, comman
         subresource_range,
         ..Default::default()
     };
-    vk.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
 }
 
-pub unsafe fn upload_image(vk: &mut VulkanGraphicsDevice, image: &GPUImage, raw_bytes: &[u8]) {
+pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw_bytes: &[u8]) {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
-    let staging_buffer = GPUBuffer::allocate(vk, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-    staging_buffer.write_buffer(vk, &raw_bytes);
+    let staging_buffer = GPUBuffer::allocate(gpu, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+    staging_buffer.write_buffer(gpu, &raw_bytes);
 
     //Wait on the fence before beginning command recording
-    vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    vk.device.reset_fences(&[vk.command_buffer_fence]).unwrap();
-    vk.device.begin_command_buffer(vk.command_buffers[0], &vk::CommandBufferBeginInfo::default()).unwrap();
+    gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    gpu.device.reset_fences(&[gpu.command_buffer_fence]).unwrap();
+    gpu.device.begin_command_buffer(gpu.command_buffers[0], &vk::CommandBufferBeginInfo::default()).unwrap();
 
     let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
@@ -303,7 +303,7 @@ pub unsafe fn upload_image(vk: &mut VulkanGraphicsDevice, image: &GPUImage, raw_
         },
         ..Default::default()
     };
-    vk.device.cmd_pipeline_barrier(vk.command_buffers[0], vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    gpu.device.cmd_pipeline_barrier(gpu.command_buffers[0], vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     let mut cumulative_offset = 0;
     let mut copy_regions = vec![vk::BufferImageCopy::default(); image.mip_count as usize];
@@ -335,7 +335,7 @@ pub unsafe fn upload_image(vk: &mut VulkanGraphicsDevice, image: &GPUImage, raw_
         cumulative_offset += w * h;
     }
 
-    vk.device.cmd_copy_buffer_to_image(vk.command_buffers[0], staging_buffer.buffer(), image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    gpu.device.cmd_copy_buffer_to_image(gpu.command_buffers[0], staging_buffer.buffer(), image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -353,22 +353,22 @@ pub unsafe fn upload_image(vk: &mut VulkanGraphicsDevice, image: &GPUImage, raw_
         subresource_range,
         ..Default::default()
     };
-    vk.device.cmd_pipeline_barrier(vk.command_buffers[0], vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    gpu.device.cmd_pipeline_barrier(gpu.command_buffers[0], vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
-    vk.device.end_command_buffer(vk.command_buffers[0]).unwrap();
+    gpu.device.end_command_buffer(gpu.command_buffers[0]).unwrap();
     
     let submit_info = vk::SubmitInfo {
         command_buffer_count: 1,
-        p_command_buffers: &vk.command_buffers[0],
+        p_command_buffers: &gpu.command_buffers[0],
         ..Default::default()
     };
-    let queue = vk.device.get_device_queue(vk.main_queue_family_index, 0);
-    vk.device.queue_submit(queue, &[submit_info], vk.command_buffer_fence).unwrap();
-    vk.device.wait_for_fences(&[vk.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    staging_buffer.free(vk);
+    let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
+    gpu.device.queue_submit(queue, &[submit_info], gpu.command_buffer_fence).unwrap();
+    gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    staging_buffer.free(gpu);
 }
 
-pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> Vec<u8> {
+pub fn png2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> Vec<u8> {
     //Extract metadata and decode to raw RGBA bytes
     let decoder = png::Decoder::new(png_bytes);
     let read_info = decoder.read_info().unwrap();
@@ -399,18 +399,18 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
         usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         queue_family_index_count: 1,
-        p_queue_family_indices: &vk.main_queue_family_index,
+        p_queue_family_indices: &gpu.main_queue_family_index,
         initial_layout: vk::ImageLayout::UNDEFINED,
         ..Default::default()
     };
     
     unsafe {
         let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        let sampler = vk.create_sampler(&vk::SamplerCreateInfo::default()).unwrap();
-        let def_image = upload_image_deferred(vk, &image_create_info, sampler, gpu_image_layout, &bytes);
-        let mut def_images = DeferredImage::synchronize(vk, vec![def_image]);
-        let finished_image_reqs = vk.device.get_image_memory_requirements(def_images[0].final_image.image);
-        let readback_buffer = GPUBuffer::allocate(vk, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
+        let sampler = gpu.create_sampler(&vk::SamplerCreateInfo::default()).unwrap();
+        let def_image = upload_image_deferred(gpu, &image_create_info, sampler, gpu_image_layout, &bytes);
+        let mut def_images = DeferredImage::synchronize(gpu, vec![def_image]);
+        let finished_image_reqs = gpu.device.get_image_memory_requirements(def_images[0].final_image.image);
+        let readback_buffer = GPUBuffer::allocate(gpu, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
         
         let mut regions = Vec::with_capacity(mip_levels as usize);
         let mut current_offset = 0;
@@ -438,29 +438,29 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
             current_offset += (w * h * 4) as u64;
         }
         
-        let cb_idx = vk.command_buffer_indices.insert(0);
-        let command_buffer = vk.command_buffers[cb_idx];
-        vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-        vk.device.cmd_copy_image_to_buffer(command_buffer, def_images[0].final_image.image, gpu_image_layout, readback_buffer.buffer(), &regions);
-        vk.device.end_command_buffer(command_buffer).unwrap();
+        let cb_idx = gpu.command_buffer_indices.insert(0);
+        let command_buffer = gpu.command_buffers[cb_idx];
+        gpu.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+        gpu.device.cmd_copy_image_to_buffer(command_buffer, def_images[0].final_image.image, gpu_image_layout, readback_buffer.buffer(), &regions);
+        gpu.device.end_command_buffer(command_buffer).unwrap();
 
         let submit_info = vk::SubmitInfo {
             command_buffer_count: 1,
             p_command_buffers: &command_buffer,
             ..Default::default()
         };
-        let queue = vk.device.get_device_queue(vk.main_queue_family_index, 0);
-        let fence = vk.device.create_fence(&vk::FenceCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
-        vk.device.queue_submit(queue, &[submit_info], fence).unwrap();
-        vk.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
+        let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
+        let fence = gpu.device.create_fence(&vk::FenceCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
+        gpu.device.queue_submit(queue, &[submit_info], fence).unwrap();
+        gpu.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
         for im in def_images.drain(0..def_images.len()) {
-            im.final_image.free(vk);
+            im.final_image.free(gpu);
         }
-        vk.command_buffer_indices.remove(cb_idx);
-        vk.destroy_sampler(sampler);
+        gpu.command_buffer_indices.remove(cb_idx);
+        gpu.destroy_sampler(sampler);
 
         let uncompressed_bytes = readback_buffer.read_buffer_bytes();
-        readback_buffer.free(vk);
+        readback_buffer.free(gpu);
 
         let bc7_output_size = {
             let mut total = 0;
@@ -497,7 +497,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
 }
 
 #[named]
-pub fn compress_png_file_synchronous(vk: &mut VulkanGraphicsDevice, path: &str) {
+pub fn compress_png_file_synchronous(gpu: &mut VulkanGraphicsDevice, path: &str) {
     use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
 
     //Read png bytes out of file
@@ -521,7 +521,7 @@ pub fn compress_png_file_synchronous(vk: &mut VulkanGraphicsDevice, path: &str) 
         _ => { crash_with_error_dialog(&format!("Unreachable statement reached in {}", function_name!())); }
     };
 
-    let bc7_bytes = png2bc7_synchronous(vk, &png_bytes);
+    let bc7_bytes = png2bc7_synchronous(gpu, &png_bytes);
 
     let dds_pixelformat = DDS_PixelFormat {
         rgb_bitcount,
@@ -771,7 +771,7 @@ fn load_primitive_index_buffer(glb: &Gltf, prim: &gltf::Primitive) -> Vec<u32> {
     }
 }
 
-pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
+pub fn optimize_glb(gpu: &mut VulkanGraphicsDevice, path: &str) {
     let glb = Gltf::open(path).unwrap();
 
     let parent_dir = Path::new(path).parent().unwrap();
@@ -782,13 +782,13 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
     let mut primitives = Vec::with_capacity(64);
     for mesh in glb.meshes() {
         for prim in mesh.primitives() {
-            fn ozy_image_from_png(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> OzyImage {
+            fn ozy_image_from_png(gpu: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> OzyImage {
                 let decoder = png::Decoder::new(png_bytes).read_info().unwrap();
                 let info = decoder.info();
                 let width = info.width;
                 let height = info.height;
                 let mipmap_count = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).max(1);
-                let bc7_bytes = png2bc7_synchronous(vk, png_bytes);
+                let bc7_bytes = png2bc7_synchronous(gpu, png_bytes);
                 OzyImage {
                     width,
                     height,
@@ -812,25 +812,25 @@ pub fn optimize_glb(vk: &mut VulkanGraphicsDevice, path: &str) {
                 if let Some(idx) = image_data.color_index {
                     color_bc7_idx = Some(idx as u32);
                     if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = ozy_image_from_png(vk, &image_data.color_bytes);
+                        textures[idx] = ozy_image_from_png(gpu, &image_data.color_bytes);
                     }
                 }
                 if let Some(idx) = image_data.normal_index {
                     normal_bc7_idx = Some(idx as u32);
                     if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = ozy_image_from_png(vk, &image_data.normal_bytes);
+                        textures[idx] = ozy_image_from_png(gpu, &image_data.normal_bytes);
                     }
                 }
                 if let Some(idx) = image_data.arm_index {
                     arm_bc7_idx = Some(idx as u32);
                     if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = ozy_image_from_png(vk, &image_data.arm_bytes);
+                        textures[idx] = ozy_image_from_png(gpu, &image_data.arm_bytes);
                     }
                 }
                 if let Some(idx) = image_data.emissive_index {
                     emissive_bc7_idx = Some(idx as u32);
                     if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = ozy_image_from_png(vk, &image_data.emissive_bytes);
+                        textures[idx] = ozy_image_from_png(gpu, &image_data.emissive_bytes);
                     }
                 }
 

@@ -39,7 +39,7 @@ impl DevGui {
 
     pub fn do_standard_button<S: AsRef<str>>(ui: &Ui, label: S) -> bool { ui.button_with_size(label, [0.0, 32.0]) }
 
-    pub fn new(vk: &mut VulkanGraphicsDevice, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
+    pub fn new(gpu: &mut VulkanGraphicsDevice, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Self {
         use render::GraphicsPipelineBuilder;
 
         let mut frames = Vec::with_capacity(Renderer::FRAMES_IN_FLIGHT);
@@ -48,8 +48,8 @@ impl DevGui {
         }
         
         let im_shader_stages = {
-            let v = load_shader_stage(&vk.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/imgui_vert.spv");
-            let f = load_shader_stage(&vk.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui_frag.spv");
+            let v = load_shader_stage(&gpu.device, vk::ShaderStageFlags::VERTEX, "./data/shaders/imgui_vert.spv");
+            let f = load_shader_stage(&gpu.device, vk::ShaderStageFlags::FRAGMENT, "./data/shaders/imgui_frag.spv");
             vec![v, f]
         };
         let im_info = GraphicsPipelineBuilder::init(render_pass, pipeline_layout)
@@ -58,7 +58,7 @@ impl DevGui {
             .set_cull_mode(vk::CullModeFlags::NONE) 
             .build_info();
 
-        let pipeline = unsafe { GraphicsPipelineBuilder::create_pipelines(vk, &[im_info])[0] };
+        let pipeline = unsafe { GraphicsPipelineBuilder::create_pipelines(gpu, &[im_info])[0] };
 
         DevGui {
             pipeline,
@@ -279,12 +279,12 @@ impl DevGui {
     }
 
     //This is where we upload the Dear Imgui geometry for the current frame
-    pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, context: &mut imgui::Context) {
+    pub fn resolve_imgui_frame(&mut self, gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, context: &mut imgui::Context) {
         //Destroy Dear ImGUI allocations from last dead frame
         if self.do_gui {
             let index_buffers = &mut self.frames[self.current_frame].index_buffers;
             for geo in index_buffers.drain(0..index_buffers.len()) {
-                geo.free(vk);
+                geo.free(gpu);
             }
         }
 
@@ -332,10 +332,10 @@ impl DevGui {
                 }
 
                 offsets.push(current_offset);
-                renderer.replace_imgui_vertices(vk, &verts, current_offset);
+                renderer.replace_imgui_vertices(gpu, &verts, current_offset);
                 current_offset += vtx_buffer.len() as u64;
 
-                let index_buffer = make_index_buffer(vk, &inds);
+                let index_buffer = make_index_buffer(gpu, &inds);
                 index_buffers.push(index_buffer);
 
                 let mut cmd_list = Vec::with_capacity(list.commands().count());
@@ -354,12 +354,12 @@ impl DevGui {
         self.frames[self.current_frame] = new_frame;
     }
 
-    pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
+    pub unsafe fn record_draw_commands(&mut self, gpu: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
         //Record Dear ImGUI drawing commands
         let gui_frame = &self.frames[self.current_frame];
         for i in 0..gui_frame.draw_cmd_lists.len() {
             if i == 0 {
-                vk.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+                gpu.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
             }
 
             let cmd_list = &gui_frame.draw_cmd_lists[i];
@@ -381,16 +381,16 @@ impl DevGui {
                                 height: ext_y as u32
                             }
                         };
-                        vk.device.cmd_set_scissor(command_buffer, 0, &[scissor_rect]);
+                        gpu.device.cmd_set_scissor(command_buffer, 0, &[scissor_rect]);
 
                         let tex_id = cmd_params.texture_id.id() as u32;
                         let pcs = [
                             tex_id.to_le_bytes(),
                             (gui_frame.offsets[i] as u32).to_le_bytes()
                         ].concat();
-                        vk.device.cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, &pcs);
-                        vk.device.cmd_bind_index_buffer(command_buffer, i_buffer, 0, vk::IndexType::UINT32);
-                        vk.device.cmd_draw_indexed(command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
+                        gpu.device.cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, &pcs);
+                        gpu.device.cmd_bind_index_buffer(command_buffer, i_buffer, 0, vk::IndexType::UINT32);
+                        gpu.device.cmd_draw_indexed(command_buffer, *count as u32, 1, i_offset as u32, 0, 0);
                     }
                     DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
                     DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
