@@ -212,7 +212,7 @@ fn main() {
     };
 
     let hdr_forward_pass = unsafe {
-        let msaa_samples = msaa_samples_from_limit(gpu.physical_device_properties.limits.sampled_image_color_sample_counts);
+        let msaa_samples = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
 
         let color_attachment_description = vk::AttachmentDescription {
             format: vk::Format::R16G16B16A16_SFLOAT,
@@ -438,7 +438,7 @@ fn main() {
             vec![v, f]
         };
 
-        let msaa_samples = msaa_samples_from_limit(gpu.physical_device_properties.limits.sampled_image_color_sample_counts);
+        let msaa_samples = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
         let main_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                         .set_shader_stages(main_shader_stages).set_msaa_samples(msaa_samples).build_info();
         let terrain_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
@@ -446,7 +446,7 @@ fn main() {
         let atm_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
                             .set_shader_stages(atm_shader_stages).set_msaa_samples(msaa_samples).build_info();
         let shadow_info = GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
-                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
+                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::BACK).build_info();
         let postfx_info = GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
                             .set_shader_stages(postfx_shader_stages).build_info();
                             
@@ -1006,7 +1006,7 @@ fn main() {
                                 model.uv_offset.to_le_bytes()
                             ].concat();
                             gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
-                            gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                            gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.buffer(), 0, vk::IndexType::UINT32);
                             gpu.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, scall.instance_count, 0, 0, scall.first_instance);
                         }
                     }
@@ -1079,7 +1079,7 @@ fn main() {
                         model.uv_offset.to_le_bytes(),
                     ].concat();
                     gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
-                    gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.backing_buffer(), 0, vk::IndexType::UINT32);
+                    gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.buffer(), 0, vk::IndexType::UINT32);
                     gpu.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }

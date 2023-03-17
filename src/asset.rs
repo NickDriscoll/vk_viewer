@@ -148,7 +148,7 @@ pub unsafe fn record_image_upload_commands(vk: &mut VulkanGraphicsDevice, comman
         cumulative_offset += w * h;
     }
 
-    vk.device.cmd_copy_buffer_to_image(command_buffer, staging_buffer.backing_buffer(), gpu_image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    vk.device.cmd_copy_buffer_to_image(command_buffer, staging_buffer.buffer(), gpu_image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -335,7 +335,7 @@ pub unsafe fn upload_image(vk: &mut VulkanGraphicsDevice, image: &GPUImage, raw_
         cumulative_offset += w * h;
     }
 
-    vk.device.cmd_copy_buffer_to_image(vk.command_buffers[0], staging_buffer.backing_buffer(), image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    vk.device.cmd_copy_buffer_to_image(vk.command_buffers[0], staging_buffer.buffer(), image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -441,7 +441,7 @@ pub fn png2bc7_synchronous(vk: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> V
         let cb_idx = vk.command_buffer_indices.insert(0);
         let command_buffer = vk.command_buffers[cb_idx];
         vk.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-        vk.device.cmd_copy_image_to_buffer(command_buffer, def_images[0].final_image.image, gpu_image_layout, readback_buffer.backing_buffer(), &regions);
+        vk.device.cmd_copy_image_to_buffer(command_buffer, def_images[0].final_image.image, gpu_image_layout, readback_buffer.buffer(), &regions);
         vk.device.end_command_buffer(command_buffer).unwrap();
 
         let submit_info = vk::SubmitInfo {

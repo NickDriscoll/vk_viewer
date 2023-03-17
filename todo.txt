@@ -1,6 +1,5 @@
 Todo:
     Make generic error macro
-    Fix Imgui flickering bugs
     Change shadow map data such as cascade distances to be data-driven
     Add orbit cam tweaking controls
     Parallax mapping family of techniques

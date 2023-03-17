@@ -493,7 +493,7 @@ pub unsafe fn upload_GPU_buffer<T>(vk: &mut VulkanGraphicsDevice, dst_buffer: vk
         dst_offset: offset * size_of::<T>() as u64,
         size: bytes_size
     };
-    vk.device.cmd_copy_buffer(vk.command_buffers[cbidx], staging_buffer.backing_buffer(), dst_buffer, &[copy]);
+    vk.device.cmd_copy_buffer(vk.command_buffers[cbidx], staging_buffer.buffer(), dst_buffer, &[copy]);
 
     vk.device.end_command_buffer(vk.command_buffers[cbidx]).unwrap();
 
@@ -797,7 +797,7 @@ pub struct GPUBuffer {
 
 impl GPUBuffer {
     //Read-only access to fields
-    pub fn backing_buffer(&self) -> vk::Buffer { self.buffer }
+    pub fn buffer(&self) -> vk::Buffer { self.buffer }
     pub fn length(&self) -> vk::DeviceSize { self.length }
 
     pub fn allocate(vk: &mut VulkanGraphicsDevice, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags, memory_location: MemoryLocation) -> Self {

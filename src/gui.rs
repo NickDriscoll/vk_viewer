@@ -35,7 +35,6 @@ pub struct DevGui {
 }
 
 impl DevGui {
-    //pub const FRAMES_IN_FLIGHT: usize = Renderer::FRAMES_IN_FLIGHT + 1;
     pub const FLOATS_PER_VERTEX: usize = 8;
 
     pub fn do_standard_button<S: AsRef<str>>(ui: &Ui, label: S) -> bool { ui.button_with_size(label, [0.0, 32.0]) }
@@ -281,6 +280,14 @@ impl DevGui {
 
     //This is where we upload the Dear Imgui geometry for the current frame
     pub fn resolve_imgui_frame(&mut self, vk: &mut VulkanGraphicsDevice, renderer: &mut Renderer, context: &mut imgui::Context) {
+        //Destroy Dear ImGUI allocations from last dead frame
+        if self.do_gui {
+            let index_buffers = &mut self.frames[self.current_frame].index_buffers;
+            for geo in index_buffers.drain(0..index_buffers.len()) {
+                geo.free(vk);
+            }
+        }
+
         let mut index_buffers = Vec::with_capacity(16);
         let mut draw_cmd_lists = Vec::with_capacity(16);
         let mut offsets = Vec::with_capacity(16);
@@ -348,15 +355,6 @@ impl DevGui {
     }
 
     pub unsafe fn record_draw_commands(&mut self, vk: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, layout: vk::PipelineLayout) {
-        //Destroy Dear ImGUI allocations from last dead frame
-        {
-            let last_frame = (self.current_frame + 1) % Renderer::FRAMES_IN_FLIGHT;
-            let geo_count = self.frames[last_frame].index_buffers.len();
-            for geo in self.frames[last_frame].index_buffers.drain(0..geo_count) {
-                geo.free(vk);
-            }
-        }
-
         //Record Dear ImGUI drawing commands
         let gui_frame = &self.frames[self.current_frame];
         for i in 0..gui_frame.draw_cmd_lists.len() {
@@ -369,7 +367,7 @@ impl DevGui {
                 match cmd {
                     DrawCmd::Elements {count, cmd_params} => {
                         let i_offset = cmd_params.idx_offset;
-                        let i_buffer = gui_frame.index_buffers[i].backing_buffer();
+                        let i_buffer = gui_frame.index_buffers[i].buffer();
 
                         let ext_x = cmd_params.clip_rect[2] - cmd_params.clip_rect[0];
                         let ext_y = cmd_params.clip_rect[3] - cmd_params.clip_rect[1];

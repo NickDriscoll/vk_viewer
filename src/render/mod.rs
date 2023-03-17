@@ -463,7 +463,7 @@ impl Renderer {
                     ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
                     stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                     count: 1,
-                    buffer: uniform_buffer.backing_buffer(),
+                    buffer: uniform_buffer.buffer(),
                     offset: 0,
                     length: size_of::<EnvironmentUniforms>() as vk::DeviceSize
                 },
@@ -471,7 +471,7 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
-                    buffer: instance_buffer.backing_buffer(),
+                    buffer: instance_buffer.buffer(),
                     offset: 0,
                     length: (size_of::<InstanceData>() * max_instances) as vk::DeviceSize
                 },
@@ -479,7 +479,7 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::FRAGMENT,
                     count: 1,
-                    buffer: material_buffer.backing_buffer(),
+                    buffer: material_buffer.buffer(),
                     offset: 0,
                     length: material_buffer.length()
                 },
@@ -487,7 +487,7 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
-                    buffer: position_buffer.backing_buffer(),
+                    buffer: position_buffer.buffer(),
                     offset: 0,
                     length: position_buffer.length()
                 },
@@ -495,7 +495,7 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
-                    buffer: tangent_buffer.backing_buffer(),
+                    buffer: tangent_buffer.buffer(),
                     offset: 0,
                     length: tangent_buffer.length()
                 },
@@ -503,7 +503,7 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
-                    buffer: normal_buffer.backing_buffer(),
+                    buffer: normal_buffer.buffer(),
                     offset: 0,
                     length: normal_buffer.length()
                 },
@@ -511,7 +511,7 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
-                    buffer: uv_buffer.backing_buffer(),
+                    buffer: uv_buffer.buffer(),
                     offset: 0,
                     length: uv_buffer.length()
                 },
@@ -519,7 +519,7 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
-                    buffer: imgui_buffer.backing_buffer(),
+                    buffer: imgui_buffer.buffer(),
                     offset: 0,
                     length: imgui_buffer.length()
                 },
@@ -527,7 +527,7 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::COMPUTE,
                     count: 1,
-                    buffer: compute_buffer.backing_buffer(),
+                    buffer: compute_buffer.buffer(),
                     offset: 0,
                     length: compute_buffer.length()
                 }
@@ -731,7 +731,7 @@ impl Renderer {
             depth: 1
         };
 
-        let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.sampled_image_color_sample_counts);
+        let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.framebuffer_color_sample_counts);
         let framebuffers = Self::create_hdr_framebuffers(vk, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images, sample_count);
         println!("MSAA sample count: {:?}", sample_count);
         
@@ -1249,7 +1249,7 @@ impl Renderer {
         vk.device.destroy_image_view(fbs[0].depth_buffer_view, vkdevice::MEMORY_ALLOCATOR);
         vk.device.destroy_image(fbs[0].depth_buffer, vkdevice::MEMORY_ALLOCATOR);
 
-        let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.sampled_image_color_sample_counts);
+        let sample_count = msaa_samples_from_limit(vk.physical_device_properties.limits.framebuffer_color_sample_counts);
         let framebuffers = Self::create_hdr_framebuffers(vk, extent, hdr_render_pass, self.material_sampler, &mut self.global_images, sample_count);
         for i in 0..self.frames_in_flight.len() {
             self.frames_in_flight[i].framebuffer = framebuffers[i];
