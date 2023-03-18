@@ -94,9 +94,12 @@ pub fn regenerate_terrain(
     terrain: &mut TerrainSpec
 ) {
     if let Some(ter) = renderer.get_primitive(primitive_key) {
-        let offset = ter.position_offset;
         let verts = compute_terrain_vertices(terrain, terrain.fixed_seed);
-        replace_uploaded_vertices(gpu, renderer, &verts, offset.into());
+
+
+
+        //let offset = ter.position_offset;
+        //replace_uploaded_vertices(gpu, renderer, &verts, offset.into());
 
         physics_engine.collider_set.remove(*terrain_collider_handle, &mut physics_engine.island_manager, &mut physics_engine.rigid_body_set, false);
 
@@ -104,39 +107,32 @@ pub fn regenerate_terrain(
     }
 }
 
-pub fn upload_vertex_attributes(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, attribs: &UninterleavedVertexArrays) -> VertexFetchOffsets {
-    let position_offset = renderer.append_vertex_positions(gpu, &attribs.positions);
-    let tangent_offset = renderer.append_vertex_tangents(gpu, &attribs.tangents);
-    let normal_offset = renderer.append_vertex_normals(gpu, &attribs.normals);
-    let uv_offset = renderer.append_vertex_uvs(gpu, &attribs.uvs);
+pub fn upload_vertex_attributes(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, attribs: &UninterleavedVertexArrays) -> VertexBlocks {
+    let position_block = renderer.upload_vertex_data(gpu, &attribs.positions);
+    let tangent_block = renderer.upload_vertex_data(gpu, &attribs.tangents);
+    let normal_block = renderer.upload_vertex_data(gpu, &attribs.normals);
+    let uv_block = renderer.upload_vertex_data(gpu, &attribs.uvs);
 
-    VertexFetchOffsets {
-        position_offset,
-        tangent_offset,
-        normal_offset,
-        uv_offset
+    VertexBlocks {
+        position_block,
+        tangent_block,
+        normal_block,
+        uv_block
     }
 }
 
-pub fn upload_primitive_vertices<T: PositionNormalTangentUvPrimitive>(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, prim: &T) -> VertexFetchOffsets {
-    let position_offset = renderer.append_vertex_positions(gpu, prim.vertex_positions());
-    let tangent_offset = renderer.append_vertex_tangents(gpu, prim.vertex_tangents());
-    let normal_offset = renderer.append_vertex_normals(gpu, prim.vertex_normals());
-    let uv_offset = renderer.append_vertex_uvs(gpu, prim.vertex_uvs());
+pub fn upload_primitive_vertices<T: PositionNormalTangentUvPrimitive>(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, prim: &T) -> VertexBlocks {
+    let position_block = renderer.upload_vertex_data(gpu, &prim.vertex_positions());
+    let tangent_block = renderer.upload_vertex_data(gpu, &prim.vertex_tangents());
+    let normal_block = renderer.upload_vertex_data(gpu, &prim.vertex_normals());
+    let uv_block = renderer.upload_vertex_data(gpu, &prim.vertex_uvs());
 
-    VertexFetchOffsets {
-        position_offset,
-        tangent_offset,
-        normal_offset,
-        uv_offset
+    VertexBlocks {
+        position_block,
+        tangent_block,
+        normal_block,
+        uv_block
     }
-}
-
-pub fn replace_uploaded_vertices(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, attributes: &UninterleavedVertexArrays, offset: u64) {
-    renderer.replace_vertex_positions(gpu, &attributes.positions, offset);
-    renderer.replace_vertex_tangents(gpu, &attributes.tangents, offset);
-    renderer.replace_vertex_normals(gpu, &attributes.normals, offset);
-    renderer.replace_vertex_uvs(gpu, &attributes.uvs, offset);
 }
 
 pub fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Entity) {

@@ -53,11 +53,11 @@ macro_rules! size_to_alignment {
     };
 }
 
-pub struct VertexFetchOffsets {
-    pub position_offset: u32,
-    pub tangent_offset: u32,
-    pub normal_offset: u32,
-    pub uv_offset: u32,
+pub struct VertexBlocks {
+    pub position_block: GPUBufferBlock,
+    pub tangent_block: GPUBufferBlock,
+    pub normal_block: GPUBufferBlock,
+    pub uv_block: GPUBufferBlock
 }
 
 pub fn msaa_samples_from_limit(sample_limit: vk::SampleCountFlags) -> vk::SampleCountFlags {
@@ -787,6 +787,11 @@ impl VulkanGraphicsDevice {
             samplers: DenseSlotMap::with_key()
         }
     }
+}
+
+pub struct GPUBufferBlock {
+    pub start_offset: u64,       //In f32s,
+    pub length: u64              //In f32s
 }
 
 pub struct GPUBuffer {

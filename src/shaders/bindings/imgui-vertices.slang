@@ -1,4 +1,4 @@
 import structs;
 
-[[vk_binding(7, 0)]]
+[[vk_binding(4, 0)]]
 StructuredBuffer<ImguiVertex> imgui_vertices;

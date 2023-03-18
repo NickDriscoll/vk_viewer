@@ -183,11 +183,6 @@ pub struct InFlightFrameData {
     pub dynamic_uniform_offset: u64
 }
 
-struct BufferBlock {
-    pub start_offset: u64,       //In f32s,
-    pub length: u64              //In f32s
-}
-
 pub struct InstancedSlotMap<K: slotmap::Key, V: UniqueID> {
     items: SlotMap<K, V>,
     counts: HashMap<K, u32>
@@ -277,18 +272,12 @@ pub struct Renderer {
 
     pub uniform_data: EnvironmentUniforms,
 
-    //Vertex buffers
-    pub position_buffer: GPUBuffer,
-    position_buffer_blocks: SlotMap<PositionBufferBlockKey, BufferBlock>,
-    position_offset: u64,               //In f32s
-    pub tangent_buffer: GPUBuffer,
-    tangent_offset: u64,                //In f32s
-    pub normal_buffer: GPUBuffer,
-    normal_offset: u64,                 //In f32s
-    pub uv_buffer: GPUBuffer,
-    uv_offset: u64,                     //In f32s
+    //Dear ImGUI vertex data
     pub imgui_buffer: GPUBuffer,
 
+    //One large buffer for all static vertex data. I.E. not Dear ImGUI vertices
+    pub vertex_buffer: GPUBuffer,
+    pub vertex_offset: u64,
 
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
@@ -302,13 +291,11 @@ pub struct Renderer {
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
     pub samplers_descriptor_index: u32,
-    pub frames_in_flight: Vec<InFlightFrameData>,
+    pub frames_in_flight: Vec<InFlightFrameData>,   //TODO: Static array?
     pub in_flight_frame: usize
 }
 
 impl Renderer {
-    //pub const NEAR_CLIP_DISTANCE: f32 = 0.1;
-    //pub const FAR_CLIP_DISTANCE: f32 = 1000.0;
     pub const FRAMES_IN_FLIGHT: usize = 2;
 
     pub fn current_in_flight_frame(&self) -> usize { self.in_flight_frame }
@@ -387,37 +374,10 @@ impl Renderer {
         let alignment = gpu.physical_device_properties.limits.min_storage_buffer_offset_alignment;
         let usage_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
 
-        //Allocate position buffer
-        let position_buffer = GPUBuffer::allocate(
+        //Allocate main vertex buffer
+        let vertex_buffer = GPUBuffer::allocate(
             gpu,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
-            alignment,
-            usage_flags,
-            MemoryLocation::GpuOnly
-        );
-
-        //Allocate tangent buffer
-        let tangent_buffer = GPUBuffer::allocate(
-            gpu,
-            max_vertices * size_of::<glm::TVec4<f32>>() as u64,
-            alignment,
-            usage_flags,
-            MemoryLocation::GpuOnly
-        );
-
-        //Allocate normal buffer
-        let normal_buffer = GPUBuffer::allocate(
-            gpu,
-            max_vertices * size_of::<glm::TVec4<f32>>() as u64,
-            alignment,
-            usage_flags,
-            MemoryLocation::GpuOnly
-        );
-
-        //Allocate uv buffer
-        let uv_buffer = GPUBuffer::allocate(
-            gpu,
-            max_vertices * size_of::<glm::TVec2<f32>>() as u64,
             alignment,
             usage_flags,
             MemoryLocation::GpuOnly
@@ -487,33 +447,9 @@ impl Renderer {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
                     count: 1,
-                    buffer: position_buffer.buffer(),
+                    buffer: vertex_buffer.buffer(),
                     offset: 0,
-                    length: position_buffer.length()
-                },
-                BufferDescriptorDesc {
-                    ty: vk::DescriptorType::STORAGE_BUFFER,
-                    stage_flags: vk::ShaderStageFlags::VERTEX,
-                    count: 1,
-                    buffer: tangent_buffer.buffer(),
-                    offset: 0,
-                    length: tangent_buffer.length()
-                },
-                BufferDescriptorDesc {
-                    ty: vk::DescriptorType::STORAGE_BUFFER,
-                    stage_flags: vk::ShaderStageFlags::VERTEX,
-                    count: 1,
-                    buffer: normal_buffer.buffer(),
-                    offset: 0,
-                    length: normal_buffer.length()
-                },
-                BufferDescriptorDesc {
-                    ty: vk::DescriptorType::STORAGE_BUFFER,
-                    stage_flags: vk::ShaderStageFlags::VERTEX,
-                    count: 1,
-                    buffer: uv_buffer.buffer(),
-                    offset: 0,
-                    length: uv_buffer.length()
+                    length: vertex_buffer.length()
                 },
                 BufferDescriptorDesc {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
@@ -833,16 +769,9 @@ impl Renderer {
             global_materials,
             descriptor_set_layout,
             bindless_descriptor_set,
-            position_buffer,
-            position_buffer_blocks: SlotMap::with_key(),
-            position_offset: 0,
-            tangent_buffer,
-            tangent_offset: 0,
-            normal_buffer,
-            normal_offset: 0,
-            uv_buffer,
-            uv_offset: 0,
             imgui_buffer,
+            vertex_buffer,
+            vertex_offset: 0,
             uniform_buffer,
             instance_buffer,
             material_buffer,
@@ -1090,17 +1019,17 @@ impl Renderer {
             };
             let material_idx = self.global_materials.insert(material) as u32;
 
-            let offsets = upload_primitive_vertices(gpu, self, prim);
+            let blocks = upload_primitive_vertices(gpu, self, prim);
 
             let index_buffer = make_index_buffer(gpu, &prim.indices);
             let model_idx = self.register_primitive(Primitive {
-                shadow_type: ShadowType::OpaqueCaster,
+                shadow_type: ShadowType::Opaque,
                 index_buffer,
                 index_count: prim.indices.len().try_into().unwrap(),
-                position_offset: offsets.position_offset,
-                tangent_offset: offsets.tangent_offset,
-                normal_offset: offsets.normal_offset,
-                uv_offset: offsets.uv_offset,
+                position_block: blocks.position_block,
+                tangent_block: blocks.tangent_block,
+                normal_block: blocks.normal_block,
+                uv_block: blocks.uv_block,
                 material_idx
             });
             primitive_keys.push(model_idx);
@@ -1168,17 +1097,17 @@ impl Renderer {
             };
             let material_idx = self.global_materials.insert(material) as u32;
 
-            let offsets = upload_primitive_vertices(gpu, self, prim);
+            let blocks = upload_primitive_vertices(gpu, self, prim);
 
             let index_buffer = make_index_buffer(gpu, &prim.indices);
             let model_idx = self.register_primitive(Primitive {
-                shadow_type: ShadowType::OpaqueCaster,
+                shadow_type: ShadowType::Opaque,
                 index_buffer,
                 index_count: prim.indices.len().try_into().unwrap(),
-                position_offset: offsets.position_offset,
-                tangent_offset: offsets.tangent_offset,
-                normal_offset: offsets.normal_offset,
-                uv_offset: offsets.uv_offset,
+                position_block: blocks.position_block,
+                tangent_block: blocks.tangent_block,
+                normal_block: blocks.normal_block,
+                uv_block: blocks.uv_block,
                 material_idx
             });
             primitive_keys.push(model_idx);
@@ -1260,53 +1189,30 @@ impl Renderer {
         self.primitives.insert(data)
     }
 
+    pub fn upload_vertex_data(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32]) -> GPUBufferBlock {
+        self.vertex_offset = size_to_alignment!(self.vertex_offset, gpu.physical_device_properties.limits.min_storage_buffer_offset_alignment);
+        self.vertex_buffer.write_subbuffer_elements(gpu, data, self.vertex_offset);
+
+        let data_length = data.len().try_into().unwrap();
+        let buffer_block = GPUBufferBlock {
+            start_offset: self.vertex_offset,
+            length: data_length
+        };
+        
+        self.vertex_offset += data_length;
+        buffer_block
+    }
+
+    pub fn replace_vertex_block(&mut self, gpu: &mut VulkanGraphicsDevice, block: &GPUBufferBlock, data: &[f32]) {
+        self.vertex_buffer.write_subbuffer_elements(gpu, data, block.start_offset);
+    }
+
     fn upload_vertex_attribute(gpu: &mut VulkanGraphicsDevice, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
         let old_offset = *offset;
         let new_offset = old_offset + data.len() as u64;
         buffer.write_subbuffer_elements(gpu, data, old_offset);
         *offset = new_offset;
         old_offset.try_into().unwrap()
-    }
-    
-    pub fn append_vertex_positions(&mut self, gpu: &mut VulkanGraphicsDevice, positions: &[f32]) -> u32 {
-        let buffer_block = BufferBlock {
-            start_offset: self.position_offset,
-            length: positions.len() as u64
-        };
-        let block_key = self.position_buffer_blocks.insert(buffer_block);
-        Self::upload_vertex_attribute(gpu, positions, &self.position_buffer, &mut self.position_offset) / 4
-    }
-    
-    pub fn append_vertex_tangents(&mut self, gpu: &mut VulkanGraphicsDevice, tangents: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(gpu, tangents, &self.tangent_buffer, &mut self.tangent_offset) / 4
-    }
-    
-    pub fn append_vertex_normals(&mut self, gpu: &mut VulkanGraphicsDevice, normals: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(gpu, normals, &self.normal_buffer, &mut self.normal_offset) / 4
-    }
-    
-    pub fn append_vertex_uvs(&mut self, gpu: &mut VulkanGraphicsDevice, uvs: &[f32]) -> u32 {
-        Self::upload_vertex_attribute(gpu, uvs, &self.uv_buffer, &mut self.uv_offset) / 2
-    }
-
-    pub fn replace_vertex_positions(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
-        let mut my_offset = offset * 4;
-        Self::upload_vertex_attribute(gpu, data, &self.position_buffer, &mut my_offset);
-    }
-
-    pub fn replace_vertex_tangents(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
-        let mut my_offset = offset * 4;
-        Self::upload_vertex_attribute(gpu, data, &self.tangent_buffer, &mut my_offset);
-    }
-
-    pub fn replace_vertex_normals(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
-        let mut my_offset = offset * 4;
-        Self::upload_vertex_attribute(gpu, data, &self.normal_buffer, &mut my_offset);
-    }
-
-    pub fn replace_vertex_uvs(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {
-        let mut my_offset = offset * 2;
-        Self::upload_vertex_attribute(gpu, data, &self.uv_buffer, &mut my_offset);
     }
 
     pub fn replace_imgui_vertices(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32], offset: u64) {

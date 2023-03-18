@@ -6,6 +6,8 @@ use slotmap::{SlotMap, new_key_type};
 use render::{vkdevice, VulkanGraphicsDevice};
 use crate::*;
 
+use vkdevice::GPUBufferBlock;
+
 pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
 pub const SHADOW_DISTANCE_ARRAY_LENGTH: usize = (CascadedShadowMap::CASCADE_COUNT + 1) + (4 - ((CascadedShadowMap::CASCADE_COUNT + 1) % 4));
 
@@ -148,8 +150,8 @@ impl Ord for DrawCall {
 }
 
 pub enum ShadowType {
-    OpaqueCaster,
-    NonCaster
+    Opaque,
+    None
 }
 
 //This is a struct that contains mesh and material data
@@ -158,10 +160,16 @@ pub struct Primitive {
     pub shadow_type: ShadowType,
     pub index_buffer: vkdevice::GPUBuffer,
     pub index_count: u32,
-    pub position_offset: u32,
-    pub tangent_offset: u32,
-    pub normal_offset: u32,
-    pub uv_offset: u32,
+
+    pub position_block: GPUBufferBlock,
+    pub tangent_block: GPUBufferBlock,
+    pub normal_block: GPUBufferBlock,
+    pub uv_block: GPUBufferBlock,
+    //pub position_offset: u32,
+    //pub tangent_offset: u32,
+    //pub normal_offset: u32,
+    //pub uv_offset: u32,
+
     pub material_idx: u32
 }
 

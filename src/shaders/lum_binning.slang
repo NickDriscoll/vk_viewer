@@ -1,9 +1,6 @@
 import structs;
 
-[vk_binding(9, 0)]
-Texture2D hdr_buffer;
-
-[vk_binding(10, 0)]
+[vk_binding(5, 0)]
 RWStructuredBuffer<float3> histogram;
 
 static const float EPSILON = 0.0005;

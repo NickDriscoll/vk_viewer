@@ -280,14 +280,6 @@ impl DevGui {
 
     //This is where we upload the Dear Imgui geometry for the current frame
     pub fn resolve_imgui_frame(&mut self, gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, context: &mut imgui::Context) {
-        //Destroy Dear ImGUI allocations from last dead frame
-        if self.do_gui {
-            let index_buffers = &mut self.frames[self.current_frame].index_buffers;
-            for geo in index_buffers.drain(0..index_buffers.len()) {
-                geo.free(gpu);
-            }
-        }
-
         let mut index_buffers = Vec::with_capacity(16);
         let mut draw_cmd_lists = Vec::with_capacity(16);
         let mut offsets = Vec::with_capacity(16);
@@ -306,6 +298,14 @@ impl DevGui {
         let mut current_offset = start_offset;
 
         if imgui_draw_data.total_vtx_count > 0 {
+            //Destroy Dear ImGUI allocations from last dead frame
+            {
+                let index_buffers = &mut self.frames[self.current_frame].index_buffers;
+                for geo in index_buffers.drain(0..index_buffers.len()) {
+                    geo.free(gpu);
+                }
+            }
+
             for list in imgui_draw_data.draw_lists() {
                 let vtx_buffer = list.vtx_buffer();
                 let mut verts = vec![0.0; vtx_buffer.len() * Self::FLOATS_PER_VERTEX];

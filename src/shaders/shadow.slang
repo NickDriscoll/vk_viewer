@@ -1,7 +1,7 @@
 import structs;
 import bindings.frame_uniforms;
 import bindings.instance_buffer;
-import vertex_bindings;
+import bindings.vertex_bindings;
 import bindings.global_textures;
 import bindings.material_buffer;
 
@@ -9,19 +9,19 @@ import bindings.material_buffer;
 cbuffer PushConstants
 {
     uint material_idx;
-    uint position_buffer_offset;
-    uint uv_buffer_offset;
+    uint position_offset;
+    uint uv_offset;
 }
 
 [shader("vertex")]
 ShadowVertexOutput vertex_main(ModelVertex vertex, int view_id: SV_ViewID) {
     float4x4 model_matrix = instance_buffer[vertex.instance_id].world_from_model;
-    float3 position = vertex_positions[vertex.id + position_buffer_offset].xyz;
+    float3 position = vertex_positions[vertex.id + position_offset].xyz;
     float3 world_position = mul(model_matrix, float4(position, 1.0)).xyz;
 
     ShadowVertexOutput out;
     out.clip_out = mul(uniforms.directional_lights[0].shadow_matrices[view_id], float4(world_position, 1.0));
-    out.uv = vertex_uvs[vertex.id + uv_buffer_offset];
+    out.uv = vertex_uvs[vertex.id + uv_offset].xy;
 
     return out;
 }

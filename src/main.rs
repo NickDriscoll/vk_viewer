@@ -540,17 +540,17 @@ fn main() {
     
     //Upload terrain geometry
     let terrain_key = {
-        let terrain_offsets = upload_vertex_attributes(&mut gpu, &mut renderer, &terrain_vertices);
+        let terrain_blocks = upload_vertex_attributes(&mut gpu, &mut renderer, &terrain_vertices);
         drop(terrain_vertices);
         let index_buffer = routines::make_index_buffer(&mut gpu, &terrain_indices);
         let prim_key = renderer.register_primitive(Primitive {
-            shadow_type: ShadowType::OpaqueCaster,
+            shadow_type: ShadowType::Opaque,
             index_buffer,
             index_count: terrain_indices.len().try_into().unwrap(),
-            position_offset: terrain_offsets.position_offset,
-            tangent_offset: terrain_offsets.tangent_offset,
-            normal_offset: terrain_offsets.normal_offset,
-            uv_offset: terrain_offsets.uv_offset,
+            position_block: terrain_blocks.position_block,
+            tangent_block: terrain_blocks.tangent_block,
+            normal_block: terrain_blocks.normal_block,
+            uv_block: terrain_blocks.uv_block,
             material_idx: terrain_grass_matidx,
         });
         let model_key = renderer.new_model(0, vec![prim_key]);
@@ -861,17 +861,17 @@ fn main() {
         match dev_gui.do_entity_window(&imgui_ui, window_size, &mut simulation_state.entities, camera.focused_entity, &mut physics_engine.rigid_body_set) {
             EntityWindowResponse::LoadGLTF(path) => {
                 let mesh_data = asset::gltf_meshdata(&path);
-                let model = renderer.upload_gltf_model(&mut gpu, &mesh_data, pbr_pipeline);
+                let gltf_model = renderer.upload_gltf_model(&mut gpu, &mesh_data, pbr_pipeline);
                 let spawn_point = camera.position + camera.look_direction() * 5.0;
-                let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
+                let mut s = Entity::new(mesh_data.name, gltf_model, &mut physics_engine);
                 s.set_position(spawn_point, &mut physics_engine);
                 simulation_state.entities.insert(s);
             }
             EntityWindowResponse::LoadOzyMesh(path) => {
                 let mesh_data = OzyMesh::from_file(&path);
-                let model = renderer.upload_ozymesh(&mut gpu, &mesh_data, pbr_pipeline);
+                let ozy_model = renderer.upload_ozymesh(&mut gpu, &mesh_data, pbr_pipeline);
                 let spawn_point = camera.position + camera.look_direction() * 5.0;
-                let mut s = Entity::new(mesh_data.name, model, &mut physics_engine);
+                let mut s = Entity::new(mesh_data.name, ozy_model, &mut physics_engine);
                 s.set_position(spawn_point, &mut physics_engine);
                 simulation_state.entities.insert(s);
             }
@@ -998,12 +998,14 @@ fn main() {
                     gpu.device.cmd_set_viewport(frame_info.main_command_buffer, 0, &[viewport]);
                     for scall in renderer.drawlist_iter() {
                         if let Some(model) = renderer.get_primitive(scall.primitive_key) {
-                            if let ShadowType::NonCaster = model.shadow_type { continue; }
+                            if let ShadowType::None = model.shadow_type { continue; }
 
+                            let position_offset: u32 = model.position_block.start_offset as u32 / 4;
+                            let uv_offset: u32 = model.uv_block.start_offset as u32 / 2;
                             let pcs = [
                                 model.material_idx.to_le_bytes(),
-                                model.position_offset.to_le_bytes(),
-                                model.uv_offset.to_le_bytes()
+                                position_offset.to_le_bytes(),
+                                uv_offset.to_le_bytes()
                             ].concat();
                             gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
                             gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.buffer(), 0, vk::IndexType::UINT32);
@@ -1071,12 +1073,16 @@ fn main() {
                     last_bound_pipeline = drawcall.pipeline;
                 }
                 if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
+                    let position_offset: u32 = model.position_block.start_offset as u32 / 4;
+                    let tangent_offset: u32 = model.tangent_block.start_offset as u32 / 4;
+                    let normal_offset: u32 = model.normal_block.start_offset as u32 / 4;
+                    let uv_offset: u32 = model.uv_block.start_offset as u32 / 2;
                     let pcs = [
                         model.material_idx.to_le_bytes(),
-                        model.position_offset.to_le_bytes(),
-                        model.tangent_offset.to_le_bytes(),
-                        model.normal_offset.to_le_bytes(),
-                        model.uv_offset.to_le_bytes(),
+                        position_offset.to_le_bytes(),
+                        tangent_offset.to_le_bytes(),
+                        normal_offset.to_le_bytes(),
+                        uv_offset.to_le_bytes(),
                     ].concat();
                     gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
                     gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.buffer(), 0, vk::IndexType::UINT32);
@@ -1092,20 +1098,21 @@ fn main() {
             gpu.device.cmd_end_render_pass(frame_info.main_command_buffer);
 
             //Luminance binning compute pass
-            gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::COMPUTE, lum_binning_pipeline);
-            gpu.device.cmd_bind_descriptor_sets(
-                frame_info.main_command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                compute_pipeline_layout,
-                0,
-                &[renderer.bindless_descriptor_set],
-                &[frame_info.dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
-            );
-            gpu.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
+            // gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::COMPUTE, lum_binning_pipeline);
+            // gpu.device.cmd_bind_descriptor_sets(
+            //     frame_info.main_command_buffer,
+            //     vk::PipelineBindPoint::COMPUTE,
+            //     compute_pipeline_layout,
+            //     0,
+            //     &[renderer.bindless_descriptor_set],
+            //     &[frame_info.dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
+            // );
+            // gpu.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
 
-            let group_count_x = 1;
-            let group_count_y = 1;
-            gpu.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);
+            // let group_count_x = 1;
+            // let group_count_y = 1;
+            // gpu.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);
+
             gpu.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
 
             //Submit Shadow+HDR passes
