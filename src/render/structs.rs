@@ -9,7 +9,6 @@ use crate::*;
 use vkdevice::GPUBufferBlock;
 
 pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
-pub const SHADOW_DISTANCE_ARRAY_LENGTH: usize = (CascadedShadowMap::CASCADE_COUNT + 1) + (4 - ((CascadedShadowMap::CASCADE_COUNT + 1) % 4));
 
 pub trait UniqueID {
     fn id(&self) -> u64;
@@ -25,7 +24,7 @@ pub struct DeferredDelete {
 #[repr(C)]
 pub struct DirectionalLight {
     pub shadow_matrices: [glm::TMat4<f32>; CascadedShadowMap::CASCADE_COUNT],
-    pub shadow_distances: [f32; SHADOW_DISTANCE_ARRAY_LENGTH],
+    pub shadow_distances: [f32; CascadedShadowMap::SHADOW_DISTANCE_COUNT],
     pub direction: glm::TVec3<f32>,
     pub shadow_map_index: u32,
     pub irradiance: glm::TVec3<f32>,
@@ -36,7 +35,7 @@ impl DirectionalLight {
     pub fn new(direction: glm::TVec3<f32>, irradiance: glm::TVec3<f32>) -> Self {
         DirectionalLight {
             shadow_matrices: [glm::identity(); CascadedShadowMap::CASCADE_COUNT],
-            shadow_distances: [0.0; SHADOW_DISTANCE_ARRAY_LENGTH],
+            shadow_distances: [0.0; CascadedShadowMap::SHADOW_DISTANCE_COUNT],
             direction,
             shadow_map_index: 0,
             irradiance,
@@ -268,11 +267,12 @@ pub struct CascadedShadowMap {
 
 impl CascadedShadowMap {
     pub const CASCADE_COUNT: usize = 6;
+    pub const SHADOW_DISTANCE_COUNT: usize = (CascadedShadowMap::CASCADE_COUNT + 1) + (4 - ((CascadedShadowMap::CASCADE_COUNT + 1) % 4));
 
-    pub fn view_distances(&self, camera: &Camera) -> [f32; SHADOW_DISTANCE_ARRAY_LENGTH] {
+    pub fn view_distances(&self, camera: &Camera) -> [f32; Self::SHADOW_DISTANCE_COUNT] {
         //Manually picking the cascade distances because math is hard
         //The shadow cascade distances are negative bc they are in view space
-        let mut view_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
+        let mut view_distances = [0.0; Self::SHADOW_DISTANCE_COUNT];
         view_distances[0] = -(camera.near_distance);
         view_distances[1] = -(camera.near_distance + self.distances[0]);
         view_distances[2] = -(camera.near_distance + self.distances[1]);
@@ -284,11 +284,11 @@ impl CascadedShadowMap {
         view_distances
     }
 
-    pub fn clip_distances(&self, camera: &Camera, projection: &glm::TMat4<f32>) -> [f32; SHADOW_DISTANCE_ARRAY_LENGTH] {
+    pub fn clip_distances(&self, camera: &Camera, projection: &glm::TMat4<f32>) -> [f32; Self::SHADOW_DISTANCE_COUNT] {
         let view_distances = self.view_distances(camera);
 
         //Compute the clip space distances
-        let mut clip_distances = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
+        let mut clip_distances = [0.0; Self::SHADOW_DISTANCE_COUNT];
         for i in 0..view_distances.len() {
             let p = projection * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
             clip_distances[i] = p.z;
@@ -307,7 +307,6 @@ impl CascadedShadowMap {
         gpu: &mut vkdevice::VulkanGraphicsDevice,
         renderer: &mut Renderer,
         resolution: u32,
-        clipping_from_view: &glm::TMat4<f32>,
         render_pass: vk::RenderPass
     ) -> Self {
         let format = vk::Format::D16_UNORM;
@@ -532,7 +531,7 @@ pub struct GraphicsPipelineBuilder {
 }
 
 impl GraphicsPipelineBuilder {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let dynamic_state_enables = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
 
         let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo {
@@ -619,6 +618,12 @@ impl GraphicsPipelineBuilder {
             shader_stages: self.shader_stages.clone(),
             render_pass: self.render_pass
         }
+    }
+
+    pub fn set_depth_compare_op(self, op: vk::CompareOp) -> Self {
+        let mut t = self;
+        t.depthstencil_state.depth_compare_op = op;
+        t
     }
 
     pub fn set_msaa_samples(self, samples: vk::SampleCountFlags) -> Self {

@@ -109,7 +109,7 @@ impl DevGui {
         response
     }
 
-    pub fn do_entity_window(&mut self, ui: &Ui, window_size: glm::TVec2<u32>, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>, rigid_body_set: &mut RigidBodySet) -> EntityWindowResponse {
+    pub fn do_entity_window(&mut self, ui: &Ui, window_size: glm::TVec2<u32>, entities: &mut DenseSlotMap<EntityKey, Entity>, focused_entity: Option<EntityKey>, physics_engine: &mut PhysicsEngine) -> EntityWindowResponse {
         let mut out = EntityWindowResponse::None;
         if !self.do_entity_window || !self.do_gui { return out; }
         
@@ -131,7 +131,7 @@ impl DevGui {
                 let prop = prop.1;
 
                 if let Some(token) = ui.tree_node_config(TreeNodeId::Str(&format!("{}", i))).label::<TreeNodeId<&str>, &str>(&prop.name).push() {
-                    if let Some(body) = rigid_body_set.get_mut(prop.physics_component.rigid_body_handle) {
+                    if let Some(body) = physics_engine.rigid_body_set.get_mut(prop.physics_component.rigid_body_handle) {
                         let mut pos = body.position().clone();
                         let rot = body.rotation();
                         let mut angles = quaternion_to_euler(&rot);
@@ -141,15 +141,15 @@ impl DevGui {
                         interacted |= imgui::Drag::new("Z").speed(0.1).build(ui, &mut pos.translation.z);   
                         interacted |= imgui::Drag::new("Pitch").speed(0.05).build(ui, &mut angles[0]);
                         interacted |= imgui::Drag::new("Yaw").speed(0.05).build(ui, &mut angles[2]);
-                        interacted |= imgui::Drag::new("Roll").speed(0.05).build(ui, &mut angles[1]);                        
+                        interacted |= imgui::Drag::new("Roll").speed(0.05).build(ui, &mut angles[1]);
                         interacted |= imgui::Drag::new("Scale").speed(0.05).build(ui, &mut prop.physics_component.scale);
 
                         if interacted {
-                            body.set_position(pos, true);
-                            body.set_rotation(angles, true);
+                            body.sleep();
+                            body.set_position(pos, false);
+                            body.set_rotation(angles, false);
                         }
                     }
-
 
                     let mut b = false;
                     if let Some(key) = focused_entity {
@@ -190,7 +190,7 @@ impl DevGui {
             }
             
             if Self::do_standard_button(ui, "Import OzyMesh") {
-                if let Some(path) = tfd::open_file_dialog("Choose OzyMesh", "./data/models/.optimized", Some((&["*.ozy"], ".ozy (Optimized model)"))) {
+                if let Some(path) = tfd::open_file_dialog("Choose OzyMesh", "./data/models/optimized", Some((&["*.ozy"], ".ozy (Optimized model)"))) {
                     out = EntityWindowResponse::LoadOzyMesh(path);
                 }
             }
@@ -254,6 +254,7 @@ impl DevGui {
         if let Some(token) = ui.window("Camera").begin() {
             ui.slider("FOV", 0.001, glm::pi(), &mut camera.fov);
 
+            if DevGui::do_standard_button(ui, "Close") { self.do_camera_window = false; }
             token.end();
         }
     }

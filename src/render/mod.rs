@@ -171,7 +171,7 @@ pub struct FrameBuffer {
     pub texture_index: u32
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct InFlightFrameData {
     pub main_command_buffer: vk::CommandBuffer,
     pub swapchain_command_buffer: vk::CommandBuffer,
@@ -291,7 +291,7 @@ pub struct Renderer {
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
     pub samplers_descriptor_index: u32,
-    pub frames_in_flight: Vec<InFlightFrameData>,   //TODO: Static array?
+    pub frames_in_flight: [InFlightFrameData; Self::FRAMES_IN_FLIGHT],   //TODO: Static array?
     pub in_flight_frame: usize
 }
 
@@ -371,14 +371,13 @@ impl Renderer {
         );
 
         let max_vertices = 1024 * 1024 * 16;
-        let alignment = gpu.physical_device_properties.limits.min_storage_buffer_offset_alignment;
         let usage_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
 
         //Allocate main vertex buffer
         let vertex_buffer = GPUBuffer::allocate(
             gpu,
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
-            alignment,
+            storage_buffer_alignment,
             usage_flags,
             MemoryLocation::GpuOnly
         );
@@ -388,7 +387,7 @@ impl Renderer {
         let imgui_buffer = GPUBuffer::allocate(
             gpu,
             DevGui::FLOATS_PER_VERTEX as u64 * max_imgui_vertices * size_of::<f32>() as u64,
-            alignment,
+            storage_buffer_alignment,
             usage_flags,
             MemoryLocation::CpuToGpu
         );
@@ -396,7 +395,7 @@ impl Renderer {
         let compute_buffer = GPUBuffer::allocate(
             gpu,
             (3840 * 2160 * size_of::<u32>()) as u64,
-            alignment,
+            storage_buffer_alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER,
             MemoryLocation::GpuOnly
         );
@@ -683,7 +682,7 @@ impl Renderer {
                 };
                 let command_buffers = unsafe { gpu.device.allocate_command_buffers(&command_buffer_alloc_info).unwrap() };
                 
-                let mut c_buffer_datas = Vec::with_capacity(Self::FRAMES_IN_FLIGHT);
+                let mut c_buffer_datas = [InFlightFrameData::default(); Self::FRAMES_IN_FLIGHT];
                 for i in 0..Self::FRAMES_IN_FLIGHT {
                     let create_info = vk::FenceCreateInfo {
                         flags: vk::FenceCreateFlags::SIGNALED,
@@ -702,7 +701,7 @@ impl Renderer {
                         instance_data_size: 0,
                         dynamic_uniform_offset: 0
                     };
-                    c_buffer_datas.push(data);
+                    c_buffer_datas[i] = data;
                 }
                 c_buffer_datas
             };
@@ -1203,7 +1202,7 @@ impl Renderer {
         buffer_block
     }
 
-    pub fn replace_vertex_block(&mut self, gpu: &mut VulkanGraphicsDevice, block: &GPUBufferBlock, data: &[f32]) {
+    pub fn replace_vertex_block(&self, gpu: &mut VulkanGraphicsDevice, block: &GPUBufferBlock, data: &[f32]) {
         self.vertex_buffer.write_subbuffer_elements(gpu, data, block.start_offset);
     }
 
@@ -1300,8 +1299,8 @@ impl Renderer {
                 camera.fov,
                 window_size.x as f32,
                 window_size.y as f32,
-                camera.near_distance,
-                camera.far_distance
+                camera.far_distance,
+                camera.near_distance
             );
             uniforms.clip_from_view = glm::mat4(
                 1.0, 0.0, 0.0, 0.0,
@@ -1326,7 +1325,7 @@ impl Renderer {
                 uniforms.directional_lights[i] = DirectionalLight::new(direction, irradiance);
 
                 let mut matrices = [glm::identity(); CascadedShadowMap::CASCADE_COUNT];
-                let mut dists = [0.0; SHADOW_DISTANCE_ARRAY_LENGTH];
+                let mut dists = [0.0; CascadedShadowMap::SHADOW_DISTANCE_COUNT];
 
                 if let Some(shadow_map) = &light.shadow_map {
                     matrices = shadow_map.compute_shadow_cascade_matrices(

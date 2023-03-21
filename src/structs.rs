@@ -24,7 +24,7 @@ impl Camera {
             orientation: glm::zero(),
             fov: glm::half_pi(),
             near_distance: 0.1,
-            far_distance: 1000.0,
+            far_distance: 1000000.0,
             forward: glm::vec3(0.0, 1.0, 0.0),
             lookat_dist: 7.5,
             focused_entity: None,
@@ -239,26 +239,6 @@ impl Entity {
         if let Some(body) = physics_engine.rigid_body_set.get_mut(self.physics_component.rigid_body_handle) {
             body.set_translation(pos, true);
         }
-    }
-
-    pub fn set_scale(&mut self, scale: f32, physics_engine: &mut PhysicsEngine) {
-        if let Some(handle) = self.physics_component.collider_handle {
-            if let Some(collider) = physics_engine.collider_set.get_mut(handle) {
-                let shape = collider.shape();
-                match shape.shape_type() {
-                    ShapeType::Ball => {
-                        let true_shape = shape.as_ball().unwrap();
-                        let new_radius = true_shape.radius * scale;
-                        let collider = ColliderBuilder::ball(new_radius).build();
-                        let collider_handle = physics_engine.collider_set.insert_with_parent(collider, self.physics_component.rigid_body_handle, &mut physics_engine.rigid_body_set);
-                        self.physics_component.collider_handle = Some(collider_handle);
-                    }
-                    _ => {}
-                }
-            }
-            physics_engine.collider_set.remove(handle, &mut physics_engine.island_manager, &mut physics_engine.rigid_body_set, true);
-        }
-        self.physics_component.scale = scale;
     }
 
     pub fn set_physics_component(mut self, component: PhysicsComponent) -> Self {

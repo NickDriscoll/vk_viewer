@@ -232,9 +232,9 @@ AtmosphereVertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     AtmosphereVertexOutput output;
     float3 position = SKYBOX_NONINDEXED_POSITIONS[vertex_id];
     output.view_direction = position;
-    
-    float4 screen_space_pos = mul(uniforms.clip_from_skybox, float4(position, 1.0));
-    output.clip_out = screen_space_pos.xyww;
+
+    output.clip_out = mul(uniforms.clip_from_skybox, float4(position, 1.0));
+    output.clip_out.z = 0.0;
     return output;
 }
 

@@ -112,6 +112,6 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     }
 
     // final_radiance = lerp(final_radiance, world_normal * length(final_radiance), 0.1);
+    // return float4(float3(500.0 * smoothstep(-0.1, 0.1, uniforms.directional_lights[0].direction.z)), 1.0);
     return float4(final_radiance, 1.0);
-    //return float4(float3(500.0 * smoothstep(-0.1, 0.1, uniforms.directional_lights[0].direction.z)), 1.0);
 }

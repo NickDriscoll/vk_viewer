@@ -187,6 +187,54 @@ float cascaded_shadow_factor(float3 adj_shadow_space_pos, Sampler2DArray shadow_
     return 1.0 - shadow;
 }
 
+float4 compute_fragment_cascade(
+    float4 shadow_space_positions[SHADOW_CASCADE_COUNT],
+    float4 cascade_distances[CASCADE_DISTANCE_ARRAY_ELEMENTS / 4],
+    float clip_space_z,
+    uint directional_light_idx
+) {
+    float3 adj_shadow_space_pos;
+    int shadow_cascade = -1;
+    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
+        uint cascade_index = i + (SHADOW_CASCADE_COUNT * directional_light_idx);
+        float cascade_distance = cascade_distances[(cascade_index + 1) / 4][(cascade_index + 1) % 4];
+        if (clip_space_z > cascade_distance) {
+            adj_shadow_space_pos = float3(float2(shadow_space_positions[i].xy * 0.5 + 0.5), shadow_space_positions[i].z);
+            if (!(
+                    adj_shadow_space_pos.z < 0.0 ||
+                    adj_shadow_space_pos.z > 1.0 ||
+                    adj_shadow_space_pos.x < 0.0 ||
+                    adj_shadow_space_pos.x > 1.0 ||
+                    adj_shadow_space_pos.y < 0.0 ||
+                    adj_shadow_space_pos.y > 1.0
+            )) {
+                shadow_cascade = i;
+            }
+            break;
+        }
+    }
+
+    return float4(adj_shadow_space_pos, (float)shadow_cascade);
+}
+
+float3 fragment_cascade_debug(int cascade) {
+    float3 final_radiance = float3(0.0);
+    if (cascade == 0) {
+        final_radiance = float3(200.0, 0.0, 0.0);
+    } else if (cascade == 1) {
+        final_radiance = float3(200.0, 200.0, 0.0);
+    } else if (cascade == 2) {
+        final_radiance = float3(0.0, 200.0, 0.0);
+    } else if (cascade == 3) {
+        final_radiance = float3(0.0, 200.0, 200.0);
+    } else if (cascade == 4) {
+        final_radiance = float3(0.0, 0.0, 200.0);
+    } else if (cascade == 5) {
+        final_radiance = float3(0.0);
+    }
+    return final_radiance;
+}
+
 // Returns shadow factor in x and cascade index in y
 float2 compute_cascade_shadowing(
     Sampler2DArray shadow_map,
@@ -198,26 +246,9 @@ float2 compute_cascade_shadowing(
     uint directional_light_idx,
 ) {
     //Determine which cascade the fragment is in
-    float3 adj_shadow_space_pos;
-    int shadow_cascade = -1;
-    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
-        uint cascade_index = i + (SHADOW_CASCADE_COUNT * directional_light_idx);
-        float cascade_distance = cascade_distances[(cascade_index + 1) / 4][(cascade_index + 1) % 4];
-        if (clip_space_z < cascade_distance) {
-            adj_shadow_space_pos = float3(float2(shadow_space_positions[i].xy * 0.5 + 0.5), shadow_space_positions[i].z);
-            if (!(
-                adj_shadow_space_pos.z < 0.0 ||
-                adj_shadow_space_pos.z > 1.0 ||
-                adj_shadow_space_pos.x < 0.0 ||
-                adj_shadow_space_pos.x > 1.0 ||
-                adj_shadow_space_pos.y < 0.0 ||
-                adj_shadow_space_pos.y > 1.0
-            )) {
-                shadow_cascade = i;
-            }
-            break;
-        }
-    }
+    float4 r = compute_fragment_cascade(shadow_space_positions, cascade_distances, clip_space_z, directional_light_idx);
+    float3 adj_shadow_space_pos = r.xyz;
+    int shadow_cascade = (int)r.w;
 
     // Compute sun shadow factor
     float shadow_factor = cascaded_shadow_factor(adj_shadow_space_pos, shadow_map, shadow_cascade, normal, light_direction);

@@ -22,16 +22,6 @@ pub const COLOR_CLEAR: vk::ClearValue = {
     }
 };
 
-pub const DEPTH_STENCIL_CLEAR: vk::ClearValue = {
-    let value = vk::ClearDepthStencilValue {
-        depth: 1.0,
-        stencil: 0
-    };
-    vk::ClearValue {
-        depth_stencil: value
-    }
-};
-
 pub const COMPONENT_MAPPING_DEFAULT: vk::ComponentMapping = vk::ComponentMapping {
     r: vk::ComponentSwizzle::R,
     g: vk::ComponentSwizzle::G,

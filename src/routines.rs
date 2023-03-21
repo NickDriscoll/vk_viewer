@@ -96,10 +96,10 @@ pub fn regenerate_terrain(
     if let Some(ter) = renderer.get_primitive(primitive_key) {
         let verts = compute_terrain_vertices(terrain, terrain.fixed_seed);
 
-
-
-        //let offset = ter.position_offset;
-        //replace_uploaded_vertices(gpu, renderer, &verts, offset.into());
+        renderer.replace_vertex_block(gpu, &ter.position_block, &verts.positions);
+        renderer.replace_vertex_block(gpu, &ter.tangent_block, &verts.tangents);
+        renderer.replace_vertex_block(gpu, &ter.normal_block, &verts.normals);
+        renderer.replace_vertex_block(gpu, &ter.uv_block, &verts.uvs);
 
         physics_engine.collider_set.remove(*terrain_collider_handle, &mut physics_engine.island_manager, &mut physics_engine.rigid_body_set, false);
 

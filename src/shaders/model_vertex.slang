@@ -29,9 +29,7 @@ MeshVertexOutput vertex_main(ModelVertex vertex) {
     float3 normal = vertex_normals[vertex.id + normal_offset].xyz;
     float3 world_normal = normalize(mul(normal_matrix, float4(normal, 1.0)).xyz);
 
-    //TODO: Calculate world_bitangent directly
-    float3 bitangent = bitangent_sign * cross(normal, tangent);
-    float3 world_bitangent = normalize(mul(normal_matrix, float4(bitangent, 1.0)).xyz);
+    float3 world_bitangent = bitangent_sign * cross(world_normal, world_tangent);
 
     float2 uv = vertex_uvs[vertex.id + uv_offset].xy;
 

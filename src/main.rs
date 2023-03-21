@@ -388,7 +388,6 @@ fn main() {
         &mut gpu,
         &mut renderer,
         2048,
-        &glm::perspective_fov_rh_zo(glm::half_pi::<f32>(), window_size.x as f32, window_size.y as f32, 0.1, 1000.0),
         shadow_pass
     );
 
@@ -440,13 +439,16 @@ fn main() {
 
         let msaa_samples = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
         let main_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
-                        .set_shader_stages(main_shader_stages).set_msaa_samples(msaa_samples).build_info();
+                        .set_shader_stages(main_shader_stages).set_msaa_samples(msaa_samples)
+                        .set_depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL).build_info();
         let terrain_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
-                            .set_shader_stages(terrain_shader_stages).set_msaa_samples(msaa_samples).build_info();
+                            .set_shader_stages(terrain_shader_stages).set_msaa_samples(msaa_samples)
+                            .set_depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL).build_info();
         let atm_info = GraphicsPipelineBuilder::init(hdr_forward_pass, graphics_pipeline_layout)
-                            .set_shader_stages(atm_shader_stages).set_msaa_samples(msaa_samples).build_info();
+                            .set_shader_stages(atm_shader_stages).set_msaa_samples(msaa_samples)
+                            .set_depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL).build_info();
         let shadow_info = GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
-                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::BACK).build_info();
+                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
         let postfx_info = GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
                             .set_shader_stages(postfx_shader_stages).build_info();
                             
@@ -858,7 +860,7 @@ fn main() {
             AssetWindowResponse::None => {}
         }
 
-        match dev_gui.do_entity_window(&imgui_ui, window_size, &mut simulation_state.entities, camera.focused_entity, &mut physics_engine.rigid_body_set) {
+        match dev_gui.do_entity_window(&imgui_ui, window_size, &mut simulation_state.entities, camera.focused_entity, &mut physics_engine) {
             EntityWindowResponse::LoadGLTF(path) => {
                 let mesh_data = asset::gltf_meshdata(&path);
                 let gltf_model = renderer.upload_gltf_model(&mut gpu, &mesh_data, pbr_pipeline);
@@ -966,7 +968,12 @@ fn main() {
                         }
                     };
                     gpu.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[render_area]);
-                    let clear_values = [vkdevice::DEPTH_STENCIL_CLEAR];
+                    let clear_values = [vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: 1.0,
+                            stencil: 0
+                        }
+                    }];
                     let rp_begin_info = vk::RenderPassBeginInfo {
                         render_pass: shadow_pass,
                         framebuffer: sun_shadow_map.framebuffer(),
@@ -1044,7 +1051,16 @@ fn main() {
             };
             gpu.device.cmd_set_scissor(frame_info.main_command_buffer, 0, &[scissor_area]);
 
-            let vk_clear_values = [vkdevice::COLOR_CLEAR, vkdevice::DEPTH_STENCIL_CLEAR, vkdevice::COLOR_CLEAR];
+            let vk_clear_values = [
+                vkdevice::COLOR_CLEAR,
+                    vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 0.0,
+                        stencil: 0
+                    }
+                },
+                vkdevice::COLOR_CLEAR
+            ];
 
             //HDR render pass recording
             let rp_begin_info = vk::RenderPassBeginInfo {
