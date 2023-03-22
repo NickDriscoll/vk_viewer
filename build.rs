@@ -30,17 +30,6 @@ fn main() {
         println!("{}", e);
     }
 
-    //HLSL shader compilation
-    // let out = Command::new("dxc").args([
-    //         "-Fo", &format!("{}/shadow_vert.spv", SHADER_OUTPUT_DIR),
-    //         "-E", "main",
-    //         "-T", "vs_6_6",
-    //         "-spirv", &format!("{}/shadow_vertex.hlsl", SHADER_SRC_DIR)
-    //     ]
-    // ).output().unwrap();
-    // let out = unsafe { format!("{}\n{}\n", String::from_utf8_unchecked(out.stdout), String::from_utf8_unchecked(out.stderr)) };
-    // write!(build_log, "{}\n", out).unwrap();
-
     //Slang shader compilation
     let slang_shaders = [
         ["vertex", "model_vertex.slang", "vertex_main.spv"],
@@ -63,7 +52,6 @@ fn main() {
 
     //Copy SDL2 dlls to target directory
     let envs = ["debug", "release", "master"];
-    //let files = ["SDL2.dll", "SDL2_mixer.dll", "libmpg123-0.dll"];
     for env in envs {
         for path in std::fs::read_dir("./redist").unwrap() {
             let entry = path.unwrap().file_name();

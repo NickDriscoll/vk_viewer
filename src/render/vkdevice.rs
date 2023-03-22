@@ -703,10 +703,17 @@ impl VulkanGraphicsDevice {
                 ..Default::default()
             };
 
-            let extension_names = unsafe {[
-                CStr::from_bytes_with_nul_unchecked(b"VK_KHR_shader_non_semantic_info\0").as_ptr(),
-                ash::extensions::khr::Swapchain::name().as_ptr()
-            ]};
+            let mut extension_names = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+            for extension in vk_instance.enumerate_device_extension_properties(vk_physical_device).expect("Error enumerating device extensions") {
+                let ext_name = CStr::from_ptr(extension.extension_name.as_ptr());
+                if let Ok(name) = ext_name.to_str() {
+                    if name == "VK_KHR_portability_subset" {
+                        extension_names.push(CStr::from_bytes_with_nul_unchecked(b"VK_KHR_portability_subset\0").as_ptr());
+                    }
+                }
+                println!("{}", ext_name.to_string_lossy());
+            }
+            
             let create_info = vk::DeviceCreateInfo {
                 queue_create_info_count: 1,
                 p_queue_create_infos: [queue_create_info].as_ptr(),

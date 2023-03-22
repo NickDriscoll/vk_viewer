@@ -401,7 +401,7 @@ impl Renderer {
         );
             
         //Maintain free list for texture allocation
-        let mut global_images = FreeList::with_capacity(1024);
+        let mut global_images = FreeList::with_capacity(512);
 
         //Set up global bindless descriptor set
         let descriptor_set_layout;
