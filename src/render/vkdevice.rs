@@ -212,6 +212,7 @@ impl GPUImage {
         }
     }
 
+    //TODO: All of these from_* functions are horrific and repeat themselves a ton
     pub fn from_png_file(gpu: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, path: &str) -> Self {
         let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
         let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
@@ -703,12 +704,16 @@ impl VulkanGraphicsDevice {
                 ..Default::default()
             };
 
-            let mut extension_names = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+            let mut extension_names = vec![
+                ash::extensions::khr::Swapchain::name().as_ptr(),
+            ];
             for extension in vk_instance.enumerate_device_extension_properties(vk_physical_device).expect("Error enumerating device extensions") {
                 let ext_name = CStr::from_ptr(extension.extension_name.as_ptr());
                 if let Ok(name) = ext_name.to_str() {
                     if name == "VK_KHR_portability_subset" {
                         extension_names.push(CStr::from_bytes_with_nul_unchecked(b"VK_KHR_portability_subset\0").as_ptr());
+                    } else if name == "VK_KHR_shader_non_semantic_info" {
+                        extension_names.push(CStr::from_bytes_with_nul_unchecked(b"VK_KHR_shader_non_semantic_info\0").as_ptr());
                     }
                 }
                 println!("{}", ext_name.to_string_lossy());
