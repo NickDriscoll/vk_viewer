@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 //Alias some library names
+extern crate jpeg_decoder as jpg;
 extern crate ispc_texcomp as ispc;
 extern crate nalgebra_glm as glm;
 extern crate ozy_engine as ozy;
@@ -36,7 +37,7 @@ use std::io::{Read, Write};
 use std::mem::size_of;
 use std::path::Path;
 use std::ptr;
-use std::time::{SystemTime, Duration};
+use std::time::{SystemTime};
 
 use ozy::structs::{FrameTimer, OptionVec};
 
@@ -44,7 +45,7 @@ use input::{InputSystemOutput, InputSystem};
 use physics::{PhysicsEngine, PhysicsComponent};
 use structs::{Camera, TerrainSpec, SimulationSOA};
 use render::vkdevice::{self, msaa_samples_from_limit};
-use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, InstanceData};
+use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
 
 use crate::routines::*;
 use crate::asset::GLTFMeshData;
@@ -600,6 +601,7 @@ fn main() {
     // };
 
     //Create semaphore used to wait on swapchain image
+    //TODO: this should be a member of something
     let vk_swapchain_semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls

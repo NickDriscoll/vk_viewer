@@ -164,10 +164,6 @@ pub struct Primitive {
     pub tangent_block: GPUBufferBlock,
     pub normal_block: GPUBufferBlock,
     pub uv_block: GPUBufferBlock,
-    //pub position_offset: u32,
-    //pub tangent_offset: u32,
-    //pub normal_offset: u32,
-    //pub uv_offset: u32,
 
     pub material_idx: u32
 }
