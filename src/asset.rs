@@ -2,7 +2,7 @@ use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
 use ozy::io::{OzyMaterial, OzyPrimitive, OzyImage, UninterleavedVertexData};
 use ozy::render::PositionNormalTangentUvPrimitive;
-use std::io::BufWriter;
+use std::io::{BufWriter, BufReader};
 use std::ptr;
 use render::vkdevice::*;
 use crate::*;
@@ -51,6 +51,27 @@ pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
         }
         t => { crash_with_error_dialog(&format!("Unsupported color type: {:?}", t)); }
     }
+}
+
+pub fn decode_jpg<R: Read>(decoder: &mut jpg::Decoder<R>) -> Vec<u8> {
+    let raw_bytes = decoder.decode().expect("Unable to decode jpg");
+    let info = decoder.info().unwrap();
+    let pixel_count = info.width as usize * info.height as usize;
+    let mut bytes = vec![0xFF; pixel_count * 4];
+    match info.pixel_format {
+        jpg::PixelFormat::RGB24 => {
+            for i in 0..pixel_count {
+                let idx = 4 * i;
+                let r_idx = 3 * i;
+                bytes[idx] = raw_bytes[r_idx];
+                bytes[idx + 1] = raw_bytes[r_idx + 1];
+                bytes[idx + 2] = raw_bytes[r_idx + 2];
+            }
+        }
+        _ => { crash_with_error_dialog(&format!("Unsupported JPG color format: {:?}", info.pixel_format)) }
+    }
+
+    bytes
 }
 
 pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
@@ -368,25 +389,11 @@ pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw
     staging_buffer.free(gpu);
 }
 
-pub fn png2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> Vec<u8> {
-    //Extract metadata and decode to raw RGBA bytes
-    let decoder = png::Decoder::new(png_bytes);
-    let read_info = decoder.read_info().unwrap();
-    let info = read_info.info();
-    let width = info.width;
-    let height = info.height;
-    //let rgb_bitcount = info.bit_depth as u32;
-    let uncompressed_format = match info.srgb {
-        Some(_) => { vk::Format::R8G8B8A8_SRGB }
-        None => { vk::Format::R8G8B8A8_UNORM }
-    };
-    let bytes = decode_png(read_info);
-
-    //After decoding, upload to GPU for mipmap creation
+pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], width: u32, height: u32, format: vk::Format) -> Vec<u8> {
     let mip_levels = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).clamp(1, u32::MAX);
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
-        format: uncompressed_format,
+        format,
         extent: vk::Extent3D {
             width,
             height,
@@ -407,7 +414,7 @@ pub fn png2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> 
     unsafe {
         let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
         let sampler = gpu.create_sampler(&vk::SamplerCreateInfo::default()).unwrap();
-        let def_image = upload_image_deferred(gpu, &image_create_info, sampler, gpu_image_layout, &bytes);
+        let def_image = upload_image_deferred(gpu, &image_create_info, sampler, gpu_image_layout, &raw_bytes);
         let mut def_images = DeferredImage::synchronize(gpu, vec![def_image]);
         let finished_image_reqs = gpu.device.get_image_memory_requirements(def_images[0].final_image.image);
         let readback_buffer = GPUBuffer::allocate(gpu, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
@@ -496,6 +503,33 @@ pub fn png2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> 
     }
 }
 
+pub fn png2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, png_bytes: &[u8]) -> Vec<u8> {
+    //Extract metadata and decode to raw RGBA bytes
+    let decoder = png::Decoder::new(png_bytes);
+    let read_info = decoder.read_info().unwrap();
+    let info = read_info.info();
+    let width = info.width;
+    let height = info.height;
+    //let rgb_bitcount = info.bit_depth as u32;
+    let uncompressed_format = match info.srgb {
+        Some(_) => { vk::Format::R8G8B8A8_SRGB }
+        None => { vk::Format::R8G8B8A8_UNORM }
+    };
+    let bytes = decode_png(read_info);
+
+    raw2bc7_synchronous(gpu, &bytes, width, height, uncompressed_format)
+}
+
+pub fn jpg2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, jpg_bytes: &[u8], format: vk::Format) -> Vec<u8> {
+    let mut decoder = jpg::Decoder::new(jpg_bytes);
+    let raw_bytes = decoder.decode().unwrap();
+    let info = decoder.info().unwrap();
+    let width = info.width.into();
+    let height = info.height.into();
+
+    raw2bc7_synchronous(gpu, &raw_bytes, width, height, format)
+}
+
 #[named]
 pub fn compress_png_file_synchronous(gpu: &mut VulkanGraphicsDevice, path: &str) {
     use ozy::io::{D3D10_RESOURCE_DIMENSION, DXGI_FORMAT, compute_pitch_bc};
@@ -552,21 +586,26 @@ pub fn compress_png_file_synchronous(gpu: &mut VulkanGraphicsDevice, path: &str)
     out_file.write(&bc7_bytes).unwrap();
 }
 
-#[derive(Default)]
+
 pub struct RawImageData {
     pub color_index: Option<usize>,
     pub color_bytes: Vec<u8>,
+    pub color_imagetype: GLTFImageType,
     pub normal_index: Option<usize>,
     pub normal_bytes: Vec<u8>,
+    pub normal_imagetype: GLTFImageType,
     pub arm_index: Option<usize>,
     pub arm_bytes: Vec<u8>,
+    pub arm_imagetype: GLTFImageType,
     pub emissive_index: Option<usize>,
-    pub emissive_bytes: Vec<u8>
+    pub emissive_bytes: Vec<u8>,
+    pub emissive_imagetype: GLTFImageType
 }
 
 #[derive(Debug)]
 pub enum GLTFImageType {
-    PNG
+    PNG,
+    JPG,
 }
 
 #[derive(Debug)]
@@ -627,16 +666,19 @@ pub struct GLTFSceneData {
     pub meshes: Vec<GLTFMeshData>
 }
 
-fn image_bytes_from_source(glb: &Gltf, source: gltf::image::Source) -> Vec<u8> {
+fn image_bytes_from_source(glb: &Gltf, source: gltf::image::Source) -> (Vec<u8>, GLTFImageType) {
     let mut bytes;
+    let image_type;
     match source {
-        gltf::image::Source::View {view, mime_type} => unsafe {
-            if mime_type.ne("image/png") {
-                crash_with_error_dialog(&format!("Error loading image from glb\nUnsupported image type: {}", mime_type));
-            }
-            
+        gltf::image::Source::View {view, mime_type} => unsafe {            
             match &glb.blob {
                 Some(blob) => {
+                    image_type = match mime_type {
+                        "image/png" => { GLTFImageType::PNG }
+                        "image/jpeg" => { GLTFImageType::JPG }
+                        _ => { crash_with_error_dialog(&format!("Unsupported mime type: {}", mime_type)) }
+                    };
+                    
                     bytes = vec![0u8; view.length()];
                     let src_ptr = blob.as_ptr() as *const u8;
                     let src_ptr = src_ptr.offset(view.offset() as isize);
@@ -649,7 +691,7 @@ fn image_bytes_from_source(glb: &Gltf, source: gltf::image::Source) -> Vec<u8> {
             crash_with_error_dialog("Uri not supported");
         }
     }
-    bytes
+    (bytes, image_type)
 }
 
 fn uninterleaved_primitive_vertex_data(glb: &Gltf, prim: &gltf::Primitive) -> UninterleavedVertexData {
@@ -797,9 +839,27 @@ pub fn optimize_glb(gpu: &mut VulkanGraphicsDevice, path: &str) {
                 }
             }
 
+            fn ozy_image_from_jpg(gpu: &mut VulkanGraphicsDevice, jpg_bytes: &[u8], format: vk::Format) -> OzyImage {
+                let mut decoder = jpg::Decoder::new(jpg_bytes);
+                let bytes = decode_jpg(&mut decoder);
+                let info = decoder.info().unwrap();
+                let mipmap_count = ozy::routines::calculate_mipcount(info.width as u32, info.height as u32).saturating_sub(2).max(1);
+                let bc7_bytes = raw2bc7_synchronous(gpu, &bytes, info.width.into(), info.height.into(), format);
+
+                OzyImage {
+                    width: info.width.into(),
+                    height: info.height.into(),
+                    mipmap_count,
+                    bc7_bytes
+                }
+            }
+
             let vertex_data = uninterleaved_primitive_vertex_data(&glb, &prim);
 
             let mat = prim.material();
+            
+            println!("Mesh id: {}\nPrimitive index count: {}\nMaterial name: {:?}\n", mesh.index(), vertex_data.indices.len(), mat.name());
+
             let mat_idx = mat.index().unwrap();
             if materials[mat_idx].base_color[0] > 68.0 {
                 let pbr = mat.pbr_metallic_roughness();
@@ -812,25 +872,53 @@ pub fn optimize_glb(gpu: &mut VulkanGraphicsDevice, path: &str) {
                 if let Some(idx) = image_data.color_index {
                     color_bc7_idx = Some(idx as u32);
                     if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = ozy_image_from_png(gpu, &image_data.color_bytes);
+                        match image_data.color_imagetype {
+                            GLTFImageType::PNG => {
+                                textures[idx] = ozy_image_from_png(gpu, &image_data.color_bytes);
+                            }
+                            GLTFImageType::JPG => {
+                                textures[idx] = ozy_image_from_jpg(gpu, &image_data.color_bytes, vk::Format::R8G8B8A8_SRGB);
+                            }
+                        }
                     }
                 }
                 if let Some(idx) = image_data.normal_index {
                     normal_bc7_idx = Some(idx as u32);
                     if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = ozy_image_from_png(gpu, &image_data.normal_bytes);
+                        match image_data.normal_imagetype {
+                            GLTFImageType::PNG => {
+                                textures[idx] = ozy_image_from_png(gpu, &image_data.normal_bytes);
+                            }
+                            GLTFImageType::JPG => {
+                                textures[idx] = ozy_image_from_jpg(gpu, &image_data.normal_bytes, vk::Format::R8G8B8A8_UNORM);
+                            }
+                        }
                     }
                 }
                 if let Some(idx) = image_data.arm_index {
                     arm_bc7_idx = Some(idx as u32);
                     if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = ozy_image_from_png(gpu, &image_data.arm_bytes);
+                        match image_data.arm_imagetype {
+                            GLTFImageType::PNG => {
+                                textures[idx] = ozy_image_from_png(gpu, &image_data.arm_bytes);
+                            }
+                            GLTFImageType::JPG => {
+                                textures[idx] = ozy_image_from_jpg(gpu, &image_data.arm_bytes, vk::Format::R8G8B8A8_UNORM);
+                            }
+                        }
                     }
                 }
                 if let Some(idx) = image_data.emissive_index {
                     emissive_bc7_idx = Some(idx as u32);
                     if textures[idx].bc7_bytes.len() == 0 {
-                        textures[idx] = ozy_image_from_png(gpu, &image_data.emissive_bytes);
+                        match image_data.emissive_imagetype {
+                            GLTFImageType::PNG => {
+                                textures[idx] = ozy_image_from_png(gpu, &image_data.emissive_bytes);
+                            }
+                            GLTFImageType::JPG => {
+                                textures[idx] = ozy_image_from_jpg(gpu, &image_data.emissive_bytes, vk::Format::R8G8B8A8_UNORM);
+                            }
+                        }
                     }
                 }
 
@@ -846,8 +934,6 @@ pub fn optimize_glb(gpu: &mut VulkanGraphicsDevice, path: &str) {
                 };
                 materials[mat_idx] = ozy_mat;
             }
-
-            println!("Mesh id: {}\nPrimitive index count: {}\nMaterial name: {:?}\n", mesh.index(), vertex_data.indices.len(), mat.name());
 
             let ozy_prim = OzyPrimitive {
                 indices: vertex_data.indices,
@@ -916,40 +1002,45 @@ pub fn optimize_glb(gpu: &mut VulkanGraphicsDevice, path: &str) {
 }
 
 fn load_raw_image_data(glb: &Gltf, prim: &gltf::Primitive) -> RawImageData {
-    let mut image_data = RawImageData::default();
-
     let mat = prim.material();
     let pbr_model = mat.pbr_metallic_roughness();
-    image_data.color_index = match pbr_model.base_color_texture() {
+
+    let mut color_bytes = vec![];
+    let mut color_imagetype = GLTFImageType::PNG;
+    let color_index = match pbr_model.base_color_texture() {
         Some(t) => {
             let image = t.texture().source();
             let idx = image.index();
             let source = image.source();
-            image_data.color_bytes = image_bytes_from_source(&glb, source);
+            (color_bytes, color_imagetype) = image_bytes_from_source(&glb, source);
             Some(idx)
         }
         None => { None }
     };
 
-    image_data.normal_index = match mat.normal_texture() {
+    let mut normal_bytes = vec![];
+    let mut normal_imagetype = GLTFImageType::PNG;
+    let normal_index = match mat.normal_texture() {
         Some(t) => {
             let image = t.texture().source();
             let idx = image.index();
             let source = image.source();
-            image_data.normal_bytes = image_bytes_from_source(&glb, source);
+            (normal_bytes, normal_imagetype) = image_bytes_from_source(&glb, source);
             Some(idx)
         }
         None => { None }
     };
 
+    let mut arm_bytes = vec![];
+    let mut arm_imagetype = GLTFImageType::PNG;
     let mut metalrough_glb_index = -1;
-    image_data.arm_index = match pbr_model.metallic_roughness_texture() {
+    let arm_index = match pbr_model.metallic_roughness_texture() {
         Some(t) => {
             let image = t.texture().source();
             let idx = image.index();
             metalrough_glb_index = idx as i32;
             let source = image.source();
-            image_data.arm_bytes = image_bytes_from_source(&glb, source);
+            (arm_bytes, arm_imagetype) = image_bytes_from_source(&glb, source);
             Some(idx)
         }
         None => { None }
@@ -961,18 +1052,33 @@ fn load_raw_image_data(glb: &Gltf, prim: &gltf::Primitive) -> RawImageData {
         }
     }
 
-    image_data.emissive_index = match mat.emissive_texture() {
+    let mut emissive_bytes = vec![];
+    let mut emissive_imagetype = GLTFImageType::PNG;
+    let emissive_index = match mat.emissive_texture() {
         Some(t) => {
             let image = t.texture().source();
             let idx = image.index();
             let source = image.source();
-            image_data.emissive_bytes = image_bytes_from_source(&glb, source);
+            (emissive_bytes, emissive_imagetype) = image_bytes_from_source(&glb, source);
             Some(idx)
         }
         None => { None }
     };
 
-    image_data
+    RawImageData {
+        color_index,
+        color_bytes,
+        color_imagetype,
+        normal_index,
+        normal_bytes,
+        normal_imagetype,
+        arm_index,
+        arm_bytes,
+        arm_imagetype,
+        emissive_index,
+        emissive_bytes,
+        emissive_imagetype
+    }
 }
 
 fn load_mesh_primitives(glb: &Gltf, mesh: &Mesh, out_primitive_array: &mut Vec<GLTFPrimitive>, texture_bytes: &mut [Vec<u8>]) {
