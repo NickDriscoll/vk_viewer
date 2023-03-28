@@ -253,7 +253,13 @@ impl DevGui {
         if !self.do_camera_window || !self.do_gui { return; }
         if let Some(token) = ui.window("Camera").begin() {
             ui.slider("FOV", 0.001, glm::pi(), &mut camera.fov);
+            ui.separator();
+            ui.text("Focused camera controls");
+            imgui::Drag::new("X offset").speed(0.05).build(ui, &mut camera.focused_offset.x);
+            imgui::Drag::new("Y offset").speed(0.05).build(ui, &mut camera.focused_offset.y);
+            imgui::Drag::new("Z offset").speed(0.05).build(ui, &mut camera.focused_offset.z);
 
+            ui.separator();
             if DevGui::do_standard_button(ui, "Close") { self.do_camera_window = false; }
             token.end();
         }

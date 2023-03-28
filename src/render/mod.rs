@@ -291,7 +291,7 @@ pub struct Renderer {
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
     pub samplers_descriptor_index: u32,
-    pub frames_in_flight: [InFlightFrameData; Self::FRAMES_IN_FLIGHT],   //TODO: Static array?
+    pub frames_in_flight: [InFlightFrameData; Self::FRAMES_IN_FLIGHT],
     pub in_flight_frame: usize
 }
 
@@ -668,7 +668,6 @@ impl Renderer {
 
         let sample_count = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
         let framebuffers = Self::create_hdr_framebuffers(gpu, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images, sample_count);
-        println!("MSAA sample count: {:?}", sample_count);
         
         //Initialize per-frame rendering state
         let in_flight_frame_data = {

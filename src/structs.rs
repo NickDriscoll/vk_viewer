@@ -12,6 +12,7 @@ pub struct Camera {
     forward: glm::TVec3<f32>,
     pub lookat_dist: f32,
     pub focused_entity: Option<EntityKey>,
+    pub focused_offset: glm::TVec3<f32>,
     pub last_view_from_world: glm::TMat4<f32>
 }
 
@@ -28,6 +29,7 @@ impl Camera {
             forward: glm::vec3(0.0, 1.0, 0.0),
             lookat_dist: 7.5,
             focused_entity: None,
+            focused_offset: glm::zero(),
             last_view_from_world: glm::identity()
         }
     }
@@ -85,7 +87,7 @@ impl Camera {
 
                         let lookat_target = match physics_engine.rigid_body_set.get(prop.physics_component.rigid_body_handle) {
                             Some(body) => {
-                                body.translation()
+                                body.translation() + self.focused_offset
                             }
                             None => {
                                 crash_with_error_dialog("All entities should have a rigid body component");
