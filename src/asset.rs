@@ -854,6 +854,22 @@ pub fn optimize_glb(gpu: &mut VulkanGraphicsDevice, path: &str) {
                 }
             }
 
+            fn ozy_image_from_imagedata(gpu: &mut VulkanGraphicsDevice, idx: Option<usize>, imagetype: GLTFImageType, bytes: &[u8], bc7_idx: &mut Option<u32>, textures: &mut Vec<OzyImage>, format: vk::Format) {
+                if let Some(idx) = idx {
+                    *bc7_idx = Some(idx as u32);
+                    if textures[idx].bc7_bytes.len() == 0 {
+                        match imagetype {
+                            GLTFImageType::PNG => {
+                                textures[idx] = ozy_image_from_png(gpu, bytes);
+                            }
+                            GLTFImageType::JPG => {
+                                textures[idx] = ozy_image_from_jpg(gpu, bytes, format);
+                            }
+                        }
+                    }
+                }
+            }
+
             let vertex_data = uninterleaved_primitive_vertex_data(&glb, &prim);
 
             let mat = prim.material();
@@ -869,58 +885,11 @@ pub fn optimize_glb(gpu: &mut VulkanGraphicsDevice, path: &str) {
                 let mut normal_bc7_idx = None;
                 let mut arm_bc7_idx = None;
                 let mut emissive_bc7_idx = None;
-                if let Some(idx) = image_data.color_index {
-                    color_bc7_idx = Some(idx as u32);
-                    if textures[idx].bc7_bytes.len() == 0 {
-                        match image_data.color_imagetype {
-                            GLTFImageType::PNG => {
-                                textures[idx] = ozy_image_from_png(gpu, &image_data.color_bytes);
-                            }
-                            GLTFImageType::JPG => {
-                                textures[idx] = ozy_image_from_jpg(gpu, &image_data.color_bytes, vk::Format::R8G8B8A8_SRGB);
-                            }
-                        }
-                    }
-                }
-                if let Some(idx) = image_data.normal_index {
-                    normal_bc7_idx = Some(idx as u32);
-                    if textures[idx].bc7_bytes.len() == 0 {
-                        match image_data.normal_imagetype {
-                            GLTFImageType::PNG => {
-                                textures[idx] = ozy_image_from_png(gpu, &image_data.normal_bytes);
-                            }
-                            GLTFImageType::JPG => {
-                                textures[idx] = ozy_image_from_jpg(gpu, &image_data.normal_bytes, vk::Format::R8G8B8A8_UNORM);
-                            }
-                        }
-                    }
-                }
-                if let Some(idx) = image_data.arm_index {
-                    arm_bc7_idx = Some(idx as u32);
-                    if textures[idx].bc7_bytes.len() == 0 {
-                        match image_data.arm_imagetype {
-                            GLTFImageType::PNG => {
-                                textures[idx] = ozy_image_from_png(gpu, &image_data.arm_bytes);
-                            }
-                            GLTFImageType::JPG => {
-                                textures[idx] = ozy_image_from_jpg(gpu, &image_data.arm_bytes, vk::Format::R8G8B8A8_UNORM);
-                            }
-                        }
-                    }
-                }
-                if let Some(idx) = image_data.emissive_index {
-                    emissive_bc7_idx = Some(idx as u32);
-                    if textures[idx].bc7_bytes.len() == 0 {
-                        match image_data.emissive_imagetype {
-                            GLTFImageType::PNG => {
-                                textures[idx] = ozy_image_from_png(gpu, &image_data.emissive_bytes);
-                            }
-                            GLTFImageType::JPG => {
-                                textures[idx] = ozy_image_from_jpg(gpu, &image_data.emissive_bytes, vk::Format::R8G8B8A8_UNORM);
-                            }
-                        }
-                    }
-                }
+
+                ozy_image_from_imagedata(gpu, image_data.color_index, image_data.color_imagetype, &image_data.color_bytes, &mut color_bc7_idx, &mut textures, vk::Format::R8G8B8A8_SRGB);
+                ozy_image_from_imagedata(gpu, image_data.normal_index, image_data.normal_imagetype, &image_data.normal_bytes, &mut normal_bc7_idx, &mut textures, vk::Format::R8G8B8A8_UNORM);
+                ozy_image_from_imagedata(gpu, image_data.arm_index, image_data.arm_imagetype, &image_data.arm_bytes, &mut arm_bc7_idx, &mut textures, vk::Format::R8G8B8A8_UNORM);
+                ozy_image_from_imagedata(gpu, image_data.emissive_index, image_data.emissive_imagetype, &image_data.emissive_bytes, &mut emissive_bc7_idx, &mut textures, vk::Format::R8G8B8A8_UNORM);
 
                 let ozy_mat = OzyMaterial {
                     base_color: pbr.base_color_factor(),
