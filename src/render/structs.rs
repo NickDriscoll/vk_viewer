@@ -258,7 +258,7 @@ pub struct CascadedShadowMap {
     format: vk::Format,
     texture_index: u32,
     resolution: u32,
-    projection_depth: f32
+    pub projection_depth: f32
 }
 
 impl CascadedShadowMap {
@@ -384,9 +384,9 @@ impl CascadedShadowMap {
         };
         
         let texture_index = renderer.global_images.insert(gpu_image) as u32;
-        let projection_depth = 500.0;
+        let projection_depth = 1500.0;
 
-        let distances = [2.780, 8.338, 23.465, 79.422, 115.523, 324.909];
+        let distances = [10.0, 48.0, 94.0, 230.0, 360.0, 1000.0];    //Hand-tuned *shrug*
 
         CascadedShadowMap {
             distances,

@@ -274,6 +274,7 @@ impl DevGui {
             ui.slider("Sun yaw", 0.0, glm::two_pi::<f32>(), &mut sun.yaw);
             ui.separator();
             if let Some(shadow_map) = &mut sun.shadow_map {
+                ui.slider("Cascade depth", 0.0, 10000.0, &mut shadow_map.projection_depth);
                 for i in 0..CascadedShadowMap::CASCADE_COUNT {
                     ui.slider(format!("Cascade distance #{}", i), 0.0, 500.0, &mut shadow_map.distances[i]);
                 }

@@ -17,7 +17,8 @@ pub struct WindowManager {
     pub extent: vk::Extent2D,
     pub color_format: vk::Format,
     pub swapchain_image_views: Vec<vk::ImageView>,
-    pub swapchain_framebuffers: Vec<vk::Framebuffer>
+    pub swapchain_framebuffers: Vec<vk::Framebuffer>,
+    pub swapchain_semaphore: vk::Semaphore
 }
 
 impl WindowManager {
@@ -148,13 +149,17 @@ impl WindowManager {
             fbs
         };
 
+        //Swapchain acquire semaphore
+        let swapchain_semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
+
         WindowManager {
             surface: vk_surface,
             swapchain: vk_swapchain,
             extent: vk_swapchain_extent,
             color_format: vk_swapchain_image_format,
             swapchain_image_views: vk_swapchain_image_views,
-            swapchain_framebuffers
+            swapchain_framebuffers,
+            swapchain_semaphore
         }
     }
 }
@@ -746,6 +751,11 @@ impl Renderer {
         irradiance_image.view = unsafe { Some(gpu.device.create_image_view(&irradiance_view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()) };
         let irradiance_map_idx = global_images.insert(irradiance_image) as u32;
 
+        //Create bloom mip chain
+        {
+
+        }
+
         Renderer {
             default_color_idx,
             default_normal_idx,
@@ -1188,7 +1198,6 @@ impl Renderer {
     }
 
     pub fn upload_vertex_data(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32]) -> GPUBufferBlock {
-        self.vertex_offset = size_to_alignment!(self.vertex_offset, gpu.physical_device_properties.limits.min_storage_buffer_offset_alignment);
         self.vertex_buffer.write_subbuffer_elements(gpu, data, self.vertex_offset);
 
         let data_length = data.len().try_into().unwrap();
@@ -1198,6 +1207,7 @@ impl Renderer {
         };
         
         self.vertex_offset += data_length;
+        self.vertex_offset = size_to_alignment!(self.vertex_offset, gpu.physical_device_properties.limits.min_storage_buffer_offset_alignment);
         buffer_block
     }
 

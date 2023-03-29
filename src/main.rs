@@ -161,57 +161,6 @@ fn main() {
         gpu.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
-    let probe_pass = unsafe {
-        let depth_description = vk::AttachmentDescription {
-            format: vk::Format::R16G16B16A16_SFLOAT,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::STORE,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            ..Default::default()
-        };
-
-        let color_attachment_reference = vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-        };
-
-        // let depth_attachment_reference = vk::AttachmentReference {
-        //     attachment: 0,
-        //     layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-        // };
-
-        let subpass = vk::SubpassDescription {
-            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-            color_attachment_count: 1,
-            p_color_attachments: &color_attachment_reference,
-            //p_depth_stencil_attachment: &depth_attachment_reference,
-            ..Default::default()
-        };
-
-        //Multiview info
-        let mask = (1 << 6) - 1;
-        let multiview_info = vk::RenderPassMultiviewCreateInfo {
-            subpass_count: 1,
-            p_view_masks: &mask,
-            correlation_mask_count: 1,
-            p_correlation_masks: &mask,
-            ..Default::default()
-        };
-
-        let attachments = [depth_description];
-        let renderpass_info = vk::RenderPassCreateInfo {
-            p_next: &multiview_info as *const _ as *const c_void,
-            attachment_count: attachments.len() as u32,
-            p_attachments: attachments.as_ptr(),
-            subpass_count: 1,
-            p_subpasses: &subpass,
-            ..Default::default()
-        };
-        gpu.device.create_render_pass(&renderpass_info, vkdevice::MEMORY_ALLOCATOR).unwrap()
-    };
-
     let hdr_forward_pass = unsafe {
         let msaa_samples = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
 
@@ -368,23 +317,6 @@ fn main() {
         gpu.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
-    let compute_pipeline_layout = unsafe {
-        let push_constant_range = vk::PushConstantRange {
-            stage_flags: vk::ShaderStageFlags::COMPUTE,
-            offset: 0,
-            size: 20
-        };
-        let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
-            push_constant_range_count: 1,
-            p_push_constant_ranges: &push_constant_range,
-            set_layout_count: 1,
-            p_set_layouts: &renderer.descriptor_set_layout,
-            ..Default::default()
-        };
-     
-        gpu.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
-    };
-
     let sun_shadow_map = CascadedShadowMap::new(
         &mut gpu,
         &mut renderer,
@@ -464,17 +396,6 @@ fn main() {
             pipelines[3],
             pipelines[4]
         ]
-    };
-
-    //Create compute pipelines
-    let lum_binning_pipeline = unsafe {
-        let stage = vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/lum_binning.spv");
-        let create_info = vk::ComputePipelineCreateInfo {
-            stage,
-            layout: compute_pipeline_layout,
-            ..Default::default()
-        };
-        gpu.device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], vkdevice::MEMORY_ALLOCATOR).unwrap()[0]
     };
 
     let mut simulation_state = SimulationSOA::new();
@@ -599,10 +520,6 @@ fn main() {
     //     e.set_scale(5.0, &mut physics_engine);
     //     simulation_state.entities.insert(e)
     // };
-
-    //Create semaphore used to wait on swapchain image
-    //TODO: this should be a member of something
-    let vk_swapchain_semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
 
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(-23.5138, -0.8549, 6.1737));
@@ -949,7 +866,7 @@ fn main() {
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_framebuffer_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, vk_swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_framebuffer_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, renderer.window_manager.swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
                     
             //Does all work that needs to happen before the render passes
             let frame_info = renderer.prepare_frame(&mut gpu, window_size, &camera, timer.elapsed_time);
@@ -1115,22 +1032,6 @@ fn main() {
             
             gpu.device.cmd_end_render_pass(frame_info.main_command_buffer);
 
-            //Luminance binning compute pass
-            // gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::COMPUTE, lum_binning_pipeline);
-            // gpu.device.cmd_bind_descriptor_sets(
-            //     frame_info.main_command_buffer,
-            //     vk::PipelineBindPoint::COMPUTE,
-            //     compute_pipeline_layout,
-            //     0,
-            //     &[renderer.bindless_descriptor_set],
-            //     &[frame_info.dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
-            // );
-            // gpu.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
-
-            // let group_count_x = 1;
-            // let group_count_y = 1;
-            // gpu.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);
-
             gpu.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
 
             //Submit Shadow+HDR passes
@@ -1197,7 +1098,7 @@ fn main() {
             gpu.device.reset_fences(&[frame_info.fence]).unwrap();
             gpu.device.queue_submit(queue, &[submit_info], frame_info.fence).unwrap();
 
-            let present_semaphores = [frame_info.semaphore, vk_swapchain_semaphore];
+            let present_semaphores = [frame_info.semaphore, renderer.window_manager.swapchain_semaphore];
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
                 p_swapchains: &renderer.window_manager.swapchain,

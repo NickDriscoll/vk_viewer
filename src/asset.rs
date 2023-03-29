@@ -2,7 +2,7 @@ use gltf::{Gltf, Mesh};
 use gltf::accessor::DataType;
 use ozy::io::{OzyMaterial, OzyPrimitive, OzyImage, UninterleavedVertexData};
 use ozy::render::PositionNormalTangentUvPrimitive;
-use std::io::{BufWriter, BufReader};
+use std::io::{BufWriter};
 use std::ptr;
 use render::vkdevice::*;
 use crate::*;
