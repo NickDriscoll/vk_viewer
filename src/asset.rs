@@ -16,18 +16,23 @@ pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
 
     let info = reader.info().clone();
 
-    //We're given a depth in bits, so we set up an integer divide
     let byte_size_divisor = match info.bit_depth {
-        BitDepth::One => { 8 }
-        BitDepth::Two => { 4 }
-        BitDepth::Four => { 2 }
         BitDepth::Eight => { 1 }
-        _ => { crash_with_error_dialog("Unsupported PNG bitdepth"); }
+        _ => { crash_with_error_dialog(&format!("Unsupported PNG bitdepth\n: {:?}", info.bit_depth)); }
     };
+    
+    //We shift width*height to the left by 1, then shift right by the result of this match
+    // let byte_size_shift = match info.bit_depth {
+    //     BitDepth::One => { 4 }
+    //     BitDepth::Two => { 3 }
+    //     BitDepth::Four => { 2 }
+    //     BitDepth::Eight => { 1 }
+    //     BitDepth::Sixteen => { 0 }
+    // };
 
     let width = info.width;
     let height = info.height;
-    let pixel_count = (width * height / byte_size_divisor) as usize;
+    let pixel_count = (width * height) as usize;
     match info.color_type {
         ColorType::Rgb => {
             let mut raw_bytes = vec![0u8; 3 * pixel_count];
@@ -543,7 +548,7 @@ pub fn compress_png_file_synchronous(gpu: &mut VulkanGraphicsDevice, path: &str)
     let info = read_info.info();
     let width = info.width;
     let height = info.height;
-    let mip_levels = ozy::routines::calculate_mipcount(width, height);
+    let mip_levels = ozy::routines::calculate_mipcount(width, height).saturating_sub(2).clamp(1, u32::MAX);
     let rgb_bitcount = info.bit_depth as u32;
     let uncompressed_format = match info.srgb {
         Some(_) => { vk::Format::R8G8B8A8_SRGB }

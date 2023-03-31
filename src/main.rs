@@ -448,9 +448,12 @@ fn main() {
         "./data/textures/whispy_grass/color.png",
         "./data/textures/whispy_grass/normal.png",
         "./data/textures/whispy_grass/ao_roughness_metallic.png",
-        "./data/textures/rocky_ground/color.png",
-        "./data/textures/rocky_ground/normal.png",
-        "./data/textures/rocky_ground/ao_roughness_metallic.png"
+        "./data/textures/cliff-rockface/color.png",
+        "./data/textures/cliff-rockface/normal.png",
+        "./data/textures/cliff-rockface/ao_roughness_metallic.png"
+        // "./data/textures/rocky_ground/color.png",
+        // "./data/textures/rocky_ground/normal.png",
+        // "./data/textures/rocky_ground/ao_roughness_metallic.png"
     ];
     let mut terrain_image_indices = [None; 6];
     for i in 0..terrain_image_paths.len() {
@@ -1059,32 +1062,36 @@ fn main() {
             
             gpu.device.cmd_end_render_pass(frame_info.main_command_buffer);
 
-            let bloom_barrier = vk::ImageMemoryBarrier2 {
-                image: renderer.global_images.get_element(renderer.bloom_image_idx.try_into().unwrap()).unwrap().image,
-                old_layout: vk::ImageLayout::UNDEFINED,
-                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                src_access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-                dst_access_mask: vk::AccessFlags2::SHADER_READ,
-                src_stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                src_queue_family_index: gpu.main_queue_family_index,
-                dst_queue_family_index: gpu.main_queue_family_index,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                    base_mip_level: 1,
-                    level_count: renderer.global_images.get_element(renderer.bloom_image_idx.try_into().unwrap()).unwrap().mip_count - 1
-                },
-                ..Default::default()
-            };
-            let bloom_dependency = vk::DependencyInfo {
-                image_memory_barrier_count: 1,
-                p_image_memory_barriers: &bloom_barrier,
-                ..Default::default()
-            };
-            //gpu.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
-            gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
+            {
+                let hdr_resolve_idx = frame_info.framebuffer.color_resolve_index.try_into().unwrap();
+                let hdr_resolve_mipcount = renderer.global_images.get_element(hdr_resolve_idx).unwrap().mip_count;
+                let bloom_barrier = vk::ImageMemoryBarrier2 {
+                    image: renderer.global_images.get_element(hdr_resolve_idx).unwrap().image,
+                    old_layout: vk::ImageLayout::UNDEFINED,
+                    new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    src_access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                    dst_access_mask: vk::AccessFlags2::SHADER_READ,
+                    src_stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                    dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    src_queue_family_index: gpu.main_queue_family_index,
+                    dst_queue_family_index: gpu.main_queue_family_index,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                        base_mip_level: 1,
+                        level_count: hdr_resolve_mipcount - 1
+                    },
+                    ..Default::default()
+                };
+                let bloom_dependency = vk::DependencyInfo {
+                    image_memory_barrier_count: 1,
+                    p_image_memory_barriers: &bloom_barrier,
+                    ..Default::default()
+                };
+                gpu.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
+                //gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
+            }
 
             gpu.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
 
@@ -1127,7 +1134,7 @@ fn main() {
             gpu.device.cmd_begin_render_pass(frame_info.swapchain_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             gpu.device.cmd_bind_pipeline(frame_info.swapchain_command_buffer, vk::PipelineBindPoint::GRAPHICS, postfx_pipeline);
-            gpu.device.cmd_push_constants(frame_info.swapchain_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &frame_info.framebuffer.texture_index.to_le_bytes());
+            gpu.device.cmd_push_constants(frame_info.swapchain_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &frame_info.framebuffer.color_resolve_index.to_le_bytes());
             gpu.device.cmd_draw(frame_info.swapchain_command_buffer, 3, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands

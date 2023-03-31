@@ -173,7 +173,7 @@ pub struct FrameBuffer {
     pub color_resolve_view: vk::ImageView,
     pub depth_buffer: vk::Image,
     pub depth_buffer_view: vk::ImageView,
-    pub texture_index: u32
+    pub color_resolve_index: u32
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1014,7 +1014,7 @@ impl Renderer {
                 color_resolve_view: color_resolve_views[i],
                 depth_buffer: depth_buffer_image,
                 depth_buffer_view,
-                texture_index
+                color_resolve_index: texture_index
             };
         }
         
@@ -1228,7 +1228,7 @@ impl Renderer {
             gpu.device.destroy_framebuffer(framebuffer.framebuffer_object, vkdevice::MEMORY_ALLOCATOR);
             gpu.device.destroy_image_view(framebuffer.color_buffer_view, vkdevice::MEMORY_ALLOCATOR);
             gpu.device.destroy_image(framebuffer.color_buffer, vkdevice::MEMORY_ALLOCATOR);
-            self.global_images.remove(framebuffer.texture_index as usize);
+            self.global_images.remove(framebuffer.color_resolve_index as usize);
         }
         gpu.device.destroy_image_view(fbs[0].depth_buffer_view, vkdevice::MEMORY_ALLOCATOR);
         gpu.device.destroy_image(fbs[0].depth_buffer, vkdevice::MEMORY_ALLOCATOR);

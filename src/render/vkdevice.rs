@@ -719,7 +719,6 @@ impl VulkanGraphicsDevice {
                         extension_names.push(CStr::from_bytes_with_nul_unchecked(b"VK_KHR_shader_non_semantic_info\0").as_ptr());
                     }
                 }
-                println!("{}", ext_name.to_string_lossy());
             }
 
             let create_info = vk::DeviceCreateInfo {
