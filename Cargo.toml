@@ -26,7 +26,7 @@ opt-level = 3
 [dependencies]
 ozy_engine = { path = "../ozy_engine" }
 gltf = "1.0.0"
-gpu-allocator = "0.17.0"
+gpu-allocator = "0.22.0"
 imgui = "0.10.0"
 nalgebra-glm = "0.17.0"
 noise = "0.7.0"
@@ -41,7 +41,7 @@ bsod = "0.1.1"
 mint = "0.5.9"
 
 [dependencies.ash]
-version = "0.36.0"
+version = "0.37.2"
 features = ["linked"]
 
 [dependencies.sdl2]

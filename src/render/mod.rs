@@ -2,7 +2,7 @@
 
 use core::slice::Iter;
 use std::{convert::TryInto, ffi::c_void, hash::{Hash, Hasher}, collections::hash_map::DefaultHasher};
-use ozy::io::OzyMesh;
+use ozy::{io::OzyMesh, routines::calculate_mipcount};
 use slotmap::{SlotMap, new_key_type};
 use crate::*;
 pub use structs::*;
@@ -257,10 +257,12 @@ pub struct Renderer {
     pub default_metal_roughness_idx: u32,
     pub default_emissive_idx: u32,
     pub default_texture_idx: u32,
+    pub bloom_image_idx: u32,
 
     pub material_sampler: SamplerKey,
     pub point_sampler: SamplerKey,
     pub shadow_sampler: SamplerKey,
+    pub postfx_sampler: SamplerKey,
 
     models: InstancedSlotMap<ModelKey, Model>,
     primitives: SlotMap<PrimitiveKey, Primitive>,
@@ -568,7 +570,7 @@ impl Renderer {
         };
 
         //Create texture samplers
-        let (material_sampler, point_sampler, shadow_sampler, cubemap_sampler) = unsafe {
+        let (material_sampler, postfx_sampler, point_sampler, shadow_sampler, cubemap_sampler) = unsafe {
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::LINEAR,
                 mag_filter: vk::Filter::LINEAR,
@@ -587,6 +589,15 @@ impl Renderer {
                 ..Default::default()
             };
             let mat = gpu.create_sampler(&sampler_info).unwrap();
+
+            let sampler_info = vk::SamplerCreateInfo {
+                anisotropy_enable: vk::FALSE,
+                address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                address_mode_w: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                ..sampler_info
+            };
+            let postfx = gpu.create_sampler(&sampler_info).unwrap();
             
             let sampler_info = vk::SamplerCreateInfo {
                 min_filter: vk::Filter::NEAREST,
@@ -634,7 +645,7 @@ impl Renderer {
             };
             let cubemap = gpu.create_sampler(&sampler_info).unwrap();
 
-            (mat, font, shadow, cubemap)
+            (mat, postfx, font, shadow, cubemap)
         };
 
         let format = vk::Format::R8G8B8A8_UNORM;
@@ -752,18 +763,54 @@ impl Renderer {
         let irradiance_map_idx = global_images.insert(irradiance_image) as u32;
 
         //Create bloom mip chain
-        {
+        let bloom_image_idx = unsafe {
+            let mip_levels = calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height);
+            let create_info = vk::ImageCreateInfo {
+                image_type: vk::ImageType::TYPE_2D,
+                format: vk::Format::R16G16B16A16_SFLOAT,
+                extent: primary_framebuffer_extent,
+                mip_levels,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: &gpu.main_queue_family_index,
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                ..Default::default()
+            };
+            let mut bloom_image = GPUImage::allocate(gpu, &create_info, postfx_sampler);
+            let view_info = vk::ImageViewCreateInfo {
+                image: bloom_image.image,
+                format: vk::Format::R16G16B16A16_SFLOAT,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: vkdevice::COMPONENT_MAPPING_DEFAULT,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: mip_levels,
+                    base_array_layer: 0,
+                    layer_count: 1
+                },
+                ..Default::default()
+            };
+            let view = gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            bloom_image.view = Some(view);
 
-        }
+            global_images.insert(bloom_image) as u32
+        };
 
         Renderer {
             default_color_idx,
             default_normal_idx,
             default_metal_roughness_idx: default_metalrough_idx,
             default_emissive_idx,
+            bloom_image_idx,
             material_sampler,
             point_sampler,
             shadow_sampler,
+            postfx_sampler,
             models: InstancedSlotMap::with_key(),
             primitives: SlotMap::with_key(),
             delete_queue: Vec::new(),

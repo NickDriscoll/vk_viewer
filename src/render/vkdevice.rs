@@ -95,7 +95,8 @@ pub unsafe fn allocate_named_image_memory(gpu: &mut VulkanGraphicsDevice, image:
         name,
         requirements,
         location: MemoryLocation::GpuOnly,
-        linear: false       //We want tiled memory for images
+        linear: false,       //We want tiled memory for images
+        allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged
     }).unwrap();
 
     gpu.device.bind_image_memory(image, alloc.memory(), alloc.offset()).unwrap();
@@ -551,6 +552,7 @@ pub struct VulkanGraphicsDevice {
     pub allocator: Allocator,
     pub ext_surface: ash::extensions::khr::Surface,
     pub ext_swapchain: ash::extensions::khr::Swapchain,
+    pub ext_sync2: ash::extensions::khr::Synchronization2,
     pub main_queue_family_index: u32,
     pub command_pool: vk::CommandPool,
     pub command_buffer_indices: FreeList<u8>,
@@ -706,6 +708,7 @@ impl VulkanGraphicsDevice {
 
             let mut extension_names = vec![
                 ash::extensions::khr::Swapchain::name().as_ptr(),
+                ash::extensions::khr::Synchronization2::name().as_ptr()
             ];
             for extension in vk_instance.enumerate_device_extension_properties(vk_physical_device).expect("Error enumerating device extensions") {
                 let ext_name = CStr::from_ptr(extension.extension_name.as_ptr());
@@ -718,7 +721,7 @@ impl VulkanGraphicsDevice {
                 }
                 println!("{}", ext_name.to_string_lossy());
             }
-            
+
             let create_info = vk::DeviceCreateInfo {
                 queue_create_info_count: 1,
                 p_queue_create_infos: [queue_create_info].as_ptr(),
@@ -733,6 +736,7 @@ impl VulkanGraphicsDevice {
         };
         
         let vk_ext_swapchain = ash::extensions::khr::Swapchain::new(&vk_instance, &vk_device);
+        let vk_ext_sync2 = ash::extensions::khr::Synchronization2::new(&vk_instance, &vk_device);
 
         //Initialize gpu_allocator
         let allocator = Allocator::new(&AllocatorCreateDesc {
@@ -781,6 +785,7 @@ impl VulkanGraphicsDevice {
             allocator,
             ext_surface: vk_ext_surface,
             ext_swapchain: vk_ext_swapchain,
+            ext_sync2: vk_ext_sync2,
             main_queue_family_index: queue_family_index,
             command_pool,
             command_buffer_indices: FreeList::with_capacity(command_buffer_count),
@@ -824,7 +829,8 @@ impl GPUBuffer {
                 name: "",
                 requirements: mem_reqs,
                 location: memory_location,
-                linear: true
+                linear: true,
+                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged
             }).unwrap();
             gpu.device.bind_buffer_memory(vk_buffer, a.memory(), a.offset()).unwrap();
             a

@@ -42,7 +42,8 @@ float3 f_lambert(float3 color)
     return color / PI;
 }
 
-//Returns the outgoing radiance caused by the directional light hitting the surface
+// Returns the outgoing radiance caused by the directional light hitting the surface
+// radiance has the unit "watt per steradian per square meter"
 float3 directional_lighting(PBRSurface surface, DirectionalLight light)
 {
     float3 halfway = normalize(surface.view + light.direction);

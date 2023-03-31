@@ -317,6 +317,23 @@ fn main() {
         gpu.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
+    let compute_pipeline_layout = unsafe {
+        let range = vk::PushConstantRange {
+            stage_flags: vk::ShaderStageFlags::COMPUTE,
+            offset: 0,
+            size: 20
+        };
+        let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
+            push_constant_range_count: 1,
+            p_push_constant_ranges: &range,
+            set_layout_count: 1,
+            p_set_layouts: &renderer.descriptor_set_layout,
+            ..Default::default()
+        };
+        
+        gpu.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
+    };
+
     let sun_shadow_map = CascadedShadowMap::new(
         &mut gpu,
         &mut renderer,
@@ -396,6 +413,16 @@ fn main() {
             pipelines[3],
             pipelines[4]
         ]
+    };
+
+    //Create compute pipeline
+    let bloom_pipeline = unsafe {
+        let bloom_pipeline_info = vk::ComputePipelineCreateInfo {
+            stage: vkdevice::load_shader_stage(&gpu.device, vk::ShaderStageFlags::COMPUTE, "./data/shaders/bloom.spv"),
+            layout: compute_pipeline_layout,
+            ..Default::default()
+        };
+        gpu.device.create_compute_pipelines(vk::PipelineCache::default(), &[bloom_pipeline_info], vkdevice::MEMORY_ALLOCATOR).unwrap()[0]
     };
 
     let mut simulation_state = SimulationSOA::new();
@@ -1032,6 +1059,33 @@ fn main() {
             
             gpu.device.cmd_end_render_pass(frame_info.main_command_buffer);
 
+            let bloom_barrier = vk::ImageMemoryBarrier2 {
+                image: renderer.global_images.get_element(renderer.bloom_image_idx.try_into().unwrap()).unwrap().image,
+                old_layout: vk::ImageLayout::UNDEFINED,
+                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                src_access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags2::SHADER_READ,
+                src_stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                src_queue_family_index: gpu.main_queue_family_index,
+                dst_queue_family_index: gpu.main_queue_family_index,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                    base_mip_level: 1,
+                    level_count: renderer.global_images.get_element(renderer.bloom_image_idx.try_into().unwrap()).unwrap().mip_count - 1
+                },
+                ..Default::default()
+            };
+            let bloom_dependency = vk::DependencyInfo {
+                image_memory_barrier_count: 1,
+                p_image_memory_barriers: &bloom_barrier,
+                ..Default::default()
+            };
+            //gpu.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
+            gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
+
             gpu.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
 
             //Submit Shadow+HDR passes
@@ -1045,7 +1099,7 @@ fn main() {
             let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
             gpu.device.queue_submit(queue, &[submit_info], vk::Fence::default()).unwrap();
 
-            //PostFX pass
+            //Swapchain output
             gpu.device.begin_command_buffer(frame_info.swapchain_command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
 
             //Bindless descriptor setup for the swapchain command buffer
