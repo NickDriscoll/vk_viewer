@@ -185,7 +185,8 @@ pub struct InFlightFrameData {
     pub framebuffer: FrameBuffer,
     pub instance_data_start_offset: u64,
     pub instance_data_size: u64,
-    pub dynamic_uniform_offset: u64
+    pub dynamic_uniform_offset: u64,
+    pub bloom_buffer_idx: u32
 }
 
 pub struct InstancedSlotMap<K: slotmap::Key, V: UniqueID> {
@@ -257,7 +258,6 @@ pub struct Renderer {
     pub default_metal_roughness_idx: u32,
     pub default_emissive_idx: u32,
     pub default_texture_idx: u32,
-    pub bloom_image_idx: u32,
 
     pub material_sampler: SamplerKey,
     pub point_sampler: SamplerKey,
@@ -298,6 +298,7 @@ pub struct Renderer {
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub bindless_descriptor_set: vk::DescriptorSet,
     pub samplers_descriptor_index: u32,
+    pub storage_images_descriptor_index: u32,
     pub frames_in_flight: [InFlightFrameData; Self::FRAMES_IN_FLIGHT],
     pub in_flight_frame: usize
 }
@@ -413,6 +414,7 @@ impl Renderer {
         //Set up global bindless descriptor set
         let descriptor_set_layout;
         let samplers_descriptor_index;
+        let storage_images_descriptor_index;
         let bindless_descriptor_set = unsafe {
             struct BufferDescriptorDesc {
                 ty: vk::DescriptorType,
@@ -495,12 +497,12 @@ impl Renderer {
                 pool_sizes.push(pool_size);
             }
 
-            //Add global texture descriptor
+            //Add global texture descriptors
             let binding = vk::DescriptorSetLayoutBinding {
                 binding: buffer_descriptor_descs.len() as u32,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: global_images.size() as u32,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::COMPUTE,
                 ..Default::default()
             };
             bindings.push(binding);
@@ -511,6 +513,23 @@ impl Renderer {
             pool_sizes.push(pool_size);
 
             samplers_descriptor_index = pool_sizes.len() as u32 - 1;
+
+            //Add global storage image descriptors
+            let binding = vk::DescriptorSetLayoutBinding {
+                binding: buffer_descriptor_descs.len() as u32 + 1,
+                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: global_images.size() as u32,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::COMPUTE,
+                ..Default::default()
+            };
+            bindings.push(binding);
+            let pool_size = vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: global_images.size() as u32
+            };
+            pool_sizes.push(pool_size);
+
+            storage_images_descriptor_index = pool_sizes.len() as u32 - 1;
 
             let total_set_count = 1;
             let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
@@ -524,6 +543,7 @@ impl Renderer {
 
             let mut flag_list = vec![vk::DescriptorBindingFlags::default(); bindings.len()];
             flag_list[samplers_descriptor_index as usize] = vk::DescriptorBindingFlags::PARTIALLY_BOUND;
+            flag_list[storage_images_descriptor_index as usize] = vk::DescriptorBindingFlags::PARTIALLY_BOUND;
             
             let binding_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT {
                 binding_count: flag_list.len() as u32,
@@ -706,6 +726,47 @@ impl Renderer {
                     let fence = unsafe { gpu.device.create_fence(&create_info, vkdevice::MEMORY_ALLOCATOR).unwrap() };
                     let semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
                     
+                    //Create bloom mip chain
+                    let bloom_buffer_idx = unsafe {
+                        let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
+                        let mip_levels = calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height);
+                        let create_info = vk::ImageCreateInfo {
+                            image_type: vk::ImageType::TYPE_2D,
+                            format: bloom_format,
+                            extent: primary_framebuffer_extent,
+                            mip_levels,
+                            array_layers: 1,
+                            samples: vk::SampleCountFlags::TYPE_1,
+                            tiling: vk::ImageTiling::OPTIMAL,
+                            sharing_mode: vk::SharingMode::EXCLUSIVE,
+                            queue_family_index_count: 1,
+                            p_queue_family_indices: &gpu.main_queue_family_index,
+                            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
+                            initial_layout: vk::ImageLayout::UNDEFINED,
+                            ..Default::default()
+                        };
+                        let mut bloom_image = GPUImage::allocate(gpu, &create_info, postfx_sampler);
+                        let view_info = vk::ImageViewCreateInfo {
+                            image: bloom_image.image,
+                            format: bloom_format,
+                            view_type: vk::ImageViewType::TYPE_2D,
+                            components: vkdevice::COMPONENT_MAPPING_DEFAULT,
+                            subresource_range: vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: mip_levels,
+                                base_array_layer: 0,
+                                layer_count: 1
+                            },
+                            ..Default::default()
+                        };
+                        let view = gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+                        bloom_image.view = Some(view);
+                        bloom_image.layout = vk::ImageLayout::GENERAL;
+            
+                        global_images.insert(bloom_image) as u32
+                    };
+                    
                     let data = InFlightFrameData {
                         main_command_buffer: command_buffers[2 * i],
                         swapchain_command_buffer: command_buffers[2 * i + 1],
@@ -714,7 +775,8 @@ impl Renderer {
                         framebuffer: framebuffers[i],
                         instance_data_start_offset: 0,
                         instance_data_size: 0,
-                        dynamic_uniform_offset: 0
+                        dynamic_uniform_offset: 0,
+                        bloom_buffer_idx
                     };
                     c_buffer_datas[i] = data;
                 }
@@ -762,51 +824,11 @@ impl Renderer {
         irradiance_image.view = unsafe { Some(gpu.device.create_image_view(&irradiance_view_info, vkdevice::MEMORY_ALLOCATOR).unwrap()) };
         let irradiance_map_idx = global_images.insert(irradiance_image) as u32;
 
-        //Create bloom mip chain
-        let bloom_image_idx = unsafe {
-            let mip_levels = calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height);
-            let create_info = vk::ImageCreateInfo {
-                image_type: vk::ImageType::TYPE_2D,
-                format: vk::Format::R16G16B16A16_SFLOAT,
-                extent: primary_framebuffer_extent,
-                mip_levels,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 1,
-                p_queue_family_indices: &gpu.main_queue_family_index,
-                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                ..Default::default()
-            };
-            let mut bloom_image = GPUImage::allocate(gpu, &create_info, postfx_sampler);
-            let view_info = vk::ImageViewCreateInfo {
-                image: bloom_image.image,
-                format: vk::Format::R16G16B16A16_SFLOAT,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: vkdevice::COMPONENT_MAPPING_DEFAULT,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: mip_levels,
-                    base_array_layer: 0,
-                    layer_count: 1
-                },
-                ..Default::default()
-            };
-            let view = gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-            bloom_image.view = Some(view);
-
-            global_images.insert(bloom_image) as u32
-        };
-
         Renderer {
             default_color_idx,
             default_normal_idx,
             default_metal_roughness_idx: default_metalrough_idx,
             default_emissive_idx,
-            bloom_image_idx,
             material_sampler,
             point_sampler,
             shadow_sampler,
@@ -832,6 +854,7 @@ impl Renderer {
             material_buffer,
             compute_buffer,
             samplers_descriptor_index,
+            storage_images_descriptor_index,
             directional_lights: SlotMap::with_key(),
             irradiance_map_idx,
             frames_in_flight: in_flight_frame_data,
@@ -1001,6 +1024,7 @@ impl Renderer {
                 mip_count: 1,
                 format: hdr_color_format,
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
                 sampler,
                 allocation: primary_color_allocation
             };
@@ -1211,7 +1235,7 @@ impl Renderer {
         self.directional_lights.remove(key)
     }
 
-    fn next_frame(&mut self, gpu: &mut VulkanGraphicsDevice) -> InFlightFrameData {//Compute dynamic uniform buffer offset
+    fn next_frame(&mut self, gpu: &mut VulkanGraphicsDevice) -> InFlightFrameData {
         let mut cb = self.frames_in_flight[self.in_flight_frame];
         cb.dynamic_uniform_offset = self.in_flight_frame as u64 * size_to_alignment!(size_of::<render::EnvironmentUniforms>() as u64, gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment);
         unsafe {
@@ -1222,6 +1246,7 @@ impl Renderer {
         cb
     }
 
+    //TODO: The Vulkan objects are destroyed but the associated allocation are not freed in this function
     pub unsafe fn resize_hdr_framebuffers(&mut self, gpu: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
         let fbs = self.framebuffers();
         for framebuffer in &fbs {
@@ -1236,7 +1261,50 @@ impl Renderer {
         let sample_count = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
         let framebuffers = Self::create_hdr_framebuffers(gpu, extent, hdr_render_pass, self.material_sampler, &mut self.global_images, sample_count);
         for i in 0..self.frames_in_flight.len() {
-            self.frames_in_flight[i].framebuffer = framebuffers[i];
+            let frame = &mut self.frames_in_flight[i];
+            frame.framebuffer = framebuffers[i];
+
+            //Recreate bloom buffer
+            self.global_images.remove(frame.bloom_buffer_idx as usize);
+            let bloom_buffer_idx = unsafe {
+                let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
+                let mip_levels = calculate_mipcount(extent.width, extent.height);
+                let create_info = vk::ImageCreateInfo {
+                    image_type: vk::ImageType::TYPE_2D,
+                    format: bloom_format,
+                    extent,
+                    mip_levels,
+                    array_layers: 1,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    tiling: vk::ImageTiling::OPTIMAL,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    queue_family_index_count: 1,
+                    p_queue_family_indices: &gpu.main_queue_family_index,
+                    usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
+                    initial_layout: vk::ImageLayout::UNDEFINED,
+                    ..Default::default()
+                };
+                let mut bloom_image = GPUImage::allocate(gpu, &create_info, self.postfx_sampler);
+                let view_info = vk::ImageViewCreateInfo {
+                    image: bloom_image.image,
+                    format: bloom_format,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    components: vkdevice::COMPONENT_MAPPING_DEFAULT,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: mip_levels,
+                        base_array_layer: 0,
+                        layer_count: 1
+                    },
+                    ..Default::default()
+                };
+                let view = gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+                bloom_image.view = Some(view);
+    
+                self.global_images.insert(bloom_image) as u32
+            };
+            frame.bloom_buffer_idx = bloom_buffer_idx;
         }
     }
 
@@ -1446,13 +1514,20 @@ impl Renderer {
         //Update bindless texture sampler descriptors
         if self.global_images.was_updated() {
             let default_texture = &self.global_images[self.default_texture_idx as usize].as_ref().unwrap();
-            let default_descriptor_info = vk::DescriptorImageInfo {
+            let default_sampler_descriptor = vk::DescriptorImageInfo {
+                sampler: default_texture.sampler,
+                image_view: default_texture.view.unwrap(),
+                image_layout: default_texture.layout
+            };
+            let default_texture = &self.global_images[self.frames_in_flight[0].bloom_buffer_idx as usize].as_ref().unwrap();
+            let default_storage_descriptor = vk::DescriptorImageInfo {
                 sampler: default_texture.sampler,
                 image_view: default_texture.view.unwrap(),
                 image_layout: default_texture.layout
             };
 
-            let mut image_infos = vec![default_descriptor_info; self.global_images.size() as usize];
+            let mut image_infos = vec![default_sampler_descriptor; self.global_images.size() as usize];
+            let mut storage_image_infos = vec![default_storage_descriptor; self.global_images.size() as usize];
             for i in 0..self.global_images.len() {
                 match &self.global_images[i] {
                     Some(image) => {
@@ -1462,10 +1537,12 @@ impl Renderer {
                             image_layout: image.layout
                         };
                         image_infos[i] = descriptor_info;
+
+                        if image.usage.contains(vk::ImageUsageFlags::STORAGE) {
+                            storage_image_infos[i] = descriptor_info;
+                        }
                     }
-                    None => {
-                        image_infos[i] = default_descriptor_info;
-                    }
+                    None => {}
                 }
             }
 
@@ -1478,7 +1555,16 @@ impl Renderer {
                 dst_binding: self.samplers_descriptor_index,
                 ..Default::default()
             };
-            unsafe { gpu.device.update_descriptor_sets(&[sampler_write], &[]); }
+            let storage_image_write = vk::WriteDescriptorSet {
+                dst_set: self.bindless_descriptor_set,
+                descriptor_count: self.global_images.size() as u32,
+                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                p_image_info: storage_image_infos.as_ptr(),
+                dst_array_element: 0,
+                dst_binding: self.storage_images_descriptor_index,
+                ..Default::default()
+            };
+            unsafe { gpu.device.update_descriptor_sets(&[sampler_write, storage_image_write], &[]); }
         }
 
         //Update bindless material definitions

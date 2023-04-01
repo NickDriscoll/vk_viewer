@@ -97,6 +97,7 @@ pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create
         mip_count: image_create_info.mip_levels,
         format: image_create_info.format,
         layout,
+        usage: image_create_info.usage,
         sampler,
         allocation
     };

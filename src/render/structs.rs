@@ -379,6 +379,7 @@ impl CascadedShadowMap {
             mip_count: 1,
             format,
             layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
             sampler,
             allocation
         };

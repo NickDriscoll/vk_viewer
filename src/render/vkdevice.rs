@@ -142,6 +142,7 @@ pub unsafe fn upload_raw_image(gpu: &mut VulkanGraphicsDevice, sampler_key: Samp
         mip_count: 1,
         format,
         layout,
+        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
         sampler,
         allocation
     };
@@ -175,6 +176,7 @@ pub struct GPUImage {
     pub mip_count: u32,
     pub format: vk::Format,
     pub layout: vk::ImageLayout,
+    pub usage: vk::ImageUsageFlags,
     pub sampler: vk::Sampler,
     pub allocation: Allocation
 }
@@ -186,6 +188,7 @@ impl GPUImage {
             let allocation = allocate_image_memory(gpu, image);
             let width = create_info.extent.width;
             let height = create_info.extent.height;
+            let usage = create_info.usage;
             let mip_count = ozy::routines::calculate_mipcount(width, height);
             let sampler = gpu.get_sampler(sampler_key).unwrap();
 
@@ -197,6 +200,7 @@ impl GPUImage {
                 mip_count,
                 format: create_info.format,
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                usage,
                 sampler,
                 allocation
             }
@@ -351,6 +355,7 @@ impl GPUImage {
                 height,
                 mip_count: mip_levels,
                 format,
+                usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 sampler,
                 allocation
@@ -410,6 +415,7 @@ impl GPUImage {
                 mip_count: mipmap_count,
                 format,
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
                 sampler,
                 allocation
             };
