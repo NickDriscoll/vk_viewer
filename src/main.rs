@@ -642,7 +642,7 @@ fn main() {
         //Handle needing to resize the window
         unsafe {
             if user_input.resize_window {
-                //Window resizing requires us to "flush the pipeline" as it were. wahh
+                //Window resizing requires us to "flush the pipeline"
                 gpu.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
@@ -653,6 +653,9 @@ fn main() {
                     gpu.device.destroy_image_view(view, vkdevice::MEMORY_ALLOCATOR);
                 }
                 gpu.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain, vkdevice::MEMORY_ALLOCATOR);
+
+                gpu.ext_surface.destroy_surface(renderer.window_manager.surface, vkdevice::MEMORY_ALLOCATOR);
+                gpu.device.destroy_semaphore(renderer.window_manager.swapchain_semaphore, vkdevice::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
                 renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass);

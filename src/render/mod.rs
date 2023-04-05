@@ -1259,13 +1259,16 @@ impl Renderer {
     //TODO: The Vulkan objects are destroyed but the associated allocations are not freed in this function
     pub unsafe fn resize_hdr_framebuffers(&mut self, gpu: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
         for i in 0..self.frames_in_flight.len() {
-            let framebuffer = &self.frames_in_flight[i].framebuffer;
+            let frame_in_flight = &self.frames_in_flight[i];
+            let framebuffer = frame_in_flight.framebuffer;
             gpu.device.destroy_framebuffer(framebuffer.framebuffer_object, vkdevice::MEMORY_ALLOCATOR);
 
             let color_buffer = self.global_images.remove(framebuffer.color_buffer_index as usize).unwrap();
             let resolve_buffer = self.global_images.remove(framebuffer.color_resolve_index as usize).unwrap();
+            let bloom_buffer = self.global_images.remove(frame_in_flight.bloom_buffer_idx as usize).unwrap();
             color_buffer.free(gpu);
             resolve_buffer.free(gpu);
+            bloom_buffer.free(gpu);
 
             if i == 0 {
                 let depth_buffer = self.global_images.remove(framebuffer.depth_buffer_index as usize).unwrap();
@@ -1281,7 +1284,6 @@ impl Renderer {
             frame.framebuffer = fb_drainer.next().unwrap();
 
             //Recreate bloom buffer
-            self.global_images.remove(frame.bloom_buffer_idx as usize);
             let bloom_buffer_idx = unsafe {
                 let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
                 let mip_levels = calculate_mipcount(extent.width, extent.height);
