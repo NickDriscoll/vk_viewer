@@ -251,7 +251,7 @@ float4 fragment_main(AtmosphereVertexOutput input) : SV_Target0 {
         };
         sky_sample = gather_atmosphere_irradiance(ray, sun.direction.xyz, sun.irradiance.rgb);
     } else {
-        sky_sample = sample_fake_sky(
+        sky_sample = sun.irradiance.rgb * sample_fake_sky(
             sun.direction.xyz,
             view_direction,
             global_textures[uniforms.sunzenith_idx],

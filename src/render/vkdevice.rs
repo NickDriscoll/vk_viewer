@@ -123,7 +123,7 @@ pub unsafe fn upload_raw_image(gpu: &mut VulkanGraphicsDevice, sampler_key: Samp
         array_layers: 1,
         samples: vk::SampleCountFlags::TYPE_1,
         tiling: vk::ImageTiling::OPTIMAL,
-        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         queue_family_index_count: 1,
         p_queue_family_indices: &gpu.main_queue_family_index,

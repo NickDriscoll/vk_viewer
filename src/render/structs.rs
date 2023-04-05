@@ -266,7 +266,6 @@ impl CascadedShadowMap {
     pub const SHADOW_DISTANCE_COUNT: usize = (CascadedShadowMap::CASCADE_COUNT + 1) + (4 - ((CascadedShadowMap::CASCADE_COUNT + 1) % 4));
 
     pub fn view_distances(&self, camera: &Camera) -> [f32; Self::SHADOW_DISTANCE_COUNT] {
-        //Manually picking the cascade distances because math is hard
         //The shadow cascade distances are negative bc they are in view space
         let mut view_distances = [0.0; Self::SHADOW_DISTANCE_COUNT];
         view_distances[0] = -(camera.near_distance);
