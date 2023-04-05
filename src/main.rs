@@ -1139,10 +1139,10 @@ fn main() {
                     //gpu.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
                     gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
 
-                    let group_count_x = window_size.x / THREADS_X + 1;
-                    let group_count_y = window_size.y / THREADS_Y + 1;
+                    let group_count_x = (window_size.x >> (i + 1)) / THREADS_X + 1;
+                    let group_count_y = (window_size.y >> (i + 1)) / THREADS_Y + 1;
 
-                    let out_idx_corrected = output_idx * Renderer::MAX_STORAGE_MIP_COUNT + i as usize;
+                    let out_idx_corrected = output_idx * Renderer::MAX_STORAGE_MIP_COUNT + i as usize + 1;
                     let constants = [
                         input_idx as u32,
                         out_idx_corrected as u32,

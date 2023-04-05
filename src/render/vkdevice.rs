@@ -654,7 +654,7 @@ impl VulkanGraphicsDevice {
                     let props = vk_instance.get_physical_device_properties(*device);
                     if props.device_type == d_type {
                         let name = CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap();
-                        println!("\"{}\" was chosen as 3D accelerator.", name);
+                        println!("\"{}\" was chosen as primary GPU.", name);
                         phys_device = Some(*device);
                         break 'gpu_search;
                     }

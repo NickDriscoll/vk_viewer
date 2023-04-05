@@ -1256,7 +1256,6 @@ impl Renderer {
         cb
     }
 
-    //TODO: The Vulkan objects are destroyed but the associated allocations are not freed in this function
     pub unsafe fn resize_hdr_framebuffers(&mut self, gpu: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass) {
         for i in 0..self.frames_in_flight.len() {
             let frame_in_flight = &self.frames_in_flight[i];

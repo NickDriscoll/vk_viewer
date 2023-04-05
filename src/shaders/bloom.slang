@@ -18,11 +18,12 @@ void compute_main(uint3 thread_id: SV_DispatchThreadID, uint local_id: SV_GroupT
     Sampler2D input = global_textures[input_idx];
     RWTexture2D output = rw_images[output_idx];
 
-    float2 input_dimensions;
-    float mips;
-    input.GetDimensions(mip_level, input_dimensions.x, input_dimensions.y, mips);
+    float2 input_dimensions = float2(1.0);
+    float in_mips;
+    input.GetDimensions(mip_level, input_dimensions.x, input_dimensions.y, in_mips);
+    float2 output_dimensions = input_dimensions / 2.0;
     float2 texel_size = 1.0 / input_dimensions;
-    float2 sample_point = (thread_id.xy + 0.5) * texel_size;
+    float2 sample_point = (thread_id.xy * (input_dimensions / output_dimensions) + 0.5) * texel_size;
 
     output[thread_id.xy] = input.SampleLevel(sample_point, (float)mip_level) * float4(1.0, 0.5, 0.25, 1.0);
 }
