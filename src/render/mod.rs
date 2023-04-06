@@ -305,6 +305,7 @@ impl Renderer {
     pub const FRAMES_IN_FLIGHT: usize = 2;
     pub const GLOBAL_IMAGE_SLOTS: usize = 1024;
     pub const MAX_STORAGE_MIP_COUNT: usize = 14;
+    pub const MAX_BLOOM_MIPS: u32 = 7;
 
     pub fn current_in_flight_frame(&self) -> usize { self.in_flight_frame }
 
@@ -496,8 +497,7 @@ impl Renderer {
         let mut framebuffers = Self::create_hdr_framebuffers(gpu, primary_framebuffer_extent, hdr_render_pass, postfx_sampler, &mut global_images, sample_count);
         
         //Initialize per-frame rendering state
-        const MAX_BLOOM_MIPS: u32 = 7;
-        let bloom_mip_levels = u32::min(calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height), MAX_BLOOM_MIPS);
+        let bloom_mip_levels = u32::min(calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height), Self::MAX_BLOOM_MIPS);
         let in_flight_frame_data = {
             //Data for each in-flight frame
             let command_buffers = {
@@ -597,7 +597,7 @@ impl Renderer {
             let buffer_descriptor_descs = [
                 BufferDescriptorDesc {
                     ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                    stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::COMPUTE,
                     count: 1,
                     buffer: uniform_buffer.buffer(),
                     offset: 0,
@@ -770,6 +770,7 @@ impl Renderer {
 
         let mut uniforms = EnvironmentUniforms::default();
         uniforms.real_sky = 1.0;
+        uniforms.bloom_strength = 0.1;
 
         //Load environment textures
         {
@@ -917,7 +918,7 @@ impl Renderer {
                 mip_levels: 1,
                 array_layers: 1,
                 samples: sample_count,
-                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
             };
@@ -960,7 +961,7 @@ impl Renderer {
                     mip_levels: 1,
                     array_layers: 1,
                     samples: sample_count,
-                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
                     sharing_mode: vk::SharingMode::EXCLUSIVE,
                     ..Default::default()
                 };
@@ -1286,7 +1287,7 @@ impl Renderer {
             //Recreate bloom buffer
             let bloom_buffer_idx = unsafe {
                 let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
-                let mip_levels = calculate_mipcount(extent.width, extent.height);
+                let mip_levels = u32::min(calculate_mipcount(extent.width, extent.height), Self::MAX_BLOOM_MIPS);
                 let create_info = vk::ImageCreateInfo {
                     image_type: vk::ImageType::TYPE_2D,
                     format: bloom_format,

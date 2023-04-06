@@ -1,4 +1,5 @@
 import structs;
+import bindings.frame_uniforms;
 import bindings.global_textures;
 
 [[vk::push_constant]]
@@ -94,7 +95,8 @@ void upsample(uint3 thread_id) {
 
     // The filter kernel is applied with a radius, specified in texture
     // coordinates, so that the radius will vary across mip resolutions.
-    static const float filter_radius = 0.01;
+    // static const float filter_radius = 0.01;
+    float filter_radius = texel_size.x * 2.0;
     float x = filter_radius;
     float y = filter_radius;
 
@@ -126,6 +128,7 @@ void upsample(uint3 thread_id) {
     upsample += (b + d + f + h) * 2.0;
     upsample += (a + c + g + i);
     upsample /= 16.0;
+    upsample = max(upsample, 0.0001);
 
     output[thread_id.xy] = float4(upsample, 1.0);
 }

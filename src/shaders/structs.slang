@@ -78,7 +78,7 @@ struct FrameUniforms {
     float exposure;
     float ambient_factor;
     bool real_sky;
-    uint pad0;
+    float bloom_strength;
 }
 
 struct Camera {

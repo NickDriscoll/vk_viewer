@@ -753,6 +753,7 @@ fn main() {
                 imgui_ui.slider("Stars exposure", 0.0, 5000.0, &mut renderer.uniform_data.stars_exposure);
                 imgui_ui.slider("Fog factor", 0.0, 8.0, &mut renderer.uniform_data.fog_density);
                 imgui_ui.slider_config("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.exposure);
+                imgui_ui.slider_config("Bloom strength", 0.0, 1.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.bloom_strength);
                 imgui_ui.slider("Timescale factor", 0.001, 8.0, &mut simulation_state.timescale);
     
                 if imgui_ui.slider("Music volume", 0, 128, &mut music_volume) { Music::set_volume(music_volume); }
@@ -1065,7 +1066,7 @@ fn main() {
             
             gpu.device.cmd_end_render_pass(frame_info.main_command_buffer);
 
-            //Record bloom 
+            //Record bloom commands
             {
                 const THREADS_X: u32 = 16;
                 const THREADS_Y: u32 = 16;
@@ -1156,6 +1157,11 @@ fn main() {
                 //Upsampling
                 for i in 0..bloom_chain_mipcount-1 {
                     let current_mip = bloom_chain_mipcount - 1 - i;
+                    let write_old_layout = if current_mip == 1 {
+                        vk::ImageLayout::UNDEFINED
+                    } else {
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                    };
 
                     let bloom_barriers = [
                         vk::ImageMemoryBarrier2 {
@@ -1179,9 +1185,9 @@ fn main() {
                         },
                         vk::ImageMemoryBarrier2 {
                             image: renderer.global_images.get_element(bloom_chain_idx).unwrap().image,
-                            old_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            old_layout: write_old_layout,
                             new_layout: vk::ImageLayout::GENERAL,
-                            src_access_mask: vk::AccessFlags2::SHADER_WRITE,
+                            src_access_mask: vk::AccessFlags2::SHADER_READ,
                             dst_access_mask: vk::AccessFlags2::SHADER_WRITE,
                             src_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
                             dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -1220,7 +1226,32 @@ fn main() {
                 }
 
                 //Finally, a barrier on the top mip of the bloom chain
-                
+                let final_bloom_barrier = vk::ImageMemoryBarrier2 {
+                    image: renderer.global_images.get_element(bloom_chain_idx).unwrap().image,
+                    old_layout: vk::ImageLayout::GENERAL,
+                    new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    src_access_mask: vk::AccessFlags2::SHADER_WRITE,
+                    dst_access_mask: vk::AccessFlags2::SHADER_READ,
+                    src_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    dst_stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                    src_queue_family_index: gpu.main_queue_family_index,
+                    dst_queue_family_index: gpu.main_queue_family_index,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                        base_mip_level: 0,
+                        level_count: 1
+                    },
+                    ..Default::default()
+
+                };
+                let dep = vk::DependencyInfo {
+                    image_memory_barrier_count: 1,
+                    p_image_memory_barriers: &final_bloom_barrier,
+                    ..Default::default()
+                };
+                gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &dep);
             }
 
             gpu.device.end_command_buffer(frame_info.main_command_buffer).unwrap();
@@ -1264,7 +1295,12 @@ fn main() {
             gpu.device.cmd_begin_render_pass(frame_info.swapchain_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
 
             gpu.device.cmd_bind_pipeline(frame_info.swapchain_command_buffer, vk::PipelineBindPoint::GRAPHICS, postfx_pipeline);
-            gpu.device.cmd_push_constants(frame_info.swapchain_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &frame_info.framebuffer.color_resolve_index.to_le_bytes());
+
+            let postfx_constants = [
+                frame_info.framebuffer.color_resolve_index,
+                frame_info.bloom_buffer_idx
+            ];
+            gpu.device.cmd_push_constants(frame_info.swapchain_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, slice_to_bytes(&postfx_constants));
             gpu.device.cmd_draw(frame_info.swapchain_command_buffer, 3, 1, 0, 0);
 
             //Record Dear ImGUI drawing commands
