@@ -493,7 +493,7 @@ impl Renderer {
         };
 
         let sample_count = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
-        let mut framebuffers = Self::create_hdr_framebuffers(gpu, primary_framebuffer_extent, hdr_render_pass, material_sampler, &mut global_images, sample_count);
+        let mut framebuffers = Self::create_hdr_framebuffers(gpu, primary_framebuffer_extent, hdr_render_pass, postfx_sampler, &mut global_images, sample_count);
         
         //Initialize per-frame rendering state
         let bloom_mip_levels = calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height);
@@ -1276,7 +1276,7 @@ impl Renderer {
         }
 
         let sample_count = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
-        let mut framebuffers = Self::create_hdr_framebuffers(gpu, extent, hdr_render_pass, self.material_sampler, &mut self.global_images, sample_count);
+        let mut framebuffers = Self::create_hdr_framebuffers(gpu, extent, hdr_render_pass, self.postfx_sampler, &mut self.global_images, sample_count);
         let mut fb_drainer = framebuffers.drain(0..framebuffers.len());
         for i in 0..self.frames_in_flight.len() {
             let frame = &mut self.frames_in_flight[i];
