@@ -321,7 +321,7 @@ fn main() {
         let range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::COMPUTE,
             offset: 0,
-            size: 12
+            size: 20
         };
         let pipeline_layout_createinfo = vk::PipelineLayoutCreateInfo {
             push_constant_range_count: 1,
@@ -1146,40 +1146,81 @@ fn main() {
                     let constants = [
                         input_idx as u32,
                         out_idx_corrected as u32,
-                        i
+                        i,
+                        0
                     ];
                     gpu.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, slice_to_bytes(&constants));
                     gpu.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);
-
-                    // let bloom_barrier = [
-                    //     vk::ImageMemoryBarrier2 {
-                    //         image: renderer.global_images.get_element(frame_info.bloom_buffer_idx.try_into().unwrap()).unwrap().image,
-                    //         old_layout: vk::ImageLayout::GENERAL,
-                    //         new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    //         src_access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE | vk::AccessFlags2::SHADER_WRITE,
-                    //         dst_access_mask: vk::AccessFlags2::SHADER_READ,
-                    //         src_stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    //         dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    //         src_queue_family_index: gpu.main_queue_family_index,
-                    //         dst_queue_family_index: gpu.main_queue_family_index,
-                    //         subresource_range: vk::ImageSubresourceRange {
-                    //             aspect_mask: vk::ImageAspectFlags::COLOR,
-                    //             base_array_layer: 0,
-                    //             layer_count: 1,
-                    //             base_mip_level: 0,
-                    //             level_count: 1
-                    //         },
-                    //         ..Default::default()
-                    //     }
-                    // ];
-                    // let bloom_dependency = vk::DependencyInfo {
-                    //     image_memory_barrier_count: bloom_barrier.len() as u32,
-                    //     p_image_memory_barriers: bloom_barrier.as_ptr(),
-                    //     ..Default::default()
-                    // };
-                    // //gpu.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
-                    // gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
                 }
+
+                //Upsampling
+                for i in 0..bloom_chain_mipcount-1 {
+                    let current_mip = bloom_chain_mipcount - 1 - i;
+
+                    let bloom_barriers = [
+                        vk::ImageMemoryBarrier2 {
+                            image: renderer.global_images.get_element(bloom_chain_idx).unwrap().image,
+                            old_layout: vk::ImageLayout::GENERAL,
+                            new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            src_access_mask: vk::AccessFlags2::SHADER_WRITE,
+                            dst_access_mask: vk::AccessFlags2::SHADER_READ,
+                            src_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            src_queue_family_index: gpu.main_queue_family_index,
+                            dst_queue_family_index: gpu.main_queue_family_index,
+                            subresource_range: vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                                base_mip_level: current_mip,
+                                level_count: 1
+                            },
+                            ..Default::default()
+                        },
+                        vk::ImageMemoryBarrier2 {
+                            image: renderer.global_images.get_element(bloom_chain_idx).unwrap().image,
+                            old_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            new_layout: vk::ImageLayout::GENERAL,
+                            src_access_mask: vk::AccessFlags2::SHADER_WRITE,
+                            dst_access_mask: vk::AccessFlags2::SHADER_WRITE,
+                            src_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            src_queue_family_index: gpu.main_queue_family_index,
+                            dst_queue_family_index: gpu.main_queue_family_index,
+                            subresource_range: vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                                base_mip_level: current_mip - 1,
+                                level_count: 1
+                            },
+                            ..Default::default()
+                        }
+                    ];
+                    let bloom_dependency = vk::DependencyInfo {
+                        image_memory_barrier_count: bloom_barriers.len() as u32,
+                        p_image_memory_barriers: bloom_barriers.as_ptr(),
+                        ..Default::default()
+                    };
+                    //gpu.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
+                    gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
+                    
+                    let group_count_x = (window_size.x >> (current_mip - 1)) / THREADS_X + 1;
+                    let group_count_y = (window_size.y >> (current_mip - 1)) / THREADS_Y + 1;
+
+                    let out_idx_corrected = bloom_chain_idx * Renderer::MAX_STORAGE_MIP_COUNT + current_mip as usize - 1;
+                    let constants = [
+                        bloom_chain_idx as u32,
+                        out_idx_corrected as u32,
+                        current_mip,
+                        1
+                    ];
+                    gpu.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, slice_to_bytes(&constants));
+                    gpu.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);
+                }
+
+                //Finally, a barrier on the top mip of the bloom chain
+                
             }
 
             gpu.device.end_command_buffer(frame_info.main_command_buffer).unwrap();

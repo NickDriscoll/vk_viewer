@@ -7,33 +7,30 @@ cbuffer PushConstants
     uint input_idx;
     uint output_idx;
     uint mip_level;
+    uint phase_flag;
 }
 
-static const uint THREADS_X = 16;
-static const uint THREADS_Y = 16;
-
-[shader("compute")]
-[numthreads(THREADS_X, THREADS_Y, 1)]
-void compute_main(uint3 thread_id: SV_DispatchThreadID, uint local_id: SV_GroupThreadID) {
+void downsample(uint3 thread_id) {
     Sampler2D input = global_textures[input_idx];
     RWTexture2D output = rw_images[output_idx];
 
     float2 input_dimensions;
+    
     float _mips; // Unused
     input.GetDimensions(mip_level, input_dimensions.x, input_dimensions.y, _mips);
+    // input.GetDimensions(mip_level + 1, output_dimensions.x, output_dimensions.y, _mips);
     float2 output_dimensions = floor(input_dimensions / 2.0);
     float2 texel_size = 1.0 / input_dimensions;
     float x = texel_size.x;
     float y = texel_size.y;
 
     // Early out for over-dispatched threads
-    if (thread_id.x > (uint)input_dimensions.x || thread_id.y > (uint)input_dimensions.y) {
+    if (thread_id.x > (uint)output_dimensions.x || thread_id.y > (uint)output_dimensions.y) {
         return;
     }
 
     // Center of the sample points that will be used
     float2 sample_point = (thread_id.xy + 0.5) / output_dimensions;
-    //float2 sample_point = (((float2)thread_id.xy + 0.5) * (input_dimensions / output_dimensions)) * texel_size;
 
     // Take 13 samples around current texel:
     // a - b - c
@@ -78,4 +75,70 @@ void compute_main(uint3 thread_id: SV_DispatchThreadID, uint local_id: SV_GroupT
     downsample += (j + k + l + m) * 0.125;
 
     output[thread_id.xy] = float4(downsample, 1.0);
+}
+
+void upsample(uint3 thread_id) {
+    Sampler2D input = global_textures[input_idx];
+    RWTexture2D output = rw_images[output_idx];
+
+    float2 output_dimensions;
+    float _mips; // Unused
+    input.GetDimensions(mip_level - 1, output_dimensions.x, output_dimensions.y, _mips);
+    float2 input_dimensions = floor(output_dimensions / 2.0);
+    float2 texel_size = 1.0 / input_dimensions;
+
+    // Early out for over-dispatched threads
+    if (thread_id.x > (uint)output_dimensions.x || thread_id.y > (uint)output_dimensions.y) {
+        return;
+    }
+
+    // The filter kernel is applied with a radius, specified in texture
+    // coordinates, so that the radius will vary across mip resolutions.
+    static const float filter_radius = 0.01;
+    float x = filter_radius;
+    float y = filter_radius;
+
+    // Center of the sample points that will be used
+    float2 sample_point = (thread_id.xy + 0.5) / output_dimensions;
+
+    // Take 9 samples around current texel:
+    // a - b - c
+    // d - e - f
+    // g - h - i
+    // === ('e' is the current texel) ===
+    float3 a = input.SampleLevel(float2(sample_point.x - x, sample_point.y + y), mip_level).rgb;
+    float3 b = input.SampleLevel(float2(sample_point.x, sample_point.y + y), mip_level).rgb;
+    float3 c = input.SampleLevel(float2(sample_point.x + x, sample_point.y + y), mip_level).rgb;
+
+    float3 d = input.SampleLevel(float2(sample_point.x - x, sample_point.y), mip_level).rgb;
+    float3 e = input.SampleLevel(float2(sample_point.x, sample_point.y), mip_level).rgb;
+    float3 f = input.SampleLevel(float2(sample_point.x + x, sample_point.y), mip_level).rgb;
+
+    float3 g = input.SampleLevel(float2(sample_point.x - x, sample_point.y - y), mip_level).rgb;
+    float3 h = input.SampleLevel(float2(sample_point.x, sample_point.y - y), mip_level).rgb;
+    float3 i = input.SampleLevel(float2(sample_point.x + x, sample_point.y - y), mip_level).rgb;
+
+    // Apply weighted distribution, by using a 3x3 tent filter:
+    //  1   | 1 2 1 |
+    // -- * | 2 4 2 |
+    // 16   | 1 2 1 |
+    float3 upsample = e * 4.0;
+    upsample += (b + d + f + h) * 2.0;
+    upsample += (a + c + g + i);
+    upsample /= 16.0;
+
+    output[thread_id.xy] = float4(upsample, 1.0);
+}
+
+static const uint THREADS_X = 16;
+static const uint THREADS_Y = 16;
+
+[shader("compute")]
+[numthreads(THREADS_X, THREADS_Y, 1)]
+void compute_main(uint3 thread_id: SV_DispatchThreadID) {
+    if (phase_flag != 0) {
+        upsample(thread_id);
+    } else {
+        downsample(thread_id);
+    }
 }

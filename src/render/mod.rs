@@ -496,7 +496,8 @@ impl Renderer {
         let mut framebuffers = Self::create_hdr_framebuffers(gpu, primary_framebuffer_extent, hdr_render_pass, postfx_sampler, &mut global_images, sample_count);
         
         //Initialize per-frame rendering state
-        let bloom_mip_levels = calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height);
+        const MAX_BLOOM_MIPS: u32 = 7;
+        let bloom_mip_levels = u32::min(calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height), MAX_BLOOM_MIPS);
         let in_flight_frame_data = {
             //Data for each in-flight frame
             let command_buffers = {

@@ -189,7 +189,7 @@ impl GPUImage {
             let width = create_info.extent.width;
             let height = create_info.extent.height;
             let usage = create_info.usage;
-            let mip_count = ozy::routines::calculate_mipcount(width, height);
+            let mip_count = create_info.mip_levels;
             let sampler = gpu.get_sampler(sampler_key).unwrap();
 
             GPUImage {
