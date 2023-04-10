@@ -54,7 +54,7 @@ new_key_type! { pub struct PositionBufferBlockKey; }
 //1:1 with shader struct
 #[derive(Clone, Debug, Default)]
 #[repr(C)]
-pub struct MaterialData {
+pub struct GPUMaterial {
     pub base_color: [f32; 4],
     pub base_roughness: f32,
     pub base_metalness: f32,
@@ -64,6 +64,8 @@ pub struct MaterialData {
     pub emissive_idx: u32,
     pad0: u32,
     pad1: u32,
+    pub emissive_power: [f32; 3],
+    pad2: u32,
 }
 
 #[derive(Debug)]
@@ -72,6 +74,7 @@ pub struct Material {
     pub base_color: [f32; 4],
     pub base_roughness: f32,
     pub base_metalness: f32,
+    pub emissive_power: [f32; 3],
     pub color_idx: Option<u32>,
     pub normal_idx: Option<u32>,
     pub metal_roughness_idx: Option<u32>,
@@ -79,7 +82,7 @@ pub struct Material {
 }
 
 impl Material {
-    pub fn data(&self, renderer: &Renderer) -> MaterialData {
+    pub fn data(&self, renderer: &Renderer) -> GPUMaterial {
         let color_idx = match self.color_idx {
             Some(idx) => { idx }
             None => { renderer.default_color_idx }
@@ -97,7 +100,7 @@ impl Material {
             None => { renderer.default_emissive_idx }
         };
 
-        MaterialData {
+        GPUMaterial {
             base_color: self.base_color,
             base_roughness: self.base_roughness,
             base_metalness: self.base_metalness,
@@ -106,7 +109,25 @@ impl Material {
             metal_roughness_idx,
             emissive_idx,
             pad0: 0,
-            pad1: 0
+            pad1: 0,
+            emissive_power: [200.0; 3],
+            pad2: 0
+        }
+    }
+}
+
+impl Default for Material {
+    fn default() -> Self {
+        Material {
+            pipeline: vk::Pipeline::default(),
+            base_color: [0.0; 4],
+            base_roughness: 0.0,
+            base_metalness: 0.0,
+            emissive_idx: None,
+            metal_roughness_idx: None,
+            normal_idx: None,
+            color_idx: None,
+            emissive_power: [200.0; 3]
         }
     }
 }

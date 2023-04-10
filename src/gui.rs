@@ -136,6 +136,7 @@ impl DevGui {
                         let rot = body.rotation();
                         let mut angles = quaternion_to_euler(&rot);
 
+                        ui.text("Object properties:");
                         interacted |= imgui::Drag::new("X").speed(0.1).build(ui, &mut pos.translation.x);
                         interacted |= imgui::Drag::new("Y").speed(0.1).build(ui, &mut pos.translation.y);
                         interacted |= imgui::Drag::new("Z").speed(0.1).build(ui, &mut pos.translation.z);   
@@ -149,6 +150,9 @@ impl DevGui {
                             body.set_position(pos, false);
                             body.set_rotation(angles, false);
                         }
+
+                        ui.separator();
+                        ui.text("Material Properties");
                     }
 
                     let mut b = false;

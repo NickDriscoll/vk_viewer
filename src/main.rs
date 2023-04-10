@@ -43,7 +43,7 @@ use ozy::structs::{FrameTimer, OptionVec};
 
 use input::{InputSystemOutput, InputSystem};
 use physics::{PhysicsEngine, PhysicsComponent};
-use structs::{Camera, TerrainSpec, SimulationSOA};
+use structs::{Camera, TerrainSpec, Simulation};
 use render::vkdevice::{self, msaa_samples_from_limit};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
 
@@ -56,7 +56,7 @@ fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
     let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
-    let mut window_size = glm::vec2(1280, 720);
+    let mut window_size = glm::vec2(1920, 1080);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
@@ -425,7 +425,7 @@ fn main() {
         gpu.device.create_compute_pipelines(vk::PipelineCache::default(), &[bloom_pipeline_info], vkdevice::MEMORY_ALLOCATOR).unwrap()[0]
     };
 
-    let mut simulation_state = SimulationSOA::new();
+    let mut simulation_state = Simulation::new();
 
     //Define terrain
     let mut terrain = TerrainSpec {
@@ -473,6 +473,7 @@ fn main() {
             base_color:  [1.0; 4],
             base_roughness: 1.0,
             base_metalness: 0.0,
+            emissive_power: [0.0; 3],
             color_idx: grass_color_index,
             normal_idx: grass_normal_index,
             metal_roughness_idx: grass_arm_index,
@@ -485,6 +486,7 @@ fn main() {
             base_color:  [1.0; 4],
             base_roughness: 1.0,
             base_metalness: 0.0,
+            emissive_power: [0.0; 3],
             color_idx: rock_color_index,
             normal_idx: rock_normal_index,
             metal_roughness_idx: rock_arm_index,
@@ -1219,7 +1221,8 @@ fn main() {
                         bloom_chain_idx as u32,
                         out_idx_corrected as u32,
                         current_mip,
-                        1
+                        1,
+                        hdr_resolve_idx as u32
                     ];
                     gpu.device.cmd_push_constants(frame_info.main_command_buffer, compute_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, slice_to_bytes(&constants));
                     gpu.device.cmd_dispatch(frame_info.main_command_buffer, group_count_x, group_count_y, 1);

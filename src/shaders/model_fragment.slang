@@ -88,7 +88,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     }
 
     //Emissive contribution
-    final_radiance += 2000.0 * global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
+    final_radiance += my_mat.emissive_power * global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
     
     return float4(final_radiance, 1.0);
 }

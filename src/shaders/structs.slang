@@ -100,6 +100,8 @@ struct Material {
     uint emissive_index;
     uint pad0;
     uint pad1;
+    float3 emissive_power; // In Watts/m^2/steradian
+    uint pad2;
 }
 
 struct PBRSurface {

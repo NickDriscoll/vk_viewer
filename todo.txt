@@ -19,6 +19,7 @@ Todo:
     Add render pass abstraction
     
 Known issues:
+    Small (~100KB) memory leak when screen is resized
     Redundancy wrt model_fragment and terrain_fragment
     Texture compression
         Figure out why images smaller than the BC7 block size don't compress correctly

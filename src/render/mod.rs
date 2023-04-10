@@ -270,7 +270,7 @@ pub struct Renderer {
     drawstream: Vec<DrawCall>,
 
     pub window_manager: WindowManager,
-    
+
     //Light data
     directional_lights: SlotMap<DirectionalLightKey, SunLight>,
     pub irradiance_map_idx: u32,
@@ -287,7 +287,7 @@ pub struct Renderer {
     pub uniform_buffer: GPUBuffer,
     pub instance_buffer: GPUBuffer,
     pub material_buffer: GPUBuffer,
-    
+
     pub compute_buffer: GPUBuffer,
 
     pub global_images: FreeList<GPUImage>,
@@ -305,7 +305,7 @@ impl Renderer {
     pub const FRAMES_IN_FLIGHT: usize = 2;
     pub const GLOBAL_IMAGE_SLOTS: usize = 1024;
     pub const MAX_STORAGE_MIP_COUNT: usize = 14;
-    pub const MAX_BLOOM_MIPS: u32 = 7;
+    pub const MAX_BLOOM_MIPS: u32 = 12;
 
     pub fn current_in_flight_frame(&self) -> usize { self.in_flight_frame }
 
@@ -362,7 +362,7 @@ impl Renderer {
 
         //Allocate material buffer
         let global_material_slots = 1024 * 4;
-        let buffer_size = (global_material_slots * size_of::<MaterialData>()) as vk::DeviceSize;
+        let buffer_size = (global_material_slots * size_of::<GPUMaterial>()) as vk::DeviceSize;
         let material_buffer = GPUBuffer::allocate(
             gpu,
             buffer_size,
@@ -770,7 +770,7 @@ impl Renderer {
 
         let mut uniforms = EnvironmentUniforms::default();
         uniforms.real_sky = 1.0;
-        uniforms.bloom_strength = 0.1;
+        uniforms.bloom_strength = 0.04;
 
         //Load environment textures
         {
@@ -1103,10 +1103,11 @@ impl Renderer {
                 base_color: prim.material.base_color,
                 base_roughness: prim.material.base_roughness,
                 base_metalness: prim.material.base_metalness,
+                emissive_power: prim.material.emissive_factor,
                 color_idx: inds[0],
                 normal_idx: inds[1],
                 metal_roughness_idx: inds[2],
-                emissive_idx: inds[3]
+                emissive_idx: inds[3],
             };
             let material_idx = self.global_materials.insert(material) as u32;
 
@@ -1181,6 +1182,7 @@ impl Renderer {
                 base_color: ozy_material.base_color,
                 base_roughness: ozy_material.base_roughness,
                 base_metalness: ozy_material.base_metalness,
+                emissive_power: [200.0; 3],                      //TODO: Hardcoded bc I didn't want to deal with fixing my data
                 color_idx: inds[0],
                 normal_idx: inds[1],
                 metal_roughness_idx: inds[2],
@@ -1614,7 +1616,7 @@ impl Renderer {
 
         //Update bindless material definitions
         if self.global_materials.was_updated() {
-            let mut upload_mats = vec![MaterialData::default(); self.global_materials.len()];
+            let mut upload_mats = vec![GPUMaterial::default(); self.global_materials.len()];
             for i in 0..self.global_materials.len() {
                 if let Some(mat) = &self.global_materials[i] {
                     upload_mats[i] = mat.data(self);

@@ -42,7 +42,7 @@ impl Camera {
         &self.last_view_from_world
     }
 
-    pub fn update(&mut self, simulation_state: &SimulationSOA, physics_engine: &PhysicsEngine, renderer: &mut Renderer, user_input: &UserInput, delta_time: f32) -> glm::TMat4<f32> {
+    pub fn update(&mut self, simulation_state: &Simulation, physics_engine: &PhysicsEngine, renderer: &mut Renderer, user_input: &UserInput, delta_time: f32) -> glm::TMat4<f32> {
         let view_movement_vector = glm::mat4(
             1.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 1.0, 0.0,
@@ -252,15 +252,17 @@ impl Entity {
 new_key_type! { pub struct ModelMatrixKey; }
 new_key_type! { pub struct ModelIndexKey; }
 new_key_type! { pub struct EntityKey; }
-pub struct SimulationSOA {
+pub struct Simulation {
     pub entities: DenseSlotMap<EntityKey, Entity>,
+    pub physics_engine: PhysicsEngine,
     pub timescale: f32
 }
 
-impl SimulationSOA {
+impl Simulation {
     pub fn new() -> Self {
-        SimulationSOA{
+        Simulation{
             entities: DenseSlotMap::with_key(),
+            physics_engine: PhysicsEngine::init(),
             timescale: 1.0
         }
     }

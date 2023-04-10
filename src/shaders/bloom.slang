@@ -9,6 +9,7 @@ cbuffer PushConstants
     uint output_idx;
     uint mip_level;
     uint phase_flag;
+    uint hdr_index;
 }
 
 void downsample(uint3 thread_id) {
@@ -74,6 +75,7 @@ void downsample(uint3 thread_id) {
     downsample += (a + c + g + i) * 0.03125;
     downsample += (b + d + f + h) * 0.0625;
     downsample += (j + k + l + m) * 0.125;
+    downsample = max(downsample, 0.0001);
 
     output[thread_id.xy] = float4(downsample, 1.0);
 }
@@ -95,13 +97,18 @@ void upsample(uint3 thread_id) {
 
     // The filter kernel is applied with a radius, specified in texture
     // coordinates, so that the radius will vary across mip resolutions.
-    // static const float filter_radius = 0.01;
-    float filter_radius = texel_size.x * 2.0;
+    static const float filter_radius = 0.001;
     float x = filter_radius;
     float y = filter_radius;
 
     // Center of the sample points that will be used
     float2 sample_point = (thread_id.xy + 0.5) / output_dimensions;
+    float3 output_sample;
+    if (mip_level == 1) {
+        output_sample = global_textures[hdr_index].Sample(sample_point).rgb;
+    } else {
+        output_sample = input.SampleLevel(sample_point, mip_level - 1).rgb;
+    }
 
     // Take 9 samples around current texel:
     // a - b - c
@@ -128,9 +135,8 @@ void upsample(uint3 thread_id) {
     upsample += (b + d + f + h) * 2.0;
     upsample += (a + c + g + i);
     upsample /= 16.0;
-    upsample = max(upsample, 0.0001);
 
-    output[thread_id.xy] = float4(upsample, 1.0);
+    output[thread_id.xy] = float4(output_sample + upsample, 1.0);
 }
 
 static const uint THREADS_X = 16;

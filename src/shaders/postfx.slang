@@ -33,8 +33,10 @@ float4 fragment_main(PostFXVertexOutput input) {
     Sampler2D hdr_buffer = global_textures[hdr_buffer_index];
     Sampler2D bloom_buffer = global_textures[bloom_buffer_index];
 
-    float3 final_color = hdr_buffer.Sample(input.uv).rgb;
-    final_color += bloom_buffer.Sample(input.uv).rgb * uniforms.bloom_strength;
+    float3 hdr_sample = hdr_buffer.Sample(input.uv).rgb;
+    float3 bloom_sample = bloom_buffer.Sample(input.uv).rgb;
+
+    float3 final_color = lerp(hdr_sample, bloom_sample, uniforms.bloom_strength);
     final_color *= uniforms.exposure;
 
     // Tonemapping step
