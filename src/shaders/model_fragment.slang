@@ -23,10 +23,11 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float3x3 TBN = float3x3(tangent, bitangent, normal);
     Material my_mat = material_buffer[material_idx];
 
-    // Discard the fragment if the alpha is below threshold
     float4 color_sample = my_mat.base_color * global_textures[my_mat.color_map_index].Sample(input.uv);
-    if (color_sample.a < 0.1)
-        discard;
+    
+    // Discard the fragment if the alpha is below threshold
+    //if (color_sample.a < 0.1)
+    //    discard;
 
     //Ambient Occlusion in R, Roughness in G, Metalness in B
     float4 metal_roughness_sample = global_textures[my_mat.metal_roughness_index].Sample(input.uv);
@@ -88,7 +89,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     }
 
     //Emissive contribution
-    final_radiance += my_mat.emissive_power * global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
+    final_radiance += uniforms.emissive_exaggeration * my_mat.emissive_power * global_textures[my_mat.emissive_index].Sample(input.uv).rgb;
     
     return float4(final_radiance, 1.0);
 }

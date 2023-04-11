@@ -543,6 +543,13 @@ fn main() {
         simulation_state.entities.insert(e)
     };
 
+    // let samus_key = {
+    //     let model_data = OzyMesh::from_file("./data/models/optimized/samus.ozy");
+    //     let model = renderer.upload_ozymesh(&mut gpu, &model_data, pbr_pipeline);
+    //     let e = Entity::new(String::from("Samus Aran"), model, &mut physics_engine);
+    //     simulation_state.entities.insert(e)
+    // };
+
     //Load bistro
     // let bistro_key = {
     //     let data = OzyMesh::from_file("./data/models/optimized/lumberyard_bistro_exterior.ozy");
@@ -751,11 +758,12 @@ fn main() {
                 color_token.pop();
                 
                 imgui_ui.slider("Ambient factor", 0.0, 500.0, &mut renderer.uniform_data.ambient_factor);    
+                imgui_ui.slider_config("Bloom strength", 0.0, 1.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.bloom_strength);
+                imgui_ui.slider_config("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.exposure);
+                imgui_ui.slider_config("Emissive exaggeration", 1.0, 100.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.emissive_exaggeration);
+                imgui_ui.slider("Fog factor", 0.0, 8.0, &mut renderer.uniform_data.fog_density);
                 imgui_ui.slider("Stars threshold", 0.0, 16.0, &mut renderer.uniform_data.stars_threshold);
                 imgui_ui.slider("Stars exposure", 0.0, 5000.0, &mut renderer.uniform_data.stars_exposure);
-                imgui_ui.slider("Fog factor", 0.0, 8.0, &mut renderer.uniform_data.fog_density);
-                imgui_ui.slider_config("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.exposure);
-                imgui_ui.slider_config("Bloom strength", 0.0, 1.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.bloom_strength);
                 imgui_ui.slider("Timescale factor", 0.001, 8.0, &mut simulation_state.timescale);
     
                 if imgui_ui.slider("Music volume", 0, 128, &mut music_volume) { Music::set_volume(music_volume); }

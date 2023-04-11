@@ -268,7 +268,11 @@ pub struct EnvironmentUniforms {
     pub exposure: f32,
     pub ambient_factor: f32,
     pub real_sky: f32,
-    pub bloom_strength: f32
+    pub bloom_strength: f32,
+    pub emissive_exaggeration: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 pub struct CascadedShadowMap {

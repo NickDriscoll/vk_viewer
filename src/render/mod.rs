@@ -771,6 +771,7 @@ impl Renderer {
         let mut uniforms = EnvironmentUniforms::default();
         uniforms.real_sky = 1.0;
         uniforms.bloom_strength = 0.04;
+        uniforms.emissive_exaggeration = 10.0;
 
         //Load environment textures
         {

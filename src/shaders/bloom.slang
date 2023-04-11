@@ -97,7 +97,7 @@ void upsample(uint3 thread_id) {
 
     // The filter kernel is applied with a radius, specified in texture
     // coordinates, so that the radius will vary across mip resolutions.
-    static const float filter_radius = 0.001;
+    float filter_radius = texel_size.x;
     float x = filter_radius;
     float y = filter_radius;
 

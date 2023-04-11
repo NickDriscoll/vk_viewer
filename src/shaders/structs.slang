@@ -79,6 +79,10 @@ struct FrameUniforms {
     float ambient_factor;
     bool real_sky;
     float bloom_strength;
+    float emissive_exaggeration;
+    float _pad0;
+    float _pad1;
+    float _pad2;
 }
 
 struct Camera {
