@@ -16,7 +16,7 @@ pub fn decode_png<R: Read>(mut reader: png::Reader<R>) -> Vec<u8> {
 
     let info = reader.info().clone();
 
-    let byte_size_divisor = match info.bit_depth {
+    match info.bit_depth {
         BitDepth::Eight => { 1 }
         _ => { crash_with_error_dialog(&format!("Unsupported PNG bitdepth\n: {:?}", info.bit_depth)); }
     };
@@ -79,6 +79,55 @@ pub fn decode_jpg<R: Read>(decoder: &mut jpg::Decoder<R>) -> Vec<u8> {
     bytes
 }
 
+pub fn load_bc7_info(gpu: &mut VulkanGraphicsDevice, path: &str) -> (vk::ImageCreateInfo, Vec<u8>) {
+    let dds_path = path;
+    let mut file = unwrap_result(File::open(dds_path), &format!("Error opening bc7 {}", dds_path));
+    let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
+
+    let width = dds_header.width;
+    let height = dds_header.height;
+    let mip_levels = dds_header.mipmap_count;
+    
+    let mut bytes_size = 0;
+    for i in 0..mip_levels {
+        let w = width / (1 << i);
+        let h = height / (1 << i);
+        bytes_size += w * h;
+
+        bytes_size = size_to_alignment!(bytes_size, 16);
+    }
+
+    let mut raw_bytes = vec![0u8; bytes_size as usize];
+    file.read_exact(&mut raw_bytes).unwrap();
+    
+    let format = match dds_header.dx10_header.dxgi_format {
+        DXGI_FORMAT::BC7_UNORM => { vk::Format::BC7_UNORM_BLOCK }
+        DXGI_FORMAT::BC7_UNORM_SRGB => { vk::Format::BC7_SRGB_BLOCK }
+        _ => { crash_with_error_dialog("Unreachable statement reached in bc7_create_info()"); }
+    };
+    let info = vk::ImageCreateInfo {
+        image_type: vk::ImageType::TYPE_2D,
+        format,
+        mip_levels,
+        array_layers: 1,
+        samples: vk::SampleCountFlags::TYPE_1,
+        tiling: vk::ImageTiling::OPTIMAL,
+        sharing_mode: vk::SharingMode::EXCLUSIVE,
+        queue_family_index_count: 1,
+        p_queue_family_indices: &gpu.main_queue_family_index,
+        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+        initial_layout: vk::ImageLayout::UNDEFINED,
+        extent: vk::Extent3D {
+            width,
+            height,
+            depth: 1
+        },
+        ..Default::default()
+    };
+
+    (info, raw_bytes)
+}
+
 pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
@@ -122,7 +171,7 @@ pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create
         fence,
         staging_buffer: Some(staging_buffer),
         command_buffer_idx,
-        final_image: vim
+        gpu_image: vim
     }
 }
 
@@ -422,7 +471,7 @@ pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], wid
         let sampler = gpu.create_sampler(&vk::SamplerCreateInfo::default()).unwrap();
         let def_image = upload_image_deferred(gpu, &image_create_info, sampler, gpu_image_layout, &raw_bytes);
         let mut def_images = DeferredImage::synchronize(gpu, vec![def_image]);
-        let finished_image_reqs = gpu.device.get_image_memory_requirements(def_images[0].final_image.image);
+        let finished_image_reqs = gpu.device.get_image_memory_requirements(def_images[0].gpu_image.image);
         let readback_buffer = GPUBuffer::allocate(gpu, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
         
         let mut regions = Vec::with_capacity(mip_levels as usize);
@@ -454,7 +503,7 @@ pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], wid
         let cb_idx = gpu.command_buffer_indices.insert(0);
         let command_buffer = gpu.command_buffers[cb_idx];
         gpu.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-        gpu.device.cmd_copy_image_to_buffer(command_buffer, def_images[0].final_image.image, gpu_image_layout, readback_buffer.buffer(), &regions);
+        gpu.device.cmd_copy_image_to_buffer(command_buffer, def_images[0].gpu_image.image, gpu_image_layout, readback_buffer.buffer(), &regions);
         gpu.device.end_command_buffer(command_buffer).unwrap();
 
         let submit_info = vk::SubmitInfo {
@@ -467,7 +516,7 @@ pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], wid
         gpu.device.queue_submit(queue, &[submit_info], fence).unwrap();
         gpu.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
         for im in def_images.drain(0..def_images.len()) {
-            im.final_image.free(gpu);
+            im.gpu_image.free(gpu);
         }
         gpu.command_buffer_indices.remove(cb_idx);
         gpu.destroy_sampler(sampler);

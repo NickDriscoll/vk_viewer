@@ -5,7 +5,7 @@ use std::{convert::TryInto, ffi::c_void, hash::{Hash, Hasher}, collections::hash
 use gpu_allocator::vulkan::Allocation;
 use ozy::{io::OzyMesh, routines::calculate_mipcount};
 use slotmap::{SlotMap, new_key_type};
-use crate::*;
+use crate::{*, asset::load_bc7_info};
 pub use structs::*;
 use vkdevice::*;
 
@@ -774,14 +774,26 @@ impl Renderer {
         uniforms.emissive_exaggeration = 10.0;
 
         //Load environment textures
-        {
-            let sunzenith_index = vkdevice::load_bc7_texture(gpu, &mut global_images, material_sampler, "./data/textures/sunzenith_gradient.dds");
-            let viewzenith_index = vkdevice::load_bc7_texture(gpu, &mut global_images, material_sampler, "./data/textures/viewzenith_gradient.dds");
-            let sunview_index = vkdevice::load_bc7_texture(gpu, &mut global_images, material_sampler, "./data/textures/sunview_gradient.dds");
-            
-            uniforms.sunzenith_idx = sunzenith_index;
-            uniforms.viewzenith_idx = viewzenith_index;
-            uniforms.sunview_idx = sunview_index;
+        unsafe {
+            let paths = [
+                "./data/textures/sunzenith_gradient.dds",
+                "./data/textures/viewzenith_gradient.dds",
+                "./data/textures/sunview_gradient.dds"
+            ];
+
+            let mut def_images = Vec::with_capacity(paths.len());
+            for path in paths {
+                let (info, mut raw_bytes) = load_bc7_info(gpu, path);
+                let def_image = gpu.upload_image(&info, material_sampler, &mut raw_bytes);
+                def_images.push(def_image);
+            }
+            let mut def_images = DeferredImage::synchronize(gpu, def_images);
+            let indices = [&mut uniforms.sunzenith_idx, &mut uniforms.viewzenith_idx, &mut uniforms.sunview_idx];
+            let mut i = 0;
+            for image in def_images.drain(0..def_images.len()) {
+                *indices[i] = global_images.insert(image.gpu_image) as u32;
+                i += 1;
+            }
         }
 
         let irradiance_map_info = vk::ImageCreateInfo {
@@ -1062,9 +1074,43 @@ impl Renderer {
         fn load_prim_png(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &GLTFMeshData, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize) -> u32 {
             match tex_id_map.get(&prim_tex_idx) {
                 Some(id) => { *id }
-                None => {
-                    let image = GPUImage::from_png_bytes(gpu, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
-                    let global_tex_id = renderer.global_images.insert(image) as u32;
+                None => unsafe {
+                    let png_bytes = data.texture_bytes[prim_tex_idx].as_slice();
+                    let decoder = png::Decoder::new(png_bytes);
+                    let read_info = decoder.read_info().unwrap();
+                    let info = read_info.info();
+                    let width = info.width;
+                    let height = info.height;
+                    let format = match info.srgb {
+                        Some(_) => { vk::Format::R8G8B8A8_SRGB }
+                        None => { vk::Format::R8G8B8A8_UNORM }
+                    };
+                    let bytes = asset::decode_png(read_info);
+                    let info = vk::ImageCreateInfo {
+                        image_type: vk::ImageType::TYPE_2D,
+                        mip_levels: calculate_mipcount(width, height),
+                        format,
+                        samples: vk::SampleCountFlags::TYPE_1,
+                        array_layers: 1,
+                        queue_family_index_count: 1,
+                        p_queue_family_indices: &gpu.main_queue_family_index,
+                        initial_layout: vk::ImageLayout::UNDEFINED,                        
+                        sharing_mode: vk::SharingMode::EXCLUSIVE,
+                        tiling: vk::ImageTiling::OPTIMAL,
+                        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                        extent: vk::Extent3D {
+                            width,
+                            height,
+                            depth: 1
+                        },
+                        ..Default::default()
+                    };
+                    let def_image = gpu.upload_image(&info, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
+                    let def_image = DeferredImage::synchronize(gpu, vec![def_image]).drain(..).next().unwrap(); //TODO: This is the lazy inefficient way bc this entire public function really shouldn't exist
+
+                    //let image = GPUImage::from_png_bytes(gpu, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
+
+                    let global_tex_id = renderer.global_images.insert(def_image.gpu_image) as u32;
                     tex_id_map.insert(prim_tex_idx, global_tex_id);
                     global_tex_id
                 }
@@ -1133,18 +1179,38 @@ impl Renderer {
     }
 
     pub fn upload_ozymesh(&mut self, gpu: &mut VulkanGraphicsDevice, data: &OzyMesh, pipeline: vk::Pipeline) -> ModelKey {
-        fn load_prim_bc7(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &OzyMesh, tex_id_map: &mut HashMap<usize, u32>, prim_tex_idx: usize, format: vk::Format) -> u32 {
+        fn load_prim_bc7(gpu: &mut VulkanGraphicsDevice, renderer: &mut Renderer, data: &OzyMesh, deferred_images: &mut Vec<DeferredImage>, tex_id_map: &mut HashMap<usize, usize>, prim_tex_idx: usize, format: vk::Format) {
             match tex_id_map.get(&prim_tex_idx) {
-                Some(id) => { *id }
-                None => {
+                Some(_) => {}
+                None => unsafe {
                     let width = data.textures[prim_tex_idx].width;
                     let height = data.textures[prim_tex_idx].height;
-                    let mipmap_count = data.textures[prim_tex_idx].mipmap_count;
+                    let mip_levels = data.textures[prim_tex_idx].mipmap_count;
                     let raw_bytes = &data.textures[prim_tex_idx].bc7_bytes;
-                    let image = GPUImage::from_bc7_bytes(gpu, raw_bytes, renderer.material_sampler, width, height, mipmap_count, format);
-                    let global_tex_id = renderer.global_images.insert(image) as u32;
-                    tex_id_map.insert(prim_tex_idx, global_tex_id);
-                    global_tex_id
+
+                    let info = vk::ImageCreateInfo {
+                        array_layers: 1,
+                        image_type: vk::ImageType::TYPE_2D,
+                        format,
+                        samples: vk::SampleCountFlags::TYPE_1,
+                        tiling: vk::ImageTiling::OPTIMAL,
+                        mip_levels,
+                        sharing_mode: vk::SharingMode::EXCLUSIVE,
+                        queue_family_index_count: 1,
+                        p_queue_family_indices: &gpu.main_queue_family_index,
+                        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                        initial_layout: vk::ImageLayout::UNDEFINED,
+                        extent: vk::Extent3D {
+                            width,
+                            height,
+                            depth: 1
+                        },
+                        ..Default::default()
+                    };
+                    let def_im = gpu.upload_image(&info, renderer.material_sampler, raw_bytes);
+                    deferred_images.push(def_im);
+                    let def_im_idx = deferred_images.len() - 1;
+                    tex_id_map.insert(prim_tex_idx, def_im_idx);
                 }
             }
         }
@@ -1159,9 +1225,30 @@ impl Renderer {
             self.models.increment_model_count(key);
             return key;
         }
+
+        let mut tex_id_map = HashMap::with_capacity(data.primitives.len() * 4);
+        let mut def_images = Vec::with_capacity(data.primitives.len() * 4);
+        for prim in &data.primitives {
+            let ozy_material = &data.materials[prim.material_idx as usize];
+            let prim_tex_indices = [
+                ozy_material.color_bc7_idx,
+                ozy_material.normal_bc7_idx,
+                ozy_material.arm_bc7_idx,
+                ozy_material.emissive_bc7_idx
+            ];
+            for i in 0..prim_tex_indices.len() {
+                if let Some(idx) = prim_tex_indices[i] {
+                    load_prim_bc7(gpu, self, data, &mut def_images, &mut tex_id_map, idx as usize, vk::Format::BC7_UNORM_BLOCK);
+                }
+            }
+        }
+        let mut final_def_images = DeferredImage::synchronize(gpu, def_images);
+        let mut global_image_indices = Vec::with_capacity(final_def_images.len());
+        for d_image in final_def_images.drain(..) {
+            global_image_indices.push(self.global_images.insert(d_image.gpu_image));
+        }
         
         let mut primitive_keys = Vec::with_capacity(data.primitives.len());
-        let mut tex_id_map = HashMap::new();
         for prim in &data.primitives {
             let ozy_material = &data.materials[prim.material_idx as usize];
             let prim_tex_indices = [
@@ -1173,8 +1260,10 @@ impl Renderer {
             let mut inds = [None; 4];
             for i in 0..prim_tex_indices.len() {
                 if let Some(idx) = prim_tex_indices[i] {
-                    let format = vk::Format::BC7_UNORM_BLOCK;
-                    inds[i] = Some(load_prim_bc7(gpu, self, data, &mut tex_id_map, idx as usize, format));
+                    //let format = vk::Format::BC7_UNORM_BLOCK;
+                    //inds[i] = Some(load_prim_bc7(gpu, self, data, &mut tex_id_map, idx as usize, format));
+                    let map_idx = tex_id_map.get(&(idx as usize)).unwrap();
+                    inds[i] = Some(global_image_indices[*map_idx] as u32);
                 }
             }
 
@@ -1183,7 +1272,7 @@ impl Renderer {
                 base_color: ozy_material.base_color,
                 base_roughness: ozy_material.base_roughness,
                 base_metalness: ozy_material.base_metalness,
-                emissive_power: [200.0; 3],                      //TODO: Hardcoded bc I didn't want to deal with fixing my data
+                emissive_power: [20.0; 3],                      //TODO: Hardcoded bc I didn't want to deal with fixing my data
                 color_idx: inds[0],
                 normal_idx: inds[1],
                 metal_roughness_idx: inds[2],

@@ -26,8 +26,8 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
     float4 color_sample = my_mat.base_color * global_textures[my_mat.color_map_index].Sample(input.uv);
     
     // Discard the fragment if the alpha is below threshold
-    //if (color_sample.a < 0.1)
-    //    discard;
+    if (color_sample.a < 0.1)
+        discard;
 
     //Ambient Occlusion in R, Roughness in G, Metalness in B
     float4 metal_roughness_sample = global_textures[my_mat.metal_roughness_index].Sample(input.uv);

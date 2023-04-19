@@ -103,13 +103,6 @@ pub unsafe fn allocate_named_image_memory(gpu: &mut VulkanGraphicsDevice, image:
     alloc
 }
 
-pub fn load_bc7_texture(gpu: &mut VulkanGraphicsDevice, global_textures: &mut FreeList<GPUImage>, sampler_key: SamplerKey, path: &str) -> u32 {
-    unsafe {
-        let vim = GPUImage::from_bc7_file(gpu, sampler_key, path);
-        global_textures.insert(vim) as u32
-    }
-}
-
 pub unsafe fn upload_raw_image(gpu: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, format: vk::Format, layout: vk::ImageLayout, width: u32, height: u32, rgba: &[u8]) -> GPUImage {
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
@@ -216,262 +209,6 @@ impl GPUImage {
             gpu.device.destroy_image(self.image, MEMORY_ALLOCATOR);
         }
     }
-
-    //TODO: All of these from_* functions are horrific and repeat themselves a ton
-    pub fn from_png_file(gpu: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, path: &str) -> Self {
-        let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
-        let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
-        file.read_exact(&mut png_bytes).unwrap();
-        Self::from_png_bytes(gpu, sampler_key, &png_bytes)
-    }
-
-    pub fn from_png_file_deferred(gpu: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, path: &str) -> DeferredImage {
-        let mut file = unwrap_result(File::open(path), &format!("Error opening png {}", path));
-        let mut png_bytes = vec![0u8; file.metadata().unwrap().len().try_into().unwrap()];
-        file.read_exact(&mut png_bytes).unwrap();
-        Self::from_png_bytes_deferred(gpu, sampler_key, &png_bytes)
-    }
-    pub fn from_png_bytes_deferred(gpu: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, png_bytes: &[u8]) -> DeferredImage {
-        let decoder = png::Decoder::new(png_bytes);
-        let read_info = decoder.read_info().unwrap();
-        let info = read_info.info();
-        let width = info.width;
-        let height = info.height;
-        let format = match info.srgb {
-            Some(_) => { vk::Format::R8G8B8A8_SRGB }
-            None => { vk::Format::R8G8B8A8_UNORM }
-        };
-        let bytes = asset::decode_png(read_info);
-
-        unsafe {
-            let mip_levels = ozy::routines::calculate_mipcount(width, height);
-            let image_create_info = vk::ImageCreateInfo {
-                image_type: vk::ImageType::TYPE_2D,
-                format,
-                extent: vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1
-                },
-                mip_levels,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 1,
-                p_queue_family_indices: &gpu.main_queue_family_index,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                ..Default::default()
-            };
-            
-            let mut def_image = asset::upload_image_deferred(gpu, &image_create_info, sampler_key, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
-
-            let view_info = vk::ImageViewCreateInfo {
-                image: def_image.final_image.image,
-                format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: COMPONENT_MAPPING_DEFAULT,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: mip_levels,
-                    base_array_layer: 0,
-                    layer_count: 1
-                },
-                ..Default::default()
-            };
-            def_image.final_image.view = Some(gpu.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap());
-            def_image
-        }
-    }
-
-    pub fn from_png_bytes(gpu: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, png_bytes: &[u8]) -> Self {
-        let decoder = png::Decoder::new(png_bytes);
-        let read_info = decoder.read_info().unwrap();
-        let info = read_info.info();
-        let width = info.width;
-        let height = info.height;
-        let format = match info.srgb {
-            Some(_) => { vk::Format::R8G8B8A8_SRGB }
-            None => { vk::Format::R8G8B8A8_UNORM }
-        };
-        let bytes = asset::decode_png(read_info);
-                
-        //Create staging buffer and upload raw image data
-        let bytes_size = bytes.len() as vk::DeviceSize;
-        let staging_buffer = GPUBuffer::allocate(gpu, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-        staging_buffer.write_buffer(gpu, &bytes);
-
-        unsafe {
-            let mip_levels = ozy::routines::calculate_mipcount(width, height);
-
-            let image_create_info = vk::ImageCreateInfo {
-                image_type: vk::ImageType::TYPE_2D,
-                format,
-                extent: vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1
-                },
-                mip_levels,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 1,
-                p_queue_family_indices: &gpu.main_queue_family_index,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                ..Default::default()
-            };
-            let image = gpu.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
-            let allocation = allocate_image_memory(gpu, image);
-            
-            let view_info = vk::ImageViewCreateInfo {
-                image,
-                format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: COMPONENT_MAPPING_DEFAULT,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: mip_levels,
-                    base_array_layer: 0,
-                    layer_count: 1
-                },
-                ..Default::default()
-            };
-            let view = gpu.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
-
-            let cbidx = gpu.command_buffer_indices.insert(0);
-            gpu.device.begin_command_buffer(gpu.command_buffers[cbidx], &vk::CommandBufferBeginInfo::default()).unwrap();
-
-            let sampler = gpu.get_sampler(sampler_key).unwrap();
-            let mut vim = GPUImage {
-                image,
-                view: Some(view),
-                width,
-                height,
-                mip_count: mip_levels,
-                format,
-                usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                sampler,
-                allocation
-            };
-            asset::record_image_upload_commands(gpu, gpu.command_buffers[cbidx], &vim, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &staging_buffer);
-
-            gpu.device.end_command_buffer(gpu.command_buffers[cbidx]).unwrap();
-    
-            let submit_info = vk::SubmitInfo {
-                command_buffer_count: 1,
-                p_command_buffers: &gpu.command_buffers[cbidx],
-                ..Default::default()
-            };
-            let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
-            gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-            gpu.device.reset_fences(&[gpu.command_buffer_fence]).unwrap();
-            gpu.device.queue_submit(queue, &[submit_info], gpu.command_buffer_fence).unwrap();
-            gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-            gpu.command_buffer_indices.remove(cbidx);
-
-            vim
-        }
-    }
-
-    pub fn from_bc7_bytes(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], sampler_key: SamplerKey, width: u32, height: u32, mipmap_count: u32, format: vk::Format) -> Self {
-        let image_extent = vk::Extent3D {
-            width,
-            height,
-            depth: 1
-        };
-        let image_create_info = vk::ImageCreateInfo {
-            image_type: vk::ImageType::TYPE_2D,
-            format,
-            extent: image_extent,
-            mip_levels: mipmap_count,
-            array_layers: 1,
-            samples: vk::SampleCountFlags::TYPE_1,
-            tiling: vk::ImageTiling::OPTIMAL,
-            usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            queue_family_index_count: 1,
-            p_queue_family_indices: &gpu.main_queue_family_index,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            ..Default::default()
-        };
-
-        unsafe {
-            let image = gpu.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
-            let allocation = allocate_image_memory(gpu, image);
-            let sampler = gpu.get_sampler(sampler_key).unwrap();
-
-            let mut vim = GPUImage {
-                image,
-                view: None,
-                width,
-                height,
-                mip_count: mipmap_count,
-                format,
-                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-                sampler,
-                allocation
-            };
-            asset::upload_image(gpu, &vim, &raw_bytes);
-            
-            let view_info = vk::ImageViewCreateInfo {
-                image: image,
-                format,
-                view_type: vk::ImageViewType::TYPE_2D,
-                components: COMPONENT_MAPPING_DEFAULT,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: mipmap_count,
-                    base_array_layer: 0,
-                    layer_count: 1
-                },
-                ..Default::default()
-            };
-            let view = gpu.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap();
-
-            vim.view = Some(view);
-            vim
-        }
-    }
-
-    pub unsafe fn from_bc7_file(gpu: &mut VulkanGraphicsDevice, sampler_key: SamplerKey, path: &str) -> Self {
-        use ozy::io::DXGI_FORMAT;
-
-        let mut file = unwrap_result(File::open(path), &format!("Error opening bc7 {}", path));
-        let dds_header = DDSHeader::from_file(&mut file);       //This also advances the file read head to the beginning of the raw data section
-
-        let width = dds_header.width;
-        let height = dds_header.height;
-        let mipmap_count = dds_header.mipmap_count;
-        
-        let mut bytes_size = 0;
-        for i in 0..mipmap_count {
-            let w = width / (1 << i);
-            let h = height / (1 << i);
-            bytes_size += w * h;
-
-            bytes_size = size_to_alignment!(bytes_size, 16);
-        }
-
-        let mut raw_bytes = vec![0u8; bytes_size as usize];
-        file.read_exact(&mut raw_bytes).unwrap();
-        
-        let format = match dds_header.dx10_header.dxgi_format {
-            DXGI_FORMAT::BC7_UNORM => { vk::Format::BC7_UNORM_BLOCK }
-            DXGI_FORMAT::BC7_UNORM_SRGB => { vk::Format::BC7_SRGB_BLOCK }
-            _ => { crash_with_error_dialog("Unreachable statement reached in GPUImage::from_bc7_file()"); }
-        };
-
-        Self::from_bc7_bytes(gpu, &raw_bytes, sampler_key, width, height, mipmap_count, format)
-    }
 }
 
 pub unsafe fn upload_GPU_buffer<T>(gpu: &mut VulkanGraphicsDevice, dst_buffer: vk::Buffer, offset: u64, raw_data: &[T]) {
@@ -523,7 +260,7 @@ pub struct DeferredImage {
     pub fence: vk::Fence,
     pub staging_buffer: Option<GPUBuffer>,
     pub command_buffer_idx: usize,
-    pub final_image: GPUImage
+    pub gpu_image: GPUImage
 }
 
 impl DeferredImage {
@@ -568,6 +305,34 @@ pub struct VulkanGraphicsDevice {
 }
 
 impl VulkanGraphicsDevice {
+    pub unsafe fn upload_image(&mut self, info: &vk::ImageCreateInfo, sampler_key: SamplerKey, bytes: &[u8]) -> DeferredImage {
+        let mut def_image = asset::upload_image_deferred(self, &info, sampler_key, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
+        
+        let view_type = match info.image_type {
+            vk::ImageType::TYPE_1D => vk::ImageViewType::TYPE_1D,
+            vk::ImageType::TYPE_2D => vk::ImageViewType::TYPE_2D,
+            vk::ImageType::TYPE_3D => vk::ImageViewType::TYPE_3D,
+            _ => { crash_with_error_dialog("Unreachable statement reached *shrug*") }
+        };
+
+        let view_info = vk::ImageViewCreateInfo {
+            image: def_image.gpu_image.image,
+            format: info.format,
+            view_type,
+            components: COMPONENT_MAPPING_DEFAULT,
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: info.mip_levels,
+                base_array_layer: 0,
+                layer_count: 1
+            },
+            ..Default::default()
+        };
+        def_image.gpu_image.view = Some(self.device.create_image_view(&view_info, MEMORY_ALLOCATOR).unwrap());
+        def_image
+    }
+
     pub unsafe fn create_sampler(&mut self, info: &vk::SamplerCreateInfo) -> VkResult<SamplerKey> {
         let sampler = match self.device.create_sampler(info, MEMORY_ALLOCATOR) {
             Ok(s) => { s }

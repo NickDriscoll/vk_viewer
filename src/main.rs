@@ -17,12 +17,13 @@ mod structs;
 #[macro_use]
 mod render;
 
+use asset::load_bc7_info;
 use ::function_name::named;
 use ash::vk::{self};
 use gpu_allocator::MemoryLocation;
 use gui::AssetWindowResponse;
 use imgui::{SliderFlags};
-use ozy::io::{DDSHeader, DDSHeader_DXT10, DDS_PixelFormat, OzyMesh};
+use ozy::io::{DDSHeader, DDSHeader_DXT10, DDS_PixelFormat, OzyMesh, DXGI_FORMAT};
 use rapier3d::prelude::*;
 use routines::struct_to_bytes;
 use sdl2::event::Event;
@@ -44,7 +45,7 @@ use ozy::structs::{FrameTimer, OptionVec};
 use input::{InputSystemOutput, InputSystem};
 use physics::{PhysicsEngine, PhysicsComponent};
 use structs::{Camera, TerrainSpec, Simulation};
-use render::vkdevice::{self, msaa_samples_from_limit};
+use render::vkdevice::{self, msaa_samples_from_limit, GPUImage, DeferredImage};
 use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
 
 use crate::routines::*;
@@ -451,19 +452,32 @@ fn main() {
         "./data/textures/cliff-rockface/color.png",
         "./data/textures/cliff-rockface/normal.png",
         "./data/textures/cliff-rockface/ao_roughness_metallic.png"
-        // "./data/textures/rocky_ground/color.png",
-        // "./data/textures/rocky_ground/normal.png",
-        // "./data/textures/rocky_ground/ao_roughness_metallic.png"
     ];
     let mut terrain_image_indices = [None; 6];
-    for i in 0..terrain_image_paths.len() {
-        let path = terrain_image_paths[i];
-        let pathp = Path::new(path);
+    unsafe {
+        let mut terrain_def_images = Vec::with_capacity(6);
+        for i in 0..terrain_image_paths.len() {
+            let path = terrain_image_paths[i];
+            let pathp = Path::new(path);
 
-        if !pathp.with_extension("dds").is_file() {
-            asset::compress_png_file_synchronous(&mut gpu, path);
+            if !pathp.with_extension("dds").is_file() {
+                asset::compress_png_file_synchronous(&mut gpu, path);
+            }
+
+            let p = pathp.with_extension("dds");
+            let dds_path = p.to_str().unwrap();
+
+            let (info, mut raw_bytes) = load_bc7_info(&mut gpu, dds_path);
+            let def_image = gpu.upload_image(&info, renderer.material_sampler, &mut raw_bytes);
+
+            terrain_def_images.push(def_image);
         }
-        terrain_image_indices[i] = Some(vkdevice::load_bc7_texture(&mut gpu, &mut renderer.global_images, renderer.material_sampler, pathp.with_extension("dds").to_str().unwrap()));
+        let mut images = DeferredImage::synchronize(&mut gpu, terrain_def_images);
+        let mut i = 0;
+        for im in images.drain(0..images.len()) {
+            terrain_image_indices[i] = Some(renderer.global_images.insert(im.gpu_image) as u32);
+            i += 1;
+        }
     }
     let [grass_color_index, grass_normal_index, grass_arm_index, rock_color_index, rock_normal_index, rock_arm_index] = terrain_image_indices;
 
@@ -542,23 +556,6 @@ fn main() {
         let e = Entity::new(String::from("Bouncy Totoro"), totoro_model, &mut physics_engine).set_physics_component(p_component);
         simulation_state.entities.insert(e)
     };
-
-    // let samus_key = {
-    //     let model_data = OzyMesh::from_file("./data/models/optimized/samus.ozy");
-    //     let model = renderer.upload_ozymesh(&mut gpu, &model_data, pbr_pipeline);
-    //     let e = Entity::new(String::from("Samus Aran"), model, &mut physics_engine);
-    //     simulation_state.entities.insert(e)
-    // };
-
-    //Load bistro
-    // let bistro_key = {
-    //     let data = OzyMesh::from_file("./data/models/optimized/lumberyard_bistro_exterior.ozy");
-    //     let model = renderer.upload_ozymesh(&mut gpu, &data, pbr_pipeline);
-    //     let mut e = Entity::new(data.name, model, &mut physics_engine);
-    //     e.set_position(glm::vec3(0.0, 0.0, 100.0), &mut physics_engine);
-    //     e.set_scale(5.0, &mut physics_engine);
-    //     simulation_state.entities.insert(e)
-    // };
 
     //State for freecam controls
     let mut camera = Camera::new(glm::vec3(-23.5138, -0.8549, 6.1737));
@@ -1044,7 +1041,6 @@ fn main() {
                 &[frame_info.dynamic_uniform_offset as u32, frame_info.instance_data_start_offset as u32]
             );
 
-            //Iterate through draw calls
             let mut last_bound_pipeline = vk::Pipeline::default();
             for drawcall in renderer.drawlist_iter() {
                 if drawcall.pipeline != last_bound_pipeline {
@@ -1147,7 +1143,6 @@ fn main() {
                         p_image_memory_barriers: bloom_barriers.as_ptr(),
                         ..Default::default()
                     };
-                    //gpu.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
                     gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
 
                     let group_count_x = (window_size.x >> (i + 1)) / THREADS_X + 1;
@@ -1218,7 +1213,6 @@ fn main() {
                         p_image_memory_barriers: bloom_barriers.as_ptr(),
                         ..Default::default()
                     };
-                    //gpu.device.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
                     gpu.ext_sync2.cmd_pipeline_barrier2(frame_info.main_command_buffer, &bloom_dependency);
                     
                     let group_count_x = (window_size.x >> (current_mip - 1)) / THREADS_X + 1;

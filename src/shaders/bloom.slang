@@ -103,6 +103,8 @@ void upsample(uint3 thread_id) {
 
     // Center of the sample points that will be used
     float2 sample_point = (thread_id.xy + 0.5) / output_dimensions;
+
+    //The output sample comes from the hdr buffer for the final mip
     float3 output_sample;
     if (mip_level == 1) {
         output_sample = global_textures[hdr_index].Sample(sample_point).rgb;
