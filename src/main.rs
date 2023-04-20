@@ -730,6 +730,7 @@ fn main() {
                         if imgui_ui.menu_item("Asset optimization") { dev_gui.do_asset_window = true; }
                         if imgui_ui.menu_item("Camera") { dev_gui.do_camera_window = true; }
                         if imgui_ui.menu_item("Entities") { dev_gui.do_entity_window = true; }
+                        if imgui_ui.menu_item("Materials") { dev_gui.do_mat_list = true; }
                         mt.end();
                     }
                     if let Some(mt) = imgui_ui.begin_menu("Cheats") {

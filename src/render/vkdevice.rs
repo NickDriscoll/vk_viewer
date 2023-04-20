@@ -211,39 +211,6 @@ impl GPUImage {
     }
 }
 
-pub unsafe fn upload_GPU_buffer<T>(gpu: &mut VulkanGraphicsDevice, dst_buffer: vk::Buffer, offset: u64, raw_data: &[T]) {
-    //Create staging buffer and upload raw buffer data
-    let bytes_size = (raw_data.len() * size_of::<T>()) as vk::DeviceSize;
-    let staging_buffer = GPUBuffer::allocate(gpu, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
-    staging_buffer.write_buffer(gpu, &raw_data);
-
-    //Wait on the fence before beginning command recording
-    gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    gpu.device.reset_fences(&[gpu.command_buffer_fence]).unwrap();
-    let cbidx = gpu.command_buffer_indices.insert(0);
-    gpu.device.begin_command_buffer(gpu.command_buffers[cbidx], &vk::CommandBufferBeginInfo::default()).unwrap();
-
-    let copy = vk::BufferCopy {
-        src_offset: 0,
-        dst_offset: offset * size_of::<T>() as u64,
-        size: bytes_size
-    };
-    gpu.device.cmd_copy_buffer(gpu.command_buffers[cbidx], staging_buffer.buffer(), dst_buffer, &[copy]);
-
-    gpu.device.end_command_buffer(gpu.command_buffers[cbidx]).unwrap();
-
-    let submit_info = vk::SubmitInfo {
-        command_buffer_count: 1,
-        p_command_buffers: &gpu.command_buffers[cbidx],
-        ..Default::default()
-    };
-    let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
-    gpu.device.queue_submit(queue, &[submit_info], gpu.command_buffer_fence).unwrap();
-    gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    gpu.command_buffer_indices.remove(cbidx);
-    staging_buffer.free(gpu);
-}
-
 //All of the data in a DeferredReadback is valid when it's created, but the GPU-side
 //data may only be considered valid after the associated fence has been signaled
 //staging_buffer can only be freed after fence has been signaled
@@ -333,6 +300,39 @@ impl VulkanGraphicsDevice {
         def_image
     }
 
+    pub unsafe fn upload_buffer<T>(&mut self, dst_buffer: vk::Buffer, offset: u64, raw_data: &[T]) {
+        //Create staging buffer and upload raw buffer data
+        let bytes_size = (raw_data.len() * size_of::<T>()) as vk::DeviceSize;
+        let staging_buffer = GPUBuffer::allocate(self, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+        staging_buffer.write_buffer(self, &raw_data);
+
+        //Wait on the fence before beginning command recording
+        self.device.wait_for_fences(&[self.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+        self.device.reset_fences(&[self.command_buffer_fence]).unwrap();
+        let cbidx = self.command_buffer_indices.insert(0);
+        self.device.begin_command_buffer(self.command_buffers[cbidx], &vk::CommandBufferBeginInfo::default()).unwrap();
+
+        let copy = vk::BufferCopy {
+            src_offset: 0,
+            dst_offset: offset * size_of::<T>() as u64,
+            size: bytes_size
+        };
+        self.device.cmd_copy_buffer(self.command_buffers[cbidx], staging_buffer.buffer(), dst_buffer, &[copy]);
+
+        self.device.end_command_buffer(self.command_buffers[cbidx]).unwrap();
+
+        let submit_info = vk::SubmitInfo {
+            command_buffer_count: 1,
+            p_command_buffers: &self.command_buffers[cbidx],
+            ..Default::default()
+        };
+        let queue = self.device.get_device_queue(self.main_queue_family_index, 0);
+        self.device.queue_submit(queue, &[submit_info], self.command_buffer_fence).unwrap();
+        self.device.wait_for_fences(&[self.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+        self.command_buffer_indices.remove(cbidx);
+        staging_buffer.free(self);
+    }
+
     pub unsafe fn create_sampler(&mut self, info: &vk::SamplerCreateInfo) -> VkResult<SamplerKey> {
         let sampler = match self.device.create_sampler(info, MEMORY_ALLOCATOR) {
             Ok(s) => { s }
@@ -398,7 +398,7 @@ impl VulkanGraphicsDevice {
         //Create the Vulkan device
         let vk_physical_device;
         let vk_physical_device_properties;
-        let mut queue_family_index = 0;
+        let mut main_queue_family_index = 0;
         let buffer_device_address;
         let vk_device = unsafe {
             let phys_devices = vk_instance.enumerate_physical_devices();
@@ -464,14 +464,14 @@ impl VulkanGraphicsDevice {
             let qfps = vk_instance.get_physical_device_queue_family_properties(vk_physical_device);
             for qfp in qfps {
                 if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                    queue_family_index = i;
+                    main_queue_family_index = i;
                     break;
                 }
                 i += 1;
             }
 
             let queue_create_info = vk::DeviceQueueCreateInfo {
-                queue_family_index,
+                queue_family_index: main_queue_family_index,
                 queue_count: 1,
                 p_queue_priorities: [1.0].as_ptr(),
                 ..Default::default()
@@ -519,7 +519,7 @@ impl VulkanGraphicsDevice {
 
         let command_pool = unsafe {
             let pool_create_info = vk::CommandPoolCreateInfo {
-                queue_family_index,
+                queue_family_index: main_queue_family_index,
                 flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
                 ..Default::default()
             };
@@ -556,7 +556,7 @@ impl VulkanGraphicsDevice {
             ext_surface: vk_ext_surface,
             ext_swapchain: vk_ext_swapchain,
             ext_sync2: vk_ext_sync2,
-            main_queue_family_index: queue_family_index,
+            main_queue_family_index,
             command_pool,
             command_buffer_indices: FreeList::with_capacity(command_buffer_count),
             command_buffers: general_command_buffers,
@@ -654,7 +654,7 @@ impl GPUBuffer {
                     ptr::copy_nonoverlapping(in_buffer.as_ptr(), dst_ptr as *mut u8, in_buffer.len());
                 }
                 None => {
-                    upload_GPU_buffer(gpu, self.buffer, offset, in_buffer);
+                    gpu.upload_buffer(self.buffer, offset, in_buffer);
                 }
             }
         }

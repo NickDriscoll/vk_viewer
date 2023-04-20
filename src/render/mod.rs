@@ -371,7 +371,7 @@ impl Renderer {
             MemoryLocation::GpuOnly
         );
 
-        let max_vertices = 1024 * 1024 * 16;
+        let max_vertices = 1024 * 1024 * 32;
         let usage_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
 
         //Allocate main vertex buffer
@@ -520,44 +520,7 @@ impl Renderer {
                     let semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
                     
                     //Create bloom mip chain
-                    let bloom_buffer_idx = unsafe {
-                        let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
-                        let create_info = vk::ImageCreateInfo {
-                            image_type: vk::ImageType::TYPE_2D,
-                            format: bloom_format,
-                            extent: primary_framebuffer_extent,
-                            mip_levels: bloom_mip_levels,
-                            array_layers: 1,
-                            samples: vk::SampleCountFlags::TYPE_1,
-                            tiling: vk::ImageTiling::OPTIMAL,
-                            sharing_mode: vk::SharingMode::EXCLUSIVE,
-                            queue_family_index_count: 1,
-                            p_queue_family_indices: &gpu.main_queue_family_index,
-                            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
-                            initial_layout: vk::ImageLayout::UNDEFINED,
-                            ..Default::default()
-                        };
-                        let mut bloom_image = GPUImage::allocate(gpu, &create_info, postfx_sampler);
-                        bloom_image.layout = vk::ImageLayout::GENERAL;
-                        let view_info = vk::ImageViewCreateInfo {
-                            image: bloom_image.image,
-                            format: bloom_format,
-                            view_type: vk::ImageViewType::TYPE_2D,
-                            components: vkdevice::COMPONENT_MAPPING_DEFAULT,
-                            subresource_range: vk::ImageSubresourceRange {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
-                                base_mip_level: 0,
-                                level_count: bloom_mip_levels,
-                                base_array_layer: 0,
-                                layer_count: 1
-                            },
-                            ..Default::default()
-                        };
-                        let view = gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-                        bloom_image.view = Some(view);
-            
-                        global_images.insert(bloom_image) as u32
-                    };
+                    let bloom_buffer_idx = Self::create_bloom_mip_chain(gpu, &mut global_images, postfx_sampler, &primary_framebuffer_extent);
                     
                     let framebuffer = fb_drainer.next().unwrap();
                     let data = InFlightFrameData {
@@ -873,47 +836,46 @@ impl Renderer {
         }
     }
 
-    fn create_bloom_mip_chain(&mut self, gpu: &mut VulkanGraphicsDevice, extent: &vk::Extent3D) {
-        // //Create bloom mip chain
-        // let bloom_buffer_idx = unsafe {
-        //     let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
-        //     let mip_levels = calculate_mipcount(extent.width, extent.height);
-        //     let create_info = vk::ImageCreateInfo {
-        //         image_type: vk::ImageType::TYPE_2D,
-        //         format: bloom_format,
-        //         extent: *extent,
-        //         mip_levels,
-        //         array_layers: 1,
-        //         samples: vk::SampleCountFlags::TYPE_1,
-        //         tiling: vk::ImageTiling::OPTIMAL,
-        //         sharing_mode: vk::SharingMode::EXCLUSIVE,
-        //         queue_family_index_count: 1,
-        //         p_queue_family_indices: &gpu.main_queue_family_index,
-        //         usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
-        //         initial_layout: vk::ImageLayout::UNDEFINED,
-        //         ..Default::default()
-        //     };
-        //     let mut bloom_image = GPUImage::allocate(gpu, &create_info, self.postfx_sampler);
-        //     bloom_image.layout = vk::ImageLayout::GENERAL;
-        //     let view_info = vk::ImageViewCreateInfo {
-        //         image: bloom_image.image,
-        //         format: bloom_format,
-        //         view_type: vk::ImageViewType::TYPE_2D,
-        //         components: vkdevice::COMPONENT_MAPPING_DEFAULT,
-        //         subresource_range: vk::ImageSubresourceRange {
-        //             aspect_mask: vk::ImageAspectFlags::COLOR,
-        //             base_mip_level: 0,
-        //             level_count: mip_levels,
-        //             base_array_layer: 0,
-        //             layer_count: 1
-        //         },
-        //         ..Default::default()
-        //     };
-        //     let view = gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-        //     bloom_image.view = Some(view);
+    fn create_bloom_mip_chain(gpu: &mut VulkanGraphicsDevice, global_images: &mut FreeList<GPUImage>, sampler_key: SamplerKey, extent: &vk::Extent3D) -> u32 {
+        unsafe {
+            let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
+            let mip_levels = u32::min(calculate_mipcount(extent.width, extent.height), Self::MAX_BLOOM_MIPS);
+            let create_info = vk::ImageCreateInfo {
+                image_type: vk::ImageType::TYPE_2D,
+                format: bloom_format,
+                extent: *extent,
+                mip_levels,
+                array_layers: 1,
+                samples: vk::SampleCountFlags::TYPE_1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 1,
+                p_queue_family_indices: &gpu.main_queue_family_index,
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                ..Default::default()
+            };
+            let mut bloom_image = GPUImage::allocate(gpu, &create_info, sampler_key);
+            bloom_image.layout = vk::ImageLayout::GENERAL;
+            let view_info = vk::ImageViewCreateInfo {
+                image: bloom_image.image,
+                format: bloom_format,
+                view_type: vk::ImageViewType::TYPE_2D,
+                components: vkdevice::COMPONENT_MAPPING_DEFAULT,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: mip_levels,
+                    base_array_layer: 0,
+                    layer_count: 1
+                },
+                ..Default::default()
+            };
+            let view = gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
+            bloom_image.view = Some(view);
 
-        //     global_images.insert(bloom_image) as u32
-        // };
+            global_images.insert(bloom_image) as u32
+        }
     }
 
     fn create_hdr_framebuffers(gpu: &mut VulkanGraphicsDevice, extent: vk::Extent3D, hdr_render_pass: vk::RenderPass, sampler_key: SamplerKey, global_images: &mut FreeList<GPUImage>, sample_count: vk::SampleCountFlags) -> Vec<FrameBuffer> {
@@ -1260,8 +1222,6 @@ impl Renderer {
             let mut inds = [None; 4];
             for i in 0..prim_tex_indices.len() {
                 if let Some(idx) = prim_tex_indices[i] {
-                    //let format = vk::Format::BC7_UNORM_BLOCK;
-                    //inds[i] = Some(load_prim_bc7(gpu, self, data, &mut tex_id_map, idx as usize, format));
                     let map_idx = tex_id_map.get(&(idx as usize)).unwrap();
                     inds[i] = Some(global_image_indices[*map_idx] as u32);
                 }
@@ -1272,13 +1232,25 @@ impl Renderer {
                 base_color: ozy_material.base_color,
                 base_roughness: ozy_material.base_roughness,
                 base_metalness: ozy_material.base_metalness,
-                emissive_power: [20.0; 3],                      //TODO: Hardcoded bc I didn't want to deal with fixing my data
+                emissive_power: ozy_material.emissive_factor,
                 color_idx: inds[0],
                 normal_idx: inds[1],
                 metal_roughness_idx: inds[2],
                 emissive_idx: inds[3]
             };
-            let material_idx = self.global_materials.insert(material) as u32;
+            let mut material_idx = None;
+            for i in 0..self.global_materials.len() {
+                let mat = &self.global_materials[i];
+                if let Some(m) = mat {
+                    if struct_to_bytes(&material) == struct_to_bytes(m) {
+                        material_idx = Some(i as u32);
+                    }
+                }
+            }
+
+            if let None = material_idx {
+                material_idx = Some(self.global_materials.insert(material) as u32);
+            }
 
             let blocks = upload_primitive_vertices(gpu, self, prim);
 
@@ -1291,7 +1263,7 @@ impl Renderer {
                 tangent_block: blocks.tangent_block,
                 normal_block: blocks.normal_block,
                 uv_block: blocks.uv_block,
-                material_idx
+                material_idx: material_idx.unwrap()
             });
             primitive_keys.push(model_idx);
         }
@@ -1377,45 +1349,7 @@ impl Renderer {
             frame.framebuffer = fb_drainer.next().unwrap();
 
             //Recreate bloom buffer
-            let bloom_buffer_idx = unsafe {
-                let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
-                let mip_levels = u32::min(calculate_mipcount(extent.width, extent.height), Self::MAX_BLOOM_MIPS);
-                let create_info = vk::ImageCreateInfo {
-                    image_type: vk::ImageType::TYPE_2D,
-                    format: bloom_format,
-                    extent,
-                    mip_levels,
-                    array_layers: 1,
-                    samples: vk::SampleCountFlags::TYPE_1,
-                    tiling: vk::ImageTiling::OPTIMAL,
-                    sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    queue_family_index_count: 1,
-                    p_queue_family_indices: &gpu.main_queue_family_index,
-                    usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
-                    initial_layout: vk::ImageLayout::UNDEFINED,
-                    ..Default::default()
-                };
-                let mut bloom_image = GPUImage::allocate(gpu, &create_info, self.postfx_sampler);
-                bloom_image.layout = vk::ImageLayout::GENERAL;
-                let view_info = vk::ImageViewCreateInfo {
-                    image: bloom_image.image,
-                    format: bloom_format,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    components: vkdevice::COMPONENT_MAPPING_DEFAULT,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: mip_levels,
-                        base_array_layer: 0,
-                        layer_count: 1
-                    },
-                    ..Default::default()
-                };
-                let view = gpu.device.create_image_view(&view_info, vkdevice::MEMORY_ALLOCATOR).unwrap();
-                bloom_image.view = Some(view);
-    
-                self.global_images.insert(bloom_image) as u32
-            };
+            let bloom_buffer_idx = Self::create_bloom_mip_chain(gpu, &mut self.global_images, self.postfx_sampler, &extent);
             frame.bloom_buffer_idx = bloom_buffer_idx;
         }
     }

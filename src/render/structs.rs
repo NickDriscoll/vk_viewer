@@ -110,7 +110,7 @@ impl Material {
             emissive_idx,
             pad0: 0,
             pad1: 0,
-            emissive_power: [200.0; 3],
+            emissive_power: self.emissive_power,
             pad2: 0
         }
     }
@@ -762,6 +762,8 @@ impl<T> FreeList<T> {
     }
 
     pub fn len(&self) -> usize { self.list.len() }
+
+    pub fn iter(&self) -> Iter<Option<T>> { self.list.iter() }
 
     pub fn size(&self) -> u64 { self.size }
 
