@@ -272,8 +272,8 @@ pub struct VulkanGraphicsDevice {
 }
 
 impl VulkanGraphicsDevice {
-    pub unsafe fn upload_image(&mut self, info: &vk::ImageCreateInfo, sampler_key: SamplerKey, bytes: &[u8]) -> DeferredImage {
-        let mut def_image = asset::upload_image_deferred(self, &info, sampler_key, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, &bytes);
+    pub unsafe fn upload_image(&mut self, info: &vk::ImageCreateInfo, sampler_key: SamplerKey, generate_mipmaps: bool, bytes: &[u8]) -> DeferredImage {
+        let mut def_image = asset::upload_image_deferred(self, &info, sampler_key, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, generate_mipmaps, &bytes);
         
         let view_type = match info.image_type {
             vk::ImageType::TYPE_1D => vk::ImageViewType::TYPE_1D,

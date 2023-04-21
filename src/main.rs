@@ -468,7 +468,7 @@ fn main() {
             let dds_path = p.to_str().unwrap();
 
             let (info, mut raw_bytes) = load_bc7_info(&mut gpu, dds_path);
-            let def_image = gpu.upload_image(&info, renderer.material_sampler, &mut raw_bytes);
+            let def_image = gpu.upload_image(&info, renderer.material_sampler, false, &mut raw_bytes);
 
             terrain_def_images.push(def_image);
         }

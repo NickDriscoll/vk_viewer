@@ -747,7 +747,7 @@ impl Renderer {
             let mut def_images = Vec::with_capacity(paths.len());
             for path in paths {
                 let (info, mut raw_bytes) = load_bc7_info(gpu, path);
-                let def_image = gpu.upload_image(&info, material_sampler, &mut raw_bytes);
+                let def_image = gpu.upload_image(&info, material_sampler, false, &mut raw_bytes);
                 def_images.push(def_image);
             }
             let mut def_images = DeferredImage::synchronize(gpu, def_images);
@@ -1067,7 +1067,7 @@ impl Renderer {
                         },
                         ..Default::default()
                     };
-                    let def_image = gpu.upload_image(&info, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
+                    let def_image = gpu.upload_image(&info, renderer.material_sampler, true, data.texture_bytes[prim_tex_idx].as_slice());
                     let def_image = DeferredImage::synchronize(gpu, vec![def_image]).drain(..).next().unwrap(); //TODO: This is the lazy inefficient way bc this entire public function really shouldn't exist
 
                     //let image = GPUImage::from_png_bytes(gpu, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
@@ -1169,7 +1169,7 @@ impl Renderer {
                         },
                         ..Default::default()
                     };
-                    let def_im = gpu.upload_image(&info, renderer.material_sampler, raw_bytes);
+                    let def_im = gpu.upload_image(&info, renderer.material_sampler, false, raw_bytes);
                     deferred_images.push(def_im);
                     let def_im_idx = deferred_images.len() - 1;
                     tex_id_map.insert(prim_tex_idx, def_im_idx);

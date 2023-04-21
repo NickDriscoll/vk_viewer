@@ -128,10 +128,10 @@ pub fn load_bc7_info(gpu: &mut VulkanGraphicsDevice, path: &str) -> (vk::ImageCr
     (info, raw_bytes)
 }
 
-pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey, layout: vk::ImageLayout, raw_bytes: &[u8]) -> DeferredImage {
+pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey, layout: vk::ImageLayout, generate_mipmaps: bool, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
-    let staging_buffer = GPUBuffer::allocate(gpu, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+    let staging_buffer = GPUBuffer::allocate(gpu, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);     //TODO: Here and everywhere use a unifed staging buffer managed by the VulkanGraphicsDevice
     staging_buffer.write_buffer(gpu, &raw_bytes);
 
     //Create image
@@ -155,38 +155,16 @@ pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create
     let command_buffer_idx = gpu.command_buffer_indices.insert(0);
 
     let command_buffer = gpu.command_buffers[command_buffer_idx];
-    gpu.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
-    record_image_upload_commands(gpu, command_buffer, &vim, layout, &staging_buffer);
-    gpu.device.end_command_buffer(command_buffer).unwrap();
-    
-    let submit_info = vk::SubmitInfo {
-        command_buffer_count: 1,
-        p_command_buffers: &command_buffer,
-        ..Default::default()
-    };
-    let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
-    gpu.device.queue_submit(queue, &[submit_info], fence).unwrap();
-
-    DeferredImage {
-        fence,
-        staging_buffer: Some(staging_buffer),
-        command_buffer_idx,
-        gpu_image: vim
-    }
-}
-
-//staging_buffer already has the image bytes uploaded to it
-pub unsafe fn record_image_upload_commands(gpu: &mut VulkanGraphicsDevice, command_buffer: vk::CommandBuffer, gpu_image: &GPUImage, layout: vk::ImageLayout, staging_buffer: &GPUBuffer) {
-    let image_memory_barrier = vk::ImageMemoryBarrier {
+    gpu.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
         old_layout: vk::ImageLayout::UNDEFINED,
         new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        image: gpu_image.image,
+        image: vim.image,
         subresource_range: vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
-            level_count: gpu_image.mip_count,
+            level_count: vim.mip_count,
             base_array_layer: 0,
             layer_count: 1
         },
@@ -195,15 +173,14 @@ pub unsafe fn record_image_upload_commands(gpu: &mut VulkanGraphicsDevice, comma
     gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     let mut cumulative_offset = 0;
-    let mut copy_regions = vec![vk::BufferImageCopy::default(); gpu_image.mip_count as usize];
-    for i in 0..gpu_image.mip_count {
-        let (w, h) = ozy::routines::mip_resolution(gpu_image.width, gpu_image.height, i);
+    let mut copy_regions = vec![vk::BufferImageCopy::default(); vim.mip_count as usize];
+    for i in 0..vim.mip_count {
+        let (w, h) = ozy::routines::mip_resolution(vim.width, vim.height, i);
         let subresource_layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: i,
             base_array_layer: 0,
             layer_count: 1
-
         };
         let image_extent = vk::Extent3D {
             width: u32::max(w, 1),
@@ -224,62 +201,38 @@ pub unsafe fn record_image_upload_commands(gpu: &mut VulkanGraphicsDevice, comma
         cumulative_offset += w * h;
     }
 
-    gpu.device.cmd_copy_buffer_to_image(command_buffer, staging_buffer.buffer(), gpu_image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    gpu.device.cmd_copy_buffer_to_image(command_buffer, staging_buffer.buffer(), vim.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
-    let subresource_range = vk::ImageSubresourceRange {
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        base_mip_level: 0,
-        level_count: gpu_image.mip_count,
-        base_array_layer: 0,
-        layer_count: 1
-    };
-    let image_memory_barrier = vk::ImageMemoryBarrier {
-        src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-        dst_access_mask: vk::AccessFlags::SHADER_READ,
-        old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        new_layout: layout,
-        image: gpu_image.image,
-        subresource_range,
-        ..Default::default()
-    };
-    gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    // let subresource_range = vk::ImageSubresourceRange {
+    //     aspect_mask: vk::ImageAspectFlags::COLOR,
+    //     base_mip_level: 0,
+    //     level_count: vim.mip_count,
+    //     base_array_layer: 0,
+    //     layer_count: 1
+    // };
+    // let image_memory_barrier = vk::ImageMemoryBarrier {
+    //     src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+    //     dst_access_mask: vk::AccessFlags::SHADER_READ,
+    //     old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+    //     new_layout: layout,
+    //     image: vim.image,
+    //     subresource_range,
+    //     ..Default::default()
+    // };
+    // gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
-    //Generate mipmaps
-    let image_memory_barrier = vk::ImageMemoryBarrier {
-        src_access_mask: vk::AccessFlags::empty(),
-        dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-        old_layout: layout,
-        new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        image: gpu_image.image,
-        subresource_range: vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: gpu_image.mip_count,
-            base_array_layer: 0,
-            layer_count: 1
-        },
-        ..Default::default()
-    };
-    gpu.device.cmd_pipeline_barrier(
-        command_buffer,
-        vk::PipelineStageFlags::TOP_OF_PIPE,
-        vk::PipelineStageFlags::TRANSFER,
-        vk::DependencyFlags::empty(),
-        &[], &[],
-        &[image_memory_barrier]
-    );
-
-    for i in 0..(gpu_image.mip_count - 1) {
-        let src_mip_barrier = vk::ImageMemoryBarrier {
+    if generate_mipmaps {
+        //Barrier to ensure the copy is finished before mipmap generation
+        let image_memory_barrier = vk::ImageMemoryBarrier {
             src_access_mask: vk::AccessFlags::empty(),
             dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
             old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            new_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            image: gpu_image.image,
+            new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            image: vim.image,
             subresource_range: vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: i,
-                level_count: 1,
+                base_mip_level: 0,
+                level_count: vim.mip_count,
                 base_array_layer: 0,
                 layer_count: 1
             },
@@ -287,70 +240,113 @@ pub unsafe fn record_image_upload_commands(gpu: &mut VulkanGraphicsDevice, comma
         };
         gpu.device.cmd_pipeline_barrier(
             command_buffer,
-            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
             vk::PipelineStageFlags::TRANSFER,
             vk::DependencyFlags::empty(),
             &[], &[],
-            &[src_mip_barrier]
+            &[image_memory_barrier]
         );
+        
+        //Generate mipmaps
+        for i in 0..(vim.mip_count - 1) {
+            let src_mip_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                new_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                image: vim.image,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: i,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1
+                },
+                ..Default::default()
+            };
+            gpu.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[], &[],
+                &[src_mip_barrier]
+            );
 
-        let src_subresource = vk::ImageSubresourceLayers {
+            let src_subresource = vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: i,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let dst_subresource = vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: i + 1,
+                base_array_layer: 0,
+                layer_count: 1
+            };
+            let src_offsets = [
+                vk::Offset3D {x: 0, y: 0, z: 0},
+                vk::Offset3D {x: (vim.width >> i) as i32, y: (vim.height >> i) as i32, z: 1}
+            ];
+            let dst_offsets = [
+                vk::Offset3D {x: 0, y: 0, z: 0},
+                vk::Offset3D {x: (vim.width >> (i + 1)) as i32, y: (vim.height >> (i + 1)) as i32, z: 1}
+            ];
+            let regions = [
+                vk::ImageBlit {
+                    src_subresource,
+                    src_offsets,
+                    dst_subresource,
+                    dst_offsets
+                }
+            ];
+            gpu.device.cmd_blit_image(
+                command_buffer,
+                vim.image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vim.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &regions,
+                vk::Filter::LINEAR
+            );
+        }
+
+        let subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_level: i,
+            base_mip_level: 0,
+            level_count: vim.mip_count,
             base_array_layer: 0,
             layer_count: 1
         };
-        let dst_subresource = vk::ImageSubresourceLayers {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_level: i + 1,
-            base_array_layer: 0,
-            layer_count: 1
+        let image_memory_barrier = vk::ImageMemoryBarrier {
+            src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+            dst_access_mask: vk::AccessFlags::SHADER_READ,
+            old_layout: vk::ImageLayout::UNDEFINED,
+            new_layout: layout,
+            image: vim.image,
+            subresource_range,
+            ..Default::default()
         };
-        let src_offsets = [
-            vk::Offset3D {x: 0, y: 0, z: 0},
-            vk::Offset3D {x: (gpu_image.width >> i) as i32, y: (gpu_image.height >> i) as i32, z: 1}
-        ];
-        let dst_offsets = [
-            vk::Offset3D {x: 0, y: 0, z: 0},
-            vk::Offset3D {x: (gpu_image.width >> (i + 1)) as i32, y: (gpu_image.height >> (i + 1)) as i32, z: 1}
-        ];
-        let regions = [
-            vk::ImageBlit {
-                src_subresource,
-                src_offsets,
-                dst_subresource,
-                dst_offsets
-            }
-        ];
-        gpu.device.cmd_blit_image(
-            command_buffer,
-            gpu_image.image,
-            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            gpu_image.image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &regions,
-            vk::Filter::LINEAR
-        );
+        gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
     }
 
-    let subresource_range = vk::ImageSubresourceRange {
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        base_mip_level: 0,
-        level_count: gpu_image.mip_count,
-        base_array_layer: 0,
-        layer_count: 1
-    };
-    let image_memory_barrier = vk::ImageMemoryBarrier {
-        src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-        dst_access_mask: vk::AccessFlags::SHADER_READ,
-        old_layout: vk::ImageLayout::UNDEFINED,
-        new_layout: layout,
-        image: gpu_image.image,
-        subresource_range,
+    gpu.device.end_command_buffer(command_buffer).unwrap();
+    
+    let submit_info = vk::SubmitInfo {
+        command_buffer_count: 1,
+        p_command_buffers: &command_buffer,
         ..Default::default()
     };
-    gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
+    gpu.device.queue_submit(queue, &[submit_info], fence).unwrap();
 
+    DeferredImage {
+        fence,
+        staging_buffer: Some(staging_buffer),
+        command_buffer_idx,
+        gpu_image: vim
+    }
 }
 
 pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw_bytes: &[u8]) {
@@ -469,7 +465,7 @@ pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], wid
     unsafe {
         let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
         let sampler = gpu.create_sampler(&vk::SamplerCreateInfo::default()).unwrap();
-        let def_image = upload_image_deferred(gpu, &image_create_info, sampler, gpu_image_layout, &raw_bytes);
+        let def_image = upload_image_deferred(gpu, &image_create_info, sampler, gpu_image_layout, true, &raw_bytes);
         let mut def_images = DeferredImage::synchronize(gpu, vec![def_image]);
         let finished_image_reqs = gpu.device.get_image_memory_requirements(def_images[0].gpu_image.image);
         let readback_buffer = GPUBuffer::allocate(gpu, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
