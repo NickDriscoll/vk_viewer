@@ -312,10 +312,9 @@ impl DevGui {
         if imgui_draw_data.total_vtx_count > 0 {
             //Destroy Dear ImGUI allocations from last dead frame
             {
-                let index_buffers = &mut self.frames[self.current_frame].index_buffers;
-                for geo in index_buffers.drain(0..index_buffers.len()) {
-                    geo.free(gpu);
-                }
+                let mut old_idx_buffers = Vec::with_capacity(self.frames[self.current_frame].index_buffers.len());
+                std::mem::swap(&mut self.frames[self.current_frame].index_buffers, &mut old_idx_buffers);
+                gpu.free_buffers(old_idx_buffers);
             }
 
             for list in imgui_draw_data.draw_lists() {

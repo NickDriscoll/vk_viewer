@@ -335,24 +335,6 @@ fn main() {
         gpu.device.create_pipeline_layout(&pipeline_layout_createinfo, vkdevice::MEMORY_ALLOCATOR).unwrap()
     };
 
-    let sun_shadow_map = CascadedShadowMap::new(
-        &mut gpu,
-        &mut renderer,
-        2048,
-        shadow_pass
-    );
-
-    let sunlight_key = renderer.new_directional_light(
-        SunLight {
-            pitch: 1.030,
-            yaw: 0.783,
-            pitch_speed: 0.003,
-            yaw_speed: 0.0,
-            irradiance: 790.0f32 * glm::vec3(1.0, 0.891, 0.796),
-            shadow_map: Some(sun_shadow_map)
-        }
-    ).unwrap();
-
     //Create graphics pipelines
     let [pbr_pipeline, terrain_pipeline, atmosphere_pipeline, shadow_pipeline, postfx_pipeline] = unsafe {
         use render::GraphicsPipelineBuilder;
@@ -399,7 +381,7 @@ fn main() {
                             .set_shader_stages(atm_shader_stages).set_msaa_samples(msaa_samples)
                             .set_depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL).build_info();
         let shadow_info = GraphicsPipelineBuilder::init(shadow_pass, graphics_pipeline_layout)
-                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::NONE).build_info();
+                            .set_shader_stages(s_shader_stages).set_cull_mode(vk::CullModeFlags::FRONT).build_info();
         let postfx_info = GraphicsPipelineBuilder::init(swapchain_pass, graphics_pipeline_layout)
                             .set_shader_stages(postfx_shader_stages).build_info();
                             
@@ -426,12 +408,31 @@ fn main() {
         gpu.device.create_compute_pipelines(vk::PipelineCache::default(), &[bloom_pipeline_info], vkdevice::MEMORY_ALLOCATOR).unwrap()[0]
     };
 
+    let sun_shadow_map = CascadedShadowMap::new(
+        &mut gpu,
+        &mut renderer,
+        2048,
+        shadow_pass
+    );
+
+    let sunlight_key = renderer.new_directional_light(
+        SunLight {
+            pitch: 1.030,
+            yaw: 0.783,
+            pitch_speed: 0.003,
+            yaw_speed: 0.0,
+            irradiance: 790.0f32 * glm::vec3(1.0, 0.891, 0.796),
+            shadow_map: Some(sun_shadow_map)
+        }
+    ).unwrap();
+
     let mut simulation_state = Simulation::new();
 
     //Define terrain
+    let terrain_res = 256;
     let mut terrain = TerrainSpec {
-        vertex_width: 256,
-        vertex_height: 256,
+        vertex_width: terrain_res,
+        vertex_height: terrain_res,
         amplitude: 2.0,
         exponent: 2.2,
         seed: unix_epoch_ms(),
@@ -474,7 +475,7 @@ fn main() {
         }
         let mut images = DeferredImage::synchronize(&mut gpu, terrain_def_images);
         let mut i = 0;
-        for im in images.drain(0..images.len()) {
+        for im in images {
             terrain_image_indices[i] = Some(renderer.global_images.insert(im.gpu_image) as u32);
             i += 1;
         }
@@ -664,7 +665,7 @@ fn main() {
                 gpu.device.destroy_semaphore(renderer.window_manager.swapchain_semaphore, vkdevice::MEMORY_ALLOCATOR);
 
                 //Recreate swapchain and associated data
-                renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass);
+                renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass, renderer.desired_present_mode);
 
                 //Recreate internal rendering buffers
                 let extent = vk::Extent3D {

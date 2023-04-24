@@ -131,7 +131,7 @@ pub fn load_bc7_info(gpu: &mut VulkanGraphicsDevice, path: &str) -> (vk::ImageCr
 pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create_info: &vk::ImageCreateInfo, sampler_key: SamplerKey, layout: vk::ImageLayout, generate_mipmaps: bool, raw_bytes: &[u8]) -> DeferredImage {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
-    let staging_buffer = GPUBuffer::allocate(gpu, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);     //TODO: Here and everywhere use a unifed staging buffer managed by the VulkanGraphicsDevice
+    let staging_buffer = gpu.allocate_buffer(bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);     //TODO: Here and everywhere use a unifed staging buffer managed by the VulkanGraphicsDevice
     staging_buffer.write_buffer(gpu, &raw_bytes);
 
     //Create image
@@ -352,7 +352,7 @@ pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create
 pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw_bytes: &[u8]) {
     //Create staging buffer and upload raw image data
     let bytes_size = raw_bytes.len() as vk::DeviceSize;
-    let staging_buffer = GPUBuffer::allocate(gpu, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+    let staging_buffer = gpu.allocate_buffer(bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
     staging_buffer.write_buffer(gpu, &raw_bytes);
 
     //Wait on the fence before beginning command recording
@@ -437,7 +437,7 @@ pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw
     let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
     gpu.device.queue_submit(queue, &[submit_info], gpu.command_buffer_fence).unwrap();
     gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    staging_buffer.free(gpu);
+    gpu.free_buffers(vec![staging_buffer]);
 }
 
 pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], width: u32, height: u32, format: vk::Format) -> Vec<u8> {
@@ -468,7 +468,7 @@ pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], wid
         let def_image = upload_image_deferred(gpu, &image_create_info, sampler, gpu_image_layout, true, &raw_bytes);
         let mut def_images = DeferredImage::synchronize(gpu, vec![def_image]);
         let finished_image_reqs = gpu.device.get_image_memory_requirements(def_images[0].gpu_image.image);
-        let readback_buffer = GPUBuffer::allocate(gpu, finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
+        let readback_buffer = gpu.allocate_buffer(finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
         
         let mut regions = Vec::with_capacity(mip_levels as usize);
         let mut current_offset = 0;
@@ -511,14 +511,15 @@ pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], wid
         let fence = gpu.device.create_fence(&vk::FenceCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap();
         gpu.device.queue_submit(queue, &[submit_info], fence).unwrap();
         gpu.device.wait_for_fences(&[fence], true, vk::DeviceSize::MAX).unwrap();
-        for im in def_images.drain(0..def_images.len()) {
+        for im in def_images {
             im.gpu_image.free(gpu);
         }
         gpu.command_buffer_indices.remove(cb_idx);
         gpu.destroy_sampler(sampler);
 
         let uncompressed_bytes = readback_buffer.read_buffer_bytes();
-        readback_buffer.free(gpu);
+
+        gpu.free_buffers(vec![readback_buffer]);
 
         let bc7_output_size = {
             let mut total = 0;

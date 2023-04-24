@@ -239,14 +239,16 @@ impl DeferredImage {
             }
             gpu.device.wait_for_fences(&fences, true, vk::DeviceSize::MAX).unwrap();
             let mut new_images = Vec::with_capacity(images.len());
+            let mut s_buffers = Vec::with_capacity(images.len());
             for mut image in images {
                 if let Some(buffer) = image.staging_buffer {
-                    buffer.free(gpu);
+                    s_buffers.push(buffer)
                 }
                 image.staging_buffer = None;
                 gpu.command_buffer_indices.remove(image.command_buffer_idx);
                 new_images.push(image);
             }
+            gpu.free_buffers(s_buffers);
             new_images
         }
     }
@@ -268,10 +270,22 @@ pub struct VulkanGraphicsDevice {
     pub command_buffer_indices: FreeList<u8>,
     pub command_buffers: Vec<vk::CommandBuffer>,
     pub command_buffer_fence: vk::Fence,
+    pub staging_buffer: GPUBuffer,              //TODO: Put this to use
     samplers: DenseSlotMap<SamplerKey, vk::Sampler>
 }
 
 impl VulkanGraphicsDevice {
+    pub fn allocate_buffer(&mut self, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags, memory_location: MemoryLocation) -> GPUBuffer {
+        VulkanGraphicsDevice::priv_allocate_buffer(&self.device, &mut self.allocator, size, alignment, usage_flags, memory_location)
+    }
+
+    pub fn free_buffers(&mut self, buffers: Vec<GPUBuffer>) {
+        for buffer in buffers {
+            self.allocator.free(buffer.allocation);
+            unsafe { self.device.destroy_buffer(buffer.buffer, MEMORY_ALLOCATOR); }
+        }
+    }
+
     pub unsafe fn upload_image(&mut self, info: &vk::ImageCreateInfo, sampler_key: SamplerKey, generate_mipmaps: bool, bytes: &[u8]) -> DeferredImage {
         let mut def_image = asset::upload_image_deferred(self, &info, sampler_key, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, generate_mipmaps, &bytes);
         
@@ -303,7 +317,7 @@ impl VulkanGraphicsDevice {
     pub unsafe fn upload_buffer<T>(&mut self, dst_buffer: vk::Buffer, offset: u64, raw_data: &[T]) {
         //Create staging buffer and upload raw buffer data
         let bytes_size = (raw_data.len() * size_of::<T>()) as vk::DeviceSize;
-        let staging_buffer = GPUBuffer::allocate(self, bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+        let staging_buffer = self.allocate_buffer(bytes_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
         staging_buffer.write_buffer(self, &raw_data);
 
         //Wait on the fence before beginning command recording
@@ -330,7 +344,7 @@ impl VulkanGraphicsDevice {
         self.device.queue_submit(queue, &[submit_info], self.command_buffer_fence).unwrap();
         self.device.wait_for_fences(&[self.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
         self.command_buffer_indices.remove(cbidx);
-        staging_buffer.free(self);
+        self.free_buffers(vec![staging_buffer]);
     }
 
     pub unsafe fn create_sampler(&mut self, info: &vk::SamplerCreateInfo) -> VkResult<SamplerKey> {
@@ -401,11 +415,10 @@ impl VulkanGraphicsDevice {
         let mut main_queue_family_index = 0;
         let buffer_device_address;
         let vk_device = unsafe {
-            let phys_devices = vk_instance.enumerate_physical_devices();
-            if let Err(e) = phys_devices {
-                crash_with_error_dialog(&format!("Unable to enumerate physical devices: {}", e));
-            }
-            let phys_devices = phys_devices.unwrap();
+            let phys_devices = match vk_instance.enumerate_physical_devices() {
+                Ok(devices) => { devices }
+                Err(e) => { crash_with_error_dialog(&format!("Unable to enumerate physical devices: {}", e)); }
+            };
 
             //Search for the physical device
             const DEVICE_TYPES: [vk::PhysicalDeviceType; 3] = [
@@ -463,6 +476,7 @@ impl VulkanGraphicsDevice {
             let mut i = 0;
             let qfps = vk_instance.get_physical_device_queue_family_properties(vk_physical_device);
             for qfp in qfps {
+                //Vulkan guarantees that the Queue with the GRAPHICS flag supports all operations
                 if qfp.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
                     main_queue_family_index = i;
                     break;
@@ -509,7 +523,7 @@ impl VulkanGraphicsDevice {
         let vk_ext_sync2 = ash::extensions::khr::Synchronization2::new(&vk_instance, &vk_device);
 
         //Initialize gpu_allocator
-        let allocator = Allocator::new(&AllocatorCreateDesc {
+        let mut allocator = Allocator::new(&AllocatorCreateDesc {
             instance: vk_instance.clone(),
             device: vk_device.clone(),
             physical_device: vk_physical_device,
@@ -547,6 +561,9 @@ impl VulkanGraphicsDevice {
             vk_device.create_fence(&create_info, MEMORY_ALLOCATOR).unwrap()
         };
 
+        let staging_buffer_size = 256 * 1024 * 1024;
+        let staging_buffer = Self::priv_allocate_buffer(&vk_device, &mut allocator, staging_buffer_size, 0, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu);
+
         VulkanGraphicsDevice {
             instance: vk_instance,
             physical_device: vk_physical_device,
@@ -561,7 +578,39 @@ impl VulkanGraphicsDevice {
             command_buffer_indices: FreeList::with_capacity(command_buffer_count),
             command_buffers: general_command_buffers,
             command_buffer_fence: graphics_command_buffer_fence,
+            staging_buffer,
             samplers: DenseSlotMap::with_key()
+        }
+    }
+
+    fn priv_allocate_buffer(device: &ash::Device, allocator: &mut Allocator, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags, memory_location: MemoryLocation) -> GPUBuffer {
+        let vk_buffer;
+        let actual_size = size_to_alignment!(size, alignment);
+        let allocation = unsafe {
+            let buffer_create_info = vk::BufferCreateInfo {
+                usage: usage_flags,
+                size: actual_size,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            vk_buffer = device.create_buffer(&buffer_create_info, MEMORY_ALLOCATOR).unwrap();
+            let mem_reqs = device.get_buffer_memory_requirements(vk_buffer);
+
+            let a = allocator.allocate(&AllocationCreateDesc {
+                name: "",
+                requirements: mem_reqs,
+                location: memory_location,
+                linear: true,
+                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged
+            }).unwrap();
+            device.bind_buffer_memory(vk_buffer, a.memory(), a.offset()).unwrap();
+            a
+        };
+
+        GPUBuffer {
+            buffer: vk_buffer,
+            allocation,
+            length: actual_size
         }
     }
 }
@@ -582,42 +631,6 @@ impl GPUBuffer {
     pub fn buffer(&self) -> vk::Buffer { self.buffer }
     pub fn length(&self) -> vk::DeviceSize { self.length }
 
-    pub fn allocate(gpu: &mut VulkanGraphicsDevice, size: vk::DeviceSize, alignment: vk::DeviceSize, usage_flags: vk::BufferUsageFlags, memory_location: MemoryLocation) -> Self {
-        let vk_buffer;
-        let actual_size = size_to_alignment!(size, alignment);
-        let allocation = unsafe {
-            let buffer_create_info = vk::BufferCreateInfo {
-                usage: usage_flags,
-                size: actual_size,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            vk_buffer = gpu.device.create_buffer(&buffer_create_info, MEMORY_ALLOCATOR).unwrap();
-            let mem_reqs = gpu.device.get_buffer_memory_requirements(vk_buffer);
-
-            let a = gpu.allocator.allocate(&AllocationCreateDesc {
-                name: "",
-                requirements: mem_reqs,
-                location: memory_location,
-                linear: true,
-                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged
-            }).unwrap();
-            gpu.device.bind_buffer_memory(vk_buffer, a.memory(), a.offset()).unwrap();
-            a
-        };
-
-        GPUBuffer {
-            buffer: vk_buffer,
-            allocation,
-            length: actual_size
-        }
-    }
-
-    pub fn free(self, gpu: &mut VulkanGraphicsDevice) {
-        gpu.allocator.free(self.allocation).unwrap();
-        unsafe { gpu.device.destroy_buffer(self.buffer, MEMORY_ALLOCATOR); }
-    }
-
     #[named]
     pub fn read_buffer_bytes(&self) -> Vec<u8> {
         match self.allocation.mapped_slice() {
@@ -631,10 +644,10 @@ impl GPUBuffer {
     }
 
     pub fn write_buffer<T>(&self, gpu: &mut VulkanGraphicsDevice, in_buffer: &[T]) {
-        self.write_subbuffer_elements(gpu, in_buffer, 0);
+        self.write_subbuffer(gpu, in_buffer, 0);
     }
 
-    pub fn write_subbuffer_elements<T>(&self, gpu: &mut VulkanGraphicsDevice, in_buffer: &[T], offset: u64) {
+    pub fn write_subbuffer<T>(&self, gpu: &mut VulkanGraphicsDevice, in_buffer: &[T], offset: u64) {
         let byte_buffer = slice_to_bytes(in_buffer);
         let byte_offset = offset * size_of::<T>() as u64;
         self.write_subbuffer_bytes(gpu, byte_buffer, byte_offset as u64);

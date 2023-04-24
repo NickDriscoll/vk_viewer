@@ -23,7 +23,7 @@ pub struct WindowManager {
 }
 
 impl WindowManager {
-    pub fn init(gpu: &mut VulkanGraphicsDevice, sdl_window: &sdl2::video::Window, render_pass: vk::RenderPass) -> Self {
+    pub fn init(gpu: &mut VulkanGraphicsDevice, sdl_window: &sdl2::video::Window, render_pass: vk::RenderPass, desired_present_mode: vk::PresentModeKHR) -> Self {
         //Use SDL to create the Vulkan surface
         let vk_surface = {
             use ash::vk::Handle;
@@ -55,7 +55,7 @@ impl WindowManager {
                 }
             }
 
-            let desired_present_mode = vk::PresentModeKHR::FIFO;
+            //let desired_present_mode = vk::PresentModeKHR::FIFO;
             //let desired_present_mode = vk::PresentModeKHR::MAILBOX;
             let mut has_fifo = false;
             for mode in present_modes {
@@ -298,7 +298,8 @@ pub struct Renderer {
     pub samplers_descriptor_index: u32,
     pub storage_images_descriptor_index: u32,
     pub frames_in_flight: Vec<InFlightFrameData>,
-    pub in_flight_frame: usize
+    pub in_flight_frame: usize,
+    pub desired_present_mode: vk::PresentModeKHR
 }
 
 impl Renderer {
@@ -339,8 +340,7 @@ impl Renderer {
         //Allocate buffer for frame-constant uniforms
         let uniform_buffer_alignment = gpu.physical_device_properties.limits.min_uniform_buffer_offset_alignment;
         let uniform_buffer_size = Self::FRAMES_IN_FLIGHT as u64 * size_to_alignment!(size_of::<EnvironmentUniforms>() as vk::DeviceSize, uniform_buffer_alignment);
-        let uniform_buffer = GPUBuffer::allocate(
-            gpu,
+        let uniform_buffer = gpu.allocate_buffer(
             uniform_buffer_size,
             uniform_buffer_alignment,
             vk::BufferUsageFlags::UNIFORM_BUFFER,
@@ -352,8 +352,7 @@ impl Renderer {
         //Allocate buffer for instance data
         let max_instances = 1024 * 4;
         let buffer_size = (size_of::<render::InstanceData>() * max_instances * Self::FRAMES_IN_FLIGHT) as vk::DeviceSize;
-        let instance_buffer = GPUBuffer::allocate(
-            gpu,
+        let instance_buffer = gpu.allocate_buffer(
             buffer_size,
             storage_buffer_alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -363,8 +362,7 @@ impl Renderer {
         //Allocate material buffer
         let global_material_slots = 1024 * 4;
         let buffer_size = (global_material_slots * size_of::<GPUMaterial>()) as vk::DeviceSize;
-        let material_buffer = GPUBuffer::allocate(
-            gpu,
+        let material_buffer = gpu.allocate_buffer(
             buffer_size,
             storage_buffer_alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
@@ -375,8 +373,7 @@ impl Renderer {
         let usage_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
 
         //Allocate main vertex buffer
-        let vertex_buffer = GPUBuffer::allocate(
-            gpu,
+        let vertex_buffer = gpu.allocate_buffer(
             max_vertices * size_of::<glm::TVec4<f32>>() as u64,
             storage_buffer_alignment,
             usage_flags,
@@ -385,16 +382,14 @@ impl Renderer {
 
         //Allocate imgui buffer
         let max_imgui_vertices = 1024 * 1024;
-        let imgui_buffer = GPUBuffer::allocate(
-            gpu,
+        let imgui_buffer = gpu.allocate_buffer(
             DevGui::FLOATS_PER_VERTEX as u64 * max_imgui_vertices * size_of::<f32>() as u64,
             storage_buffer_alignment,
             usage_flags,
             MemoryLocation::CpuToGpu
         );
         
-        let compute_buffer = GPUBuffer::allocate(
-            gpu,
+        let compute_buffer = gpu.allocate_buffer(
             (3840 * 2160 * size_of::<u32>()) as u64,
             storage_buffer_alignment,
             vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -405,7 +400,8 @@ impl Renderer {
         let mut global_images = FreeList::with_capacity(Self::GLOBAL_IMAGE_SLOTS);
 
         //Create the main swapchain for window present
-        let window_manager = WindowManager::init(gpu, &window, swapchain_render_pass);
+        let desired_present_mode = vk::PresentModeKHR::MAILBOX;
+        let window_manager = WindowManager::init(gpu, &window, swapchain_render_pass, desired_present_mode);
         
         let surf_capabilities = unsafe { gpu.ext_surface.get_physical_device_surface_capabilities(gpu.physical_device, window_manager.surface).unwrap() };
         let primary_framebuffer_extent = vk::Extent3D {
@@ -753,7 +749,7 @@ impl Renderer {
             let mut def_images = DeferredImage::synchronize(gpu, def_images);
             let indices = [&mut uniforms.sunzenith_idx, &mut uniforms.viewzenith_idx, &mut uniforms.sunview_idx];
             let mut i = 0;
-            for image in def_images.drain(0..def_images.len()) {
+            for image in def_images {
                 *indices[i] = global_images.insert(image.gpu_image) as u32;
                 i += 1;
             }
@@ -832,7 +828,8 @@ impl Renderer {
             directional_lights: SlotMap::with_key(),
             irradiance_map_idx,
             frames_in_flight: in_flight_frame_data,
-            in_flight_frame: 0
+            in_flight_frame: 0,
+            desired_present_mode
         }
     }
 
@@ -1070,8 +1067,6 @@ impl Renderer {
                     let def_image = gpu.upload_image(&info, renderer.material_sampler, true, data.texture_bytes[prim_tex_idx].as_slice());
                     let def_image = DeferredImage::synchronize(gpu, vec![def_image]).drain(..).next().unwrap(); //TODO: This is the lazy inefficient way bc this entire public function really shouldn't exist
 
-                    //let image = GPUImage::from_png_bytes(gpu, renderer.material_sampler, data.texture_bytes[prim_tex_idx].as_slice());
-
                     let global_tex_id = renderer.global_images.insert(def_image.gpu_image) as u32;
                     tex_id_map.insert(prim_tex_idx, global_tex_id);
                     global_tex_id
@@ -1206,7 +1201,7 @@ impl Renderer {
         }
         let mut final_def_images = DeferredImage::synchronize(gpu, def_images);
         let mut global_image_indices = Vec::with_capacity(final_def_images.len());
-        for d_image in final_def_images.drain(..) {
+        for d_image in final_def_images {
             global_image_indices.push(self.global_images.insert(d_image.gpu_image));
         }
         
@@ -1343,7 +1338,7 @@ impl Renderer {
 
         let sample_count = msaa_samples_from_limit(gpu.physical_device_properties.limits.framebuffer_color_sample_counts);
         let mut framebuffers = Self::create_hdr_framebuffers(gpu, extent, hdr_render_pass, self.postfx_sampler, &mut self.global_images, sample_count);
-        let mut fb_drainer = framebuffers.drain(0..framebuffers.len());
+        let mut fb_drainer = framebuffers.drain(..);
         for i in 0..self.frames_in_flight.len() {
             let frame = &mut self.frames_in_flight[i];
             frame.framebuffer = fb_drainer.next().unwrap();
@@ -1359,7 +1354,7 @@ impl Renderer {
     }
 
     pub fn upload_vertex_data(&mut self, gpu: &mut VulkanGraphicsDevice, data: &[f32]) -> GPUBufferBlock {
-        self.vertex_buffer.write_subbuffer_elements(gpu, data, self.vertex_offset);
+        self.vertex_buffer.write_subbuffer(gpu, data, self.vertex_offset);
 
         let data_length = data.len().try_into().unwrap();
         let buffer_block = GPUBufferBlock {
@@ -1373,13 +1368,13 @@ impl Renderer {
     }
 
     pub fn replace_vertex_block(&self, gpu: &mut VulkanGraphicsDevice, block: &GPUBufferBlock, data: &[f32]) {
-        self.vertex_buffer.write_subbuffer_elements(gpu, data, block.start_offset);
+        self.vertex_buffer.write_subbuffer(gpu, data, block.start_offset);
     }
 
     fn upload_vertex_attribute(gpu: &mut VulkanGraphicsDevice, data: &[f32], buffer: &GPUBuffer, offset: &mut u64) -> u32 {
         let old_offset = *offset;
         let new_offset = old_offset + data.len() as u64;
-        buffer.write_subbuffer_elements(gpu, data, old_offset);
+        buffer.write_subbuffer(gpu, data, old_offset);
         *offset = new_offset;
         old_offset.try_into().unwrap()
     }
@@ -1653,7 +1648,7 @@ impl Renderer {
         //The actual updating has to occur after prepare_frame() so that the offset values are computed correctly.
 
         //Update uniform buffer
-        self.uniform_buffer.write_subbuffer_elements(gpu, struct_to_bytes(&self.uniform_data), dynamic_uniform_offset);
+        self.uniform_buffer.write_subbuffer(gpu, struct_to_bytes(&self.uniform_data), dynamic_uniform_offset);
 
         //Update instance data storage buffer
         self.instance_buffer.write_subbuffer_bytes(gpu, slice_to_bytes(self.instance_data.as_slice()), start_offset);

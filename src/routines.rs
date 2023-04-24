@@ -144,8 +144,7 @@ pub fn reset_totoro(physics_engine: &mut PhysicsEngine, totoro: &Entity) {
 }
 
 pub fn make_index_buffer(gpu: &mut VulkanGraphicsDevice, indices: &[u32]) -> GPUBuffer {
-    let index_buffer = GPUBuffer::allocate(
-        gpu,
+    let index_buffer = gpu.allocate_buffer(
         (indices.len() * size_of::<u32>()) as vk::DeviceSize,
         0,
         vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
