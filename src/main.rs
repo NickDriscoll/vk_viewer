@@ -544,14 +544,15 @@ fn main() {
         .translation(glm::vec3(0.0, 0.0, 20.0))
         .ccd_enabled(true)
         .build();
-        let collider = ColliderBuilder::ball(2.1).restitution(2.5).build();
+
+        let collider = ColliderBuilder::ball(0.75).restitution(2.5).build();
         let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
         let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
 
         let p_component = PhysicsComponent {
             rigid_body_handle,
             collider_handle: Some(collider_handle),
-            rigid_body_offset: glm::vec3(0.0, 0.0, 2.25),
+            rigid_body_offset: glm::vec3(0.0, 0.0, 1.0),
             scale: 1.0
         };
         let e = Entity::new(String::from("Bouncy Totoro"), totoro_model, &mut physics_engine).set_physics_component(p_component);
@@ -631,13 +632,13 @@ fn main() {
             .linvel(shoot_dir * 40.0)
             .ccd_enabled(true)
             .build();
-            let collider = ColliderBuilder::ball(2.25).restitution(0.5).build();
+            let collider = ColliderBuilder::ball(0.75).restitution(0.5).build();
             let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
             let collider_handle = physics_engine.collider_set.insert_with_parent(collider, rigid_body_handle, &mut physics_engine.rigid_body_set);
             let p_component = PhysicsComponent {
                 rigid_body_handle,
                 collider_handle: Some(collider_handle),
-                rigid_body_offset: glm::vec3(0.0, 0.0, 2.25),
+                rigid_body_offset: glm::vec3(0.0, 0.0, 1.0),
                 scale: 1.0
             };
             let e = Entity::new(format!("Dynamic Totoro #{}", totoro_counter), totoro_model, &mut physics_engine).set_physics_component(p_component);
@@ -648,7 +649,7 @@ fn main() {
 
         //Handle needing to resize the window
         unsafe {
-            if user_input.resize_window {
+            if user_input.resize_window || renderer.wants_window_resize {
                 //Window resizing requires us to "flush the pipeline"
                 gpu.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
@@ -678,6 +679,7 @@ fn main() {
                 window_size = glm::vec2(renderer.window_manager.extent.width, renderer.window_manager.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
                 imgui_io.display_size[1] = window_size.y as f32;
+                renderer.wants_window_resize = false;
             }
         }
 
@@ -759,7 +761,7 @@ fn main() {
                 imgui_ui.slider("Ambient factor", 0.0, 500.0, &mut renderer.uniform_data.ambient_factor);    
                 imgui_ui.slider_config("Bloom strength", 0.0, 1.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.bloom_strength);
                 imgui_ui.slider_config("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.exposure);
-                imgui_ui.slider_config("Emissive exaggeration", 1.0, 100.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.emissive_exaggeration);
+                imgui_ui.slider_config("Emissive exaggeration", 1.0, 1000.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.emissive_exaggeration);
                 imgui_ui.slider("Fog factor", 0.0, 8.0, &mut renderer.uniform_data.fog_density);
                 imgui_ui.slider("Stars threshold", 0.0, 16.0, &mut renderer.uniform_data.stars_threshold);
                 imgui_ui.slider("Stars exposure", 0.0, 5000.0, &mut renderer.uniform_data.stars_exposure);
@@ -802,6 +804,16 @@ fn main() {
                     } else {
                         0.0
                     };
+                }
+
+                let mut state = renderer.desired_present_mode == vk::PresentModeKHR::FIFO;
+                if imgui_ui.checkbox("V-Sync", &mut state) {
+                    renderer.wants_window_resize = true;
+                    renderer.desired_present_mode = if state {
+                        vk::PresentModeKHR::FIFO
+                    } else {
+                        vk::PresentModeKHR::MAILBOX
+                    }
                 }
     
                 t.end();

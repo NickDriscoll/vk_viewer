@@ -356,9 +356,11 @@ pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw
     staging_buffer.write_buffer(gpu, &raw_bytes);
 
     //Wait on the fence before beginning command recording
-    gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-    gpu.device.reset_fences(&[gpu.command_buffer_fence]).unwrap();
-    gpu.device.begin_command_buffer(gpu.command_buffers[0], &vk::CommandBufferBeginInfo::default()).unwrap();
+    let cbidx = gpu.command_buffer_indices.insert(0);
+    let cb_fence = gpu.command_buffer_fences[cbidx];
+    gpu.device.wait_for_fences(&[cb_fence], true, vk::DeviceSize::MAX).unwrap();
+    gpu.device.reset_fences(&[cb_fence]).unwrap();
+    gpu.device.begin_command_buffer(gpu.command_buffers[cbidx], &vk::CommandBufferBeginInfo::default()).unwrap();
 
     let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
@@ -375,7 +377,7 @@ pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw
         },
         ..Default::default()
     };
-    gpu.device.cmd_pipeline_barrier(gpu.command_buffers[0], vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    gpu.device.cmd_pipeline_barrier(gpu.command_buffers[cbidx], vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     let mut cumulative_offset = 0;
     let mut copy_regions = vec![vk::BufferImageCopy::default(); image.mip_count as usize];
@@ -407,7 +409,7 @@ pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw
         cumulative_offset += w * h;
     }
 
-    gpu.device.cmd_copy_buffer_to_image(gpu.command_buffers[0], staging_buffer.buffer(), image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
+    gpu.device.cmd_copy_buffer_to_image(gpu.command_buffers[cbidx], staging_buffer.buffer(), image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
 
     let subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -425,18 +427,18 @@ pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw
         subresource_range,
         ..Default::default()
     };
-    gpu.device.cmd_pipeline_barrier(gpu.command_buffers[0], vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
+    gpu.device.cmd_pipeline_barrier(gpu.command_buffers[cbidx], vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
-    gpu.device.end_command_buffer(gpu.command_buffers[0]).unwrap();
+    gpu.device.end_command_buffer(gpu.command_buffers[cbidx]).unwrap();
     
     let submit_info = vk::SubmitInfo {
         command_buffer_count: 1,
-        p_command_buffers: &gpu.command_buffers[0],
+        p_command_buffers: &gpu.command_buffers[cbidx],
         ..Default::default()
     };
     let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
-    gpu.device.queue_submit(queue, &[submit_info], gpu.command_buffer_fence).unwrap();
-    gpu.device.wait_for_fences(&[gpu.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+    gpu.device.queue_submit(queue, &[submit_info], cb_fence).unwrap();
+    gpu.device.wait_for_fences(&[cb_fence], true, vk::DeviceSize::MAX).unwrap();
     gpu.free_buffers(vec![staging_buffer]);
 }
 
@@ -466,7 +468,7 @@ pub fn raw2bc7_synchronous(gpu: &mut VulkanGraphicsDevice, raw_bytes: &[u8], wid
         let gpu_image_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
         let sampler = gpu.create_sampler(&vk::SamplerCreateInfo::default()).unwrap();
         let def_image = upload_image_deferred(gpu, &image_create_info, sampler, gpu_image_layout, true, &raw_bytes);
-        let mut def_images = DeferredImage::synchronize(gpu, vec![def_image]);
+        let def_images = DeferredImage::synchronize(gpu, vec![def_image]);
         let finished_image_reqs = gpu.device.get_image_memory_requirements(def_images[0].gpu_image.image);
         let readback_buffer = gpu.allocate_buffer(finished_image_reqs.size, finished_image_reqs.alignment, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu);
         

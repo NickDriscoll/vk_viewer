@@ -232,6 +232,8 @@ pub struct DeferredImage {
 
 impl DeferredImage {
     pub fn synchronize(gpu: &mut VulkanGraphicsDevice, images: Vec<Self>) -> Vec<Self> {
+        if images.len() == 0 { return images; }
+
         unsafe {
             let mut fences = Vec::with_capacity(images.len());
             for image in images.iter() {
@@ -269,8 +271,9 @@ pub struct VulkanGraphicsDevice {
     pub command_pool: vk::CommandPool,
     pub command_buffer_indices: FreeList<u8>,
     pub command_buffers: Vec<vk::CommandBuffer>,
-    pub command_buffer_fence: vk::Fence,
+    pub command_buffer_fences: Vec<vk::Fence>,
     pub staging_buffer: GPUBuffer,              //TODO: Put this to use
+
     samplers: DenseSlotMap<SamplerKey, vk::Sampler>
 }
 
@@ -321,9 +324,12 @@ impl VulkanGraphicsDevice {
         staging_buffer.write_buffer(self, &raw_data);
 
         //Wait on the fence before beginning command recording
-        self.device.wait_for_fences(&[self.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
-        self.device.reset_fences(&[self.command_buffer_fence]).unwrap();
+        // self.device.wait_for_fences(&[self.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+        // self.device.reset_fences(&[self.command_buffer_fence]).unwrap();
         let cbidx = self.command_buffer_indices.insert(0);
+        let cb_fence = self.command_buffer_fences[cbidx];
+        self.device.wait_for_fences(&[cb_fence], true, vk::DeviceSize::MAX).unwrap();
+        self.device.reset_fences(&[cb_fence]).unwrap();
         self.device.begin_command_buffer(self.command_buffers[cbidx], &vk::CommandBufferBeginInfo::default()).unwrap();
 
         let copy = vk::BufferCopy {
@@ -341,8 +347,8 @@ impl VulkanGraphicsDevice {
             ..Default::default()
         };
         let queue = self.device.get_device_queue(self.main_queue_family_index, 0);
-        self.device.queue_submit(queue, &[submit_info], self.command_buffer_fence).unwrap();
-        self.device.wait_for_fences(&[self.command_buffer_fence], true, vk::DeviceSize::MAX).unwrap();
+        self.device.queue_submit(queue, &[submit_info], cb_fence).unwrap();
+        self.device.wait_for_fences(&[cb_fence], true, vk::DeviceSize::MAX).unwrap();
         self.command_buffer_indices.remove(cbidx);
         self.free_buffers(vec![staging_buffer]);
     }
@@ -441,7 +447,7 @@ impl VulkanGraphicsDevice {
 
             vk_physical_device = match phys_device {
                 Some(device) => { device }
-                None => { crash_with_error_dialog("Unable to selected physical device."); }
+                None => { crash_with_error_dialog("Unable to select physical device."); }
             };
 
             vk_physical_device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
@@ -451,13 +457,11 @@ impl VulkanGraphicsDevice {
             let mut buffer_address_features = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
             let mut indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
             let mut sync2_features = vk::PhysicalDeviceSynchronization2Features::default();
+            let mut physical_device_features = vk::PhysicalDeviceFeatures2::default();
+            physical_device_features.p_next = &mut indexing_features as *mut _ as *mut c_void;
             indexing_features.p_next = &mut buffer_address_features as *mut _ as *mut c_void;
             buffer_address_features.p_next = &mut multiview_features as *mut _ as *mut c_void;
             multiview_features.p_next = &mut sync2_features as *mut _ as *mut c_void;
-            let mut physical_device_features = vk::PhysicalDeviceFeatures2 {
-                p_next: &mut indexing_features as *mut _ as *mut c_void,
-                ..Default::default()
-            };
             vk_instance.get_physical_device_features2(vk_physical_device, &mut physical_device_features);
             
             if multiview_features.multiview == vk::FALSE {
@@ -553,12 +557,17 @@ impl VulkanGraphicsDevice {
             vk_device.allocate_command_buffers(&command_buffer_alloc_info).unwrap()
         };
 
-        let graphics_command_buffer_fence = unsafe {
+        let graphics_command_buffer_fences = unsafe {
+            let mut v = Vec::with_capacity(command_buffer_count);
             let create_info = vk::FenceCreateInfo {
                 flags: vk::FenceCreateFlags::SIGNALED,
                 ..Default::default()
             };
-            vk_device.create_fence(&create_info, MEMORY_ALLOCATOR).unwrap()
+            for i in 0..command_buffer_count {
+                let f = vk_device.create_fence(&create_info, MEMORY_ALLOCATOR).unwrap();
+                v.push(f);
+            }
+            v
         };
 
         let staging_buffer_size = 256 * 1024 * 1024;
@@ -577,7 +586,7 @@ impl VulkanGraphicsDevice {
             command_pool,
             command_buffer_indices: FreeList::with_capacity(command_buffer_count),
             command_buffers: general_command_buffers,
-            command_buffer_fence: graphics_command_buffer_fence,
+            command_buffer_fences: graphics_command_buffer_fences,
             staging_buffer,
             samplers: DenseSlotMap::with_key()
         }

@@ -299,7 +299,8 @@ pub struct Renderer {
     pub storage_images_descriptor_index: u32,
     pub frames_in_flight: Vec<InFlightFrameData>,
     pub in_flight_frame: usize,
-    pub desired_present_mode: vk::PresentModeKHR
+    pub desired_present_mode: vk::PresentModeKHR,
+    pub wants_window_resize: bool
 }
 
 impl Renderer {
@@ -400,7 +401,7 @@ impl Renderer {
         let mut global_images = FreeList::with_capacity(Self::GLOBAL_IMAGE_SLOTS);
 
         //Create the main swapchain for window present
-        let desired_present_mode = vk::PresentModeKHR::MAILBOX;
+        let desired_present_mode = vk::PresentModeKHR::FIFO;
         let window_manager = WindowManager::init(gpu, &window, swapchain_render_pass, desired_present_mode);
         
         let surf_capabilities = unsafe { gpu.ext_surface.get_physical_device_surface_capabilities(gpu.physical_device, window_manager.surface).unwrap() };
@@ -829,7 +830,8 @@ impl Renderer {
             irradiance_map_idx,
             frames_in_flight: in_flight_frame_data,
             in_flight_frame: 0,
-            desired_present_mode
+            desired_present_mode,
+            wants_window_resize: false
         }
     }
 
