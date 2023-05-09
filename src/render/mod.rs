@@ -1088,7 +1088,6 @@ impl Renderer {
             return key;
         }
 
-        //let mut loading_images = vec![];
         let mut primitive_keys = vec![];
         let mut tex_id_map = HashMap::new();
         for prim in &data.primitives {

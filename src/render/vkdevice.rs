@@ -545,8 +545,9 @@ impl VulkanGraphicsDevice {
             vk_device.create_command_pool(&pool_create_info, MEMORY_ALLOCATOR).unwrap()
         };
 
-        //Create command buffer
-        let command_buffer_count = 1024;
+        //Create general purpose command buffers for various async GPU operations
+        //let command_buffer_count = 1024;
+        let command_buffer_count = 64;          
         let general_command_buffers = unsafe {
             let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
                 command_pool,

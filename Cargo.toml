@@ -46,4 +46,4 @@ features = ["linked"]
 
 [dependencies.sdl2]
 version = "0.35.2"
-features = ["bundled", "mixer", "raw-window-handle"]
+features = ["mixer", "raw-window-handle"]

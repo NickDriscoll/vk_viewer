@@ -57,7 +57,7 @@ fn main() {
     //Create the window using SDL
     let sdl_context = unwrap_result(sdl2::init(), "Error initializing SDL");
     let video_subsystem = unwrap_result(sdl_context.video(), "Error initializing SDL video subsystem");
-    let mut window_size = glm::vec2(1920, 1080);
+    let mut window_size = glm::vec2(1280, 720);
     let window = unwrap_result(video_subsystem.window("Vulkan't", window_size.x, window_size.y).position_centered().resizable().vulkan().build(), "Error creating window");
     
     //Initialize the SDL mixer
@@ -473,7 +473,7 @@ fn main() {
 
             terrain_def_images.push(def_image);
         }
-        let mut images = DeferredImage::synchronize(&mut gpu, terrain_def_images);
+        let images = DeferredImage::synchronize(&mut gpu, terrain_def_images);
         let mut i = 0;
         for im in images {
             terrain_image_indices[i] = Some(renderer.global_images.insert(im.gpu_image) as u32);
