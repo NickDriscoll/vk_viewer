@@ -155,7 +155,8 @@ pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create
     let command_buffer_idx = gpu.command_buffer_indices.insert(0);
 
     let command_buffer = gpu.command_buffers[command_buffer_idx];
-    gpu.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();let image_memory_barrier = vk::ImageMemoryBarrier {
+    gpu.device.begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default()).unwrap();
+    let image_memory_barrier = vk::ImageMemoryBarrier {
         src_access_mask: vk::AccessFlags::empty(),
         dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
         old_layout: vk::ImageLayout::UNDEFINED,
@@ -202,24 +203,6 @@ pub unsafe fn upload_image_deferred(gpu: &mut VulkanGraphicsDevice, image_create
     }
 
     gpu.device.cmd_copy_buffer_to_image(command_buffer, staging_buffer.buffer(), vim.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &copy_regions);
-
-    // let subresource_range = vk::ImageSubresourceRange {
-    //     aspect_mask: vk::ImageAspectFlags::COLOR,
-    //     base_mip_level: 0,
-    //     level_count: vim.mip_count,
-    //     base_array_layer: 0,
-    //     layer_count: 1
-    // };
-    // let image_memory_barrier = vk::ImageMemoryBarrier {
-    //     src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-    //     dst_access_mask: vk::AccessFlags::SHADER_READ,
-    //     old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-    //     new_layout: layout,
-    //     image: vim.image,
-    //     subresource_range,
-    //     ..Default::default()
-    // };
-    // gpu.device.cmd_pipeline_barrier(command_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_memory_barrier]);
 
     if generate_mipmaps {
         //Barrier to ensure the copy is finished before mipmap generation
