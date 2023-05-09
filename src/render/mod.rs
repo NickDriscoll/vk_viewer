@@ -9,6 +9,7 @@ use crate::{*, asset::load_bc7_info};
 pub use structs::*;
 use vkdevice::*;
 
+pub mod atmosphere;
 pub mod structs;
 pub mod vkdevice;
 
