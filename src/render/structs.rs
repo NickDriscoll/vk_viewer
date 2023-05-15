@@ -19,6 +19,15 @@ pub struct DeferredDelete {
     pub frames_til_deletion: u32
 }
 
+pub struct SunLight {
+    pub pitch: f32,
+    pub yaw: f32,
+    pub pitch_speed: f32,
+    pub yaw_speed: f32,
+    pub irradiance: glm::TVec3<f32>,
+    pub shadow_map: Option<CascadedShadowMap>
+}
+
 //1:1 with shader struct
 #[derive(Clone, Debug, Default)]
 #[repr(C)]
@@ -498,15 +507,6 @@ impl CascadedShadowMap {
         }
         out_mats
     }
-}
-
-pub struct SunLight {
-    pub pitch: f32,
-    pub yaw: f32,
-    pub pitch_speed: f32,
-    pub yaw_speed: f32,
-    pub irradiance: glm::TVec3<f32>,
-    pub shadow_map: Option<CascadedShadowMap>
 }
 
 pub struct VertexInputConfiguration {

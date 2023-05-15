@@ -123,8 +123,6 @@ pub unsafe fn upload_raw_image(gpu: &mut VulkanGraphicsDevice, sampler_key: Samp
         initial_layout: vk::ImageLayout::UNDEFINED,
         ..Default::default()
     };
-    let normal_image = gpu.device.create_image(&image_create_info, MEMORY_ALLOCATOR).unwrap();
-    let allocation = allocate_image_memory(gpu, normal_image);
 
     let sampler = gpu.get_sampler(sampler_key).unwrap();
     let def_image = asset::upload_image_deferred(gpu, &image_create_info, sampler_key, layout, true, rgba);
@@ -132,7 +130,7 @@ pub unsafe fn upload_raw_image(gpu: &mut VulkanGraphicsDevice, sampler_key: Samp
 
     //Then create the image view
     let view_info = vk::ImageViewCreateInfo {
-        image: normal_image,
+        image: vim.image,
         format,
         view_type: vk::ImageViewType::TYPE_2D,
         components: COMPONENT_MAPPING_DEFAULT,
@@ -540,7 +538,7 @@ impl VulkanGraphicsDevice {
 
         //Create general purpose command buffers for various async GPU operations
         //let command_buffer_count = 1024;
-        let command_buffer_count = 64;          
+        let command_buffer_count = 512;          
         let general_command_buffers = unsafe {
             let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
                 command_pool,

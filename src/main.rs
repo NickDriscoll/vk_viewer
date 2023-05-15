@@ -46,7 +46,7 @@ use input::{InputSystemOutput, InputSystem};
 use physics::{PhysicsEngine, PhysicsComponent};
 use structs::{Camera, TerrainSpec, Simulation};
 use render::vkdevice::{self, msaa_samples_from_limit, GPUImage, DeferredImage};
-use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
+use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, atmosphere};
 
 use crate::routines::*;
 use crate::asset::GLTFMeshData;
@@ -913,6 +913,10 @@ fn main() {
             if sun.yaw < 0.0 {
                 sun.yaw += glm::two_pi::<f32>();
             }
+
+            //Raymarch the atmosphere to get sunlight color
+            let sky_origin = glm::vec3(0.0, 0.0, atmosphere::EARTH_RADIUS);
+            let sky_sample = atmosphere::gather_atmosphere_irradiance(&sky_origin, &sun., sun_irradiance);
         }
 
         //Resolve the current Dear Imgui frame
