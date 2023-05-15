@@ -127,19 +127,8 @@ pub unsafe fn upload_raw_image(gpu: &mut VulkanGraphicsDevice, sampler_key: Samp
     let allocation = allocate_image_memory(gpu, normal_image);
 
     let sampler = gpu.get_sampler(sampler_key).unwrap();
-    let mut vim = GPUImage {
-        image: normal_image,
-        view: None,
-        width,
-        height,
-        mip_count: 1,
-        format,
-        layout,
-        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-        sampler,
-        allocation
-    };
-    asset::upload_image(gpu, &vim, &rgba);
+    let def_image = asset::upload_image_deferred(gpu, &image_create_info, sampler_key, layout, true, rgba);
+    let mut vim = DeferredImage::synchronize(gpu, vec![def_image]).drain(..).next().unwrap().gpu_image;
 
     //Then create the image view
     let view_info = vk::ImageViewCreateInfo {
@@ -287,6 +276,10 @@ impl VulkanGraphicsDevice {
             self.allocator.free(buffer.allocation);
             unsafe { self.device.destroy_buffer(buffer.buffer, MEMORY_ALLOCATOR); }
         }
+    }
+
+    pub fn upload_image_batch(&mut self) {
+
     }
 
     pub unsafe fn upload_image(&mut self, info: &vk::ImageCreateInfo, sampler_key: SamplerKey, generate_mipmaps: bool, bytes: &[u8]) -> DeferredImage {
