@@ -761,7 +761,7 @@ fn main() {
                 imgui_ui.slider("Ambient factor", 0.0, 500.0, &mut renderer.uniform_data.ambient_factor);    
                 imgui_ui.slider_config("Bloom strength", 0.0, 1.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.bloom_strength);
                 imgui_ui.slider_config("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.exposure);
-                imgui_ui.slider_config("Emissive exaggeration", 1.0, 1000.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.emissive_exaggeration);
+                imgui_ui.slider_config("Emissive exaggeration", 1.0, 5000.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.emissive_exaggeration);
                 imgui_ui.slider("Fog factor", 0.0, 8.0, &mut renderer.uniform_data.fog_density);
                 imgui_ui.slider("Stars threshold", 0.0, 16.0, &mut renderer.uniform_data.stars_threshold);
                 imgui_ui.slider("Stars exposure", 0.0, 5000.0, &mut renderer.uniform_data.stars_exposure);
@@ -927,7 +927,7 @@ fn main() {
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_framebuffer_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, renderer.window_manager.swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_swapchain_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, renderer.window_manager.swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
                     
             //Does all work that needs to happen before the render passes
             let frame_info = renderer.prepare_frame(&mut gpu, window_size, &camera, timer.elapsed_time);
@@ -1311,7 +1311,7 @@ fn main() {
 
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: swapchain_pass,
-                framebuffer: renderer.window_manager.swapchain_framebuffers[current_framebuffer_index],
+                framebuffer: renderer.window_manager.swapchain_framebuffers[current_swapchain_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
@@ -1354,7 +1354,7 @@ fn main() {
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
                 p_swapchains: &renderer.window_manager.swapchain,
-                p_image_indices: &(current_framebuffer_index as u32),
+                p_image_indices: &(current_swapchain_index as u32),
                 wait_semaphore_count: present_semaphores.len() as u32,
                 p_wait_semaphores: present_semaphores.as_ptr(),
                 ..Default::default()

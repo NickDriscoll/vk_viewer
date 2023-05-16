@@ -50,25 +50,24 @@ impl WindowManager {
             //Search for an SRGB swapchain format
             let mut surf_format = vk::SurfaceFormatKHR::default();
             for sformat in surf_formats.iter() {
+                surf_format = *sformat;
                 if sformat.format == vk::Format::B8G8R8A8_SRGB {
-                    surf_format = *sformat;
                     break;
                 }
             }
 
-            //let desired_present_mode = vk::PresentModeKHR::FIFO;
-            //let desired_present_mode = vk::PresentModeKHR::MAILBOX;
-            let mut has_fifo = false;
+            let mut has_desired = false;
             for mode in present_modes {
                 if mode == desired_present_mode {
-                    has_fifo = true;
+                    has_desired = true;
                     break;
                 }
             }
-            if !has_fifo {
-                crash_with_error_dialog("FIFO present mode not supported on your system.");
-            }
-            let present_mode = desired_present_mode;
+            let present_mode = if has_desired {
+                desired_present_mode
+            } else {
+                vk::PresentModeKHR::IMMEDIATE
+            };
 
             let min_image_count = if surf_capabilities.max_image_count > 2 {
                 3
