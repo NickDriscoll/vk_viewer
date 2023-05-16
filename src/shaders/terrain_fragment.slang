@@ -44,8 +44,7 @@ cbuffer PushConstants
 // "k" controls the sharpness of the blending in the
 //     transitions areas.
 // "s" texture sampler
-float4 triplanar(in Sampler2D s, in float3 p, in float3 n, in float k)
-{
+float4 triplanar(in Sampler2D s, in float3 p, in float3 n, in float k) {
     // project+fetch
     static const float sample_scale = 0.05;
     float4 x = s.Sample(p.yz * sample_scale);
@@ -126,11 +125,12 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         DirectionalLight light = uniforms.directional_lights[i];
         float nighttime_factor = smoothstep(-0.1, 0.1, light.direction.z);
 
-        ray_t ray = {
-            float3(0.0, 0.0, earth_radius) + input.position,
-            light.direction
-        };
-        float3 sky_sample = normalize(gather_atmosphere_irradiance(ray, light.direction.xyz, light.irradiance.rgb));
+        // ray_t ray = {
+        //     float3(0.0, 0.0, earth_radius) + input.position,
+        //     light.direction
+        // };
+        // float3 sky_sample = normalize(gather_atmosphere_irradiance(ray, light.direction.xyz, light.irradiance.rgb));
+        float3 sky_sample = normalize(uniforms.sky_sample);
 
         // Compute sun color
         float sunzenith_dot = light.direction.z * 0.5 + 0.5;
@@ -153,7 +153,7 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
             i
         );
 
-        final_radiance += nighttime_factor * sun_shadowing.x * normalize(sky_sample) * directional_lighting(params, light);
+        final_radiance += nighttime_factor * sun_shadowing.x * sky_sample * directional_lighting(params, light);
 
         float3 ambient = float3(uniforms.ambient_factor) * sky_sample * params.albedo * ao;
         final_radiance += ambient;

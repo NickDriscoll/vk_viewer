@@ -894,7 +894,7 @@ fn main() {
         for (_, entity) in simulation_state.entities.iter() {
             let body = physics_engine.rigid_body_set.get(entity.physics_component.rigid_body_handle).expect("All entities should have a rigid body component.");
             let mm = body.position().to_matrix() * glm::translation(&(-entity.physics_component.rigid_body_offset)) * ozy::routines::uniform_scale(entity.physics_component.scale);
-            renderer.drawcall(entity.model, vec![mm]);
+            renderer.draw(entity.model, vec![mm]);
         }
         
         //Update sun
@@ -916,7 +916,9 @@ fn main() {
 
             //Raymarch the atmosphere to get sunlight color
             let sky_origin = glm::vec3(0.0, 0.0, atmosphere::EARTH_RADIUS);
-            let sky_sample = atmosphere::gather_atmosphere_irradiance(&sky_origin, &sun., sun_irradiance);
+            let sun_dir = sun.get_direction();
+            let sky_sample = atmosphere::gather_atmosphere_irradiance(&sky_origin, &sun_dir, &sun_dir, &sun.irradiance);
+            renderer.uniform_data.sky_sample = sky_sample;
         }
 
         //Resolve the current Dear Imgui frame

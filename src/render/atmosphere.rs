@@ -69,7 +69,7 @@ fn isect_sphere(ray: &Ray, sphere: &Sphere, t0: &mut f32, t1: &mut f32) -> bool
     return true;
 }
 
-const EARTH_RADIUS: f32 = 6360e3;      // (m)
+pub const EARTH_RADIUS: f32 = 6360e3;      // (m)
 const ATMOSPHERE_RADIUS: f32 = 6420e3; // (m)
 
 fn get_primary_ray(

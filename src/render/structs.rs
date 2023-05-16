@@ -28,6 +28,16 @@ pub struct SunLight {
     pub shadow_map: Option<CascadedShadowMap>
 }
 
+impl SunLight {
+    pub fn get_direction(&self) -> glm::TVec3<f32> {
+        let direction = 
+            glm::rotation(self.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
+            glm::rotation(self.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+            glm::vec4(-1.0, 0.0, 0.0, 0.0);
+        glm::vec4_to_vec3(&direction)
+    }
+}
+
 //1:1 with shader struct
 #[derive(Clone, Debug, Default)]
 #[repr(C)]
@@ -278,10 +288,8 @@ pub struct EnvironmentUniforms {
     pub ambient_factor: f32,
     pub real_sky: f32,
     pub bloom_strength: f32,
-    pub emissive_exaggeration: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    pub sky_sample: glm::TVec3<f32>,
+    pub emissive_exaggeration: f32
 }
 
 pub struct CascadedShadowMap {
