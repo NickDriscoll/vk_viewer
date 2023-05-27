@@ -46,7 +46,7 @@ use input::{InputSystemOutput, InputSystem};
 use physics::{PhysicsEngine, PhysicsComponent};
 use structs::{Camera, TerrainSpec, Simulation};
 use render::vkdevice::{self, msaa_samples_from_limit, GPUImage, DeferredImage};
-use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight};
+use render::{Primitive, Renderer, Material, CascadedShadowMap, ShadowType, SunLight, atmosphere};
 
 use crate::routines::*;
 use crate::asset::GLTFMeshData;
@@ -763,7 +763,7 @@ fn main() {
                 imgui_ui.slider("Ambient factor", 0.0, 500.0, &mut renderer.uniform_data.ambient_factor);    
                 imgui_ui.slider_config("Bloom strength", 0.0, 1.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.bloom_strength);
                 imgui_ui.slider_config("Camera exposure", 0.0, 0.02).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.exposure);
-                imgui_ui.slider_config("Emissive exaggeration", 1.0, 1000.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.emissive_exaggeration);
+                imgui_ui.slider_config("Emissive exaggeration", 1.0, 5000.0).flags(SliderFlags::NO_ROUND_TO_FORMAT).build(&mut renderer.uniform_data.emissive_exaggeration);
                 imgui_ui.slider("Fog factor", 0.0, 8.0, &mut renderer.uniform_data.fog_density);
                 imgui_ui.slider("Stars threshold", 0.0, 16.0, &mut renderer.uniform_data.stars_threshold);
                 imgui_ui.slider("Stars exposure", 0.0, 5000.0, &mut renderer.uniform_data.stars_exposure);
@@ -896,7 +896,7 @@ fn main() {
         for (_, entity) in simulation_state.entities.iter() {
             let body = physics_engine.rigid_body_set.get(entity.physics_component.rigid_body_handle).expect("All entities should have a rigid body component.");
             let mm = body.position().to_matrix() * glm::translation(&(-entity.physics_component.rigid_body_offset)) * ozy::routines::uniform_scale(entity.physics_component.scale);
-            renderer.drawcall(entity.model, vec![mm]);
+            renderer.draw(entity.model, vec![mm]);
         }
         
         //Update sun
@@ -915,6 +915,12 @@ fn main() {
             if sun.yaw < 0.0 {
                 sun.yaw += glm::two_pi::<f32>();
             }
+
+            //Raymarch the atmosphere to get sunlight color
+            let sky_origin = glm::vec3(0.0, 0.0, atmosphere::EARTH_RADIUS);
+            let sun_dir = sun.get_direction();
+            let sky_sample = atmosphere::gather_atmosphere_irradiance(&sky_origin, &sun_dir, &sun_dir, &sun.irradiance);
+            renderer.uniform_data.sky_sample = sky_sample;
         }
 
         //Resolve the current Dear Imgui frame
@@ -923,7 +929,7 @@ fn main() {
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_framebuffer_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, renderer.window_manager.swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_swapchain_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, renderer.window_manager.swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
                     
             //Does all work that needs to happen before the render passes
             let frame_info = renderer.prepare_frame(&mut gpu, window_size, &camera, timer.elapsed_time);
@@ -1307,7 +1313,7 @@ fn main() {
 
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: swapchain_pass,
-                framebuffer: renderer.window_manager.swapchain_framebuffers[current_framebuffer_index],
+                framebuffer: renderer.window_manager.swapchain_framebuffers[current_swapchain_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
@@ -1350,7 +1356,7 @@ fn main() {
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
                 p_swapchains: &renderer.window_manager.swapchain,
-                p_image_indices: &(current_framebuffer_index as u32),
+                p_image_indices: &(current_swapchain_index as u32),
                 wait_semaphore_count: present_semaphores.len() as u32,
                 p_wait_semaphores: present_semaphores.as_ptr(),
                 ..Default::default()

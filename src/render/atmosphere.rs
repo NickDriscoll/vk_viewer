@@ -69,8 +69,8 @@ fn isect_sphere(ray: &Ray, sphere: &Sphere, t0: &mut f32, t1: &mut f32) -> bool
     return true;
 }
 
-const earth_radius: f32 = 6360e3;      // (m)
-const atmosphere_radius: f32 = 6420e3; // (m)
+pub const EARTH_RADIUS: f32 = 6360e3;      // (m)
+const ATMOSPHERE_RADIUS: f32 = 6420e3; // (m)
 
 fn get_primary_ray(
     cam_local_point: &glm::TVec3<f32>,
@@ -99,7 +99,7 @@ fn get_sun_light(
     
     let atmosphere = Sphere {
         origin: glm::zero(),
-        radius: atmosphere_radius,
+        radius: ATMOSPHERE_RADIUS,
         material: 0
     };
 
@@ -112,7 +112,7 @@ fn get_sun_light(
 
     for i in 0..NUM_SAMPLES {
         let s = ray.origin + ray.direction * (march_pos + 0.5 * march_step);
-        let height = glm::length(&s) - earth_radius;
+        let height = glm::length(&s) - EARTH_RADIUS;
         if (height < 0.0) { return false; }
 
         *optical_depthR += f32::exp(-height / hR) * march_step;
@@ -124,12 +124,17 @@ fn get_sun_light(
     return true;
 }
 
-fn gather_atmosphere_irradiance(ray: &Ray, sun_dir: &glm::TVec3<f32>, sun_irradiance: &glm::TVec3<f32>) -> glm::TVec3<f32> {
+pub fn gather_atmosphere_irradiance(origin: &glm::TVec3<f32>, direction: &glm::TVec3<f32>, sun_dir: &glm::TVec3<f32>, sun_irradiance: &glm::TVec3<f32>) -> glm::TVec3<f32> {
     const NUM_SAMPLES: u32 = 16;
     let atmosphere = Sphere {
         origin: glm::zero(),
-        radius: atmosphere_radius,
+        radius: ATMOSPHERE_RADIUS,
         material: 0
+    };
+
+    let ray = Ray {
+        origin: *origin,
+        direction: *direction
     };
 
     // scattering coefficients at sea level (m)
@@ -169,7 +174,7 @@ fn gather_atmosphere_irradiance(ray: &Ray, sun_dir: &glm::TVec3<f32>, sun_irradi
 
     for i in 0..NUM_SAMPLES {
         let s = ray.origin + ray.direction * (march_pos + 0.5 * march_step);
-        let height = glm::length(&s) - earth_radius;
+        let height = glm::length(&s) - EARTH_RADIUS;
 
         // integrate the height scale
         let hr = f32::exp(-height / hR) * march_step;

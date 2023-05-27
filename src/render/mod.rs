@@ -50,8 +50,8 @@ impl WindowManager {
             //Search for an SRGB swapchain format
             let mut surf_format = vk::SurfaceFormatKHR::default();
             for sformat in surf_formats.iter() {
+                surf_format = *sformat;
                 if sformat.format == vk::Format::B8G8R8A8_SRGB {
-                    surf_format = *sformat;
                     break;
                 }
             }
@@ -63,10 +63,11 @@ impl WindowManager {
                     break;
                 }
             }
-            if !has_desired {
-                crash_with_error_dialog("FIFO present mode not supported on your system.");
-            }
-            let present_mode = desired_present_mode;
+            let present_mode = if has_desired {
+                desired_present_mode
+            } else {
+                vk::PresentModeKHR::IMMEDIATE
+            };
 
             //Prefer three images in a swapchain
             let min_image_count = if surf_capabilities.max_image_count > 2 {
@@ -1504,11 +1505,7 @@ impl Renderer {
             for light in self.directional_lights.iter_mut() {
                 let light = light.1;
                 let irradiance = light.irradiance;
-                let direction = 
-                    glm::rotation(light.yaw, &glm::vec3(0.0, 0.0, 1.0)) *
-                    glm::rotation(light.pitch, &glm::vec3(0.0, 1.0, 0.0)) *
-                    glm::vec4(-1.0, 0.0, 0.0, 0.0);
-                let direction = glm::vec4_to_vec3(&direction);
+                let direction = light.get_direction();
 
                 uniforms.directional_lights[i] = DirectionalLight::new(direction, irradiance);
 
@@ -1679,7 +1676,7 @@ impl Renderer {
         frame_info
     }
 
-    pub fn drawcall(&mut self, model_key: ModelKey, world_transforms: Vec<glm::TMat4<f32>>) {
+    pub fn draw(&mut self, model_key: ModelKey, world_transforms: Vec<glm::TMat4<f32>>) {
         let desired_draw = DesiredDraw {
             model_key,
             world_transforms
