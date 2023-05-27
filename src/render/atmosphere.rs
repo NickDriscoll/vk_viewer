@@ -1,4 +1,4 @@
-
+#![allow(non_upper_case_globals)]
 
 struct Ray {
     origin: glm::TVec3<f32>,

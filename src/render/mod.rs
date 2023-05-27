@@ -35,7 +35,7 @@ impl WindowManager {
         //Check that we can do swapchain present on this window
         unsafe {
             if !gpu.ext_surface.get_physical_device_surface_support(gpu.physical_device, gpu.main_queue_family_index, vk_surface).unwrap() {
-                crash_with_error_dialog("Swapchain present is unavailable on the selected device queue.\nThe application will now exit.");
+                crash_with_error_dialog("Swapchain present is unavailable on this system.\nThe application will now exit.");
             }
         }
 
@@ -56,20 +56,19 @@ impl WindowManager {
                 }
             }
 
-            //let desired_present_mode = vk::PresentModeKHR::FIFO;
-            //let desired_present_mode = vk::PresentModeKHR::MAILBOX;
-            let mut has_fifo = false;
+            let mut has_desired = false;
             for mode in present_modes {
                 if mode == desired_present_mode {
-                    has_fifo = true;
+                    has_desired = true;
                     break;
                 }
             }
-            if !has_fifo {
+            if !has_desired {
                 crash_with_error_dialog("FIFO present mode not supported on your system.");
             }
             let present_mode = desired_present_mode;
 
+            //Prefer three images in a swapchain
             let min_image_count = if surf_capabilities.max_image_count > 2 {
                 3
             } else {
@@ -162,6 +161,28 @@ impl WindowManager {
             swapchain_image_views: vk_swapchain_image_views,
             swapchain_framebuffers,
             swapchain_semaphore
+        }
+    }
+
+    pub fn recreate(&mut self, gpu: &mut VulkanGraphicsDevice) {
+        unsafe {
+            //Free the now-invalid swapchain data
+            gpu.device.destroy_semaphore(self.swapchain_semaphore, vkdevice::MEMORY_ALLOCATOR);
+            for framebuffer in self.swapchain_framebuffers.iter_mut() {
+                gpu.device.destroy_framebuffer(*framebuffer, vkdevice::MEMORY_ALLOCATOR);
+            }
+            for view in self.swapchain_image_views.iter_mut() {
+                gpu.device.destroy_image_view(*view, vkdevice::MEMORY_ALLOCATOR);
+            }
+
+            //gpu.ext_swapchain.destroy_swapchain(self.swapchain, vkdevice::MEMORY_ALLOCATOR);
+            //gpu.ext_surface.destroy_surface(self.surface, vkdevice::MEMORY_ALLOCATOR);
+            
+
+            //Recreate swapchain and associated data
+            //renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass, renderer.desired_present_mode);
+
+
         }
     }
 }

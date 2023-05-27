@@ -547,7 +547,7 @@ impl VulkanGraphicsDevice {
 
         //Create general purpose command buffers for various async GPU operations
         //let command_buffer_count = 1024;
-        let command_buffer_count = 64;          
+        let command_buffer_count = 512;          
         let general_command_buffers = unsafe {
             let command_buffer_alloc_info = vk::CommandBufferAllocateInfo {
                 command_pool,

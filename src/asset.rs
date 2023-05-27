@@ -422,6 +422,7 @@ pub unsafe fn upload_image(gpu: &mut VulkanGraphicsDevice, image: &GPUImage, raw
     let queue = gpu.device.get_device_queue(gpu.main_queue_family_index, 0);
     gpu.device.queue_submit(queue, &[submit_info], cb_fence).unwrap();
     gpu.device.wait_for_fences(&[cb_fence], true, vk::DeviceSize::MAX).unwrap();
+    gpu.command_buffer_indices.remove(cbidx);
     gpu.free_buffers(vec![staging_buffer]);
 }
 

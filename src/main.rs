@@ -680,6 +680,8 @@ fn main() {
                 imgui_io.display_size[0] = window_size.x as f32;
                 imgui_io.display_size[1] = window_size.y as f32;
                 renderer.wants_window_resize = false;
+
+                println!("Recreated swapchain resources on frame: {}", timer.frame_count);
             }
         }
 
