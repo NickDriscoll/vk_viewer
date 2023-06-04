@@ -1,10 +1,7 @@
-#![allow(unused)]
-
 use core::slice::Iter;
 use std::{convert::TryInto, ffi::c_void, hash::{Hash, Hasher}, collections::hash_map::DefaultHasher};
-use gpu_allocator::vulkan::Allocation;
 use ozy::{io::OzyMesh, routines::calculate_mipcount};
-use slotmap::{SlotMap, new_key_type};
+use slotmap::{SlotMap};
 use crate::{*, asset::load_bc7_info};
 pub use structs::*;
 use vkdevice::*;
@@ -13,14 +10,19 @@ pub mod atmosphere;
 pub mod structs;
 pub mod vkdevice;
 
+pub struct Swapchain {
+    pub vk_swapchain: vk::SwapchainKHR,
+    pub extent: vk::Extent2D,
+    pub format: vk::Format,
+    pub image_views: Vec<vk::ImageView>,
+    pub framebuffers: Vec<vk::Framebuffer>
+}
+
 pub struct WindowManager {
     pub surface: vk::SurfaceKHR,
-    pub swapchain: vk::SwapchainKHR,
-    pub extent: vk::Extent2D,
-    pub color_format: vk::Format,
-    pub swapchain_image_views: Vec<vk::ImageView>,
-    pub swapchain_framebuffers: Vec<vk::Framebuffer>,
-    pub swapchain_semaphore: vk::Semaphore
+    pub render_pass: vk::RenderPass,
+    pub swapchain_semaphore: vk::Semaphore,
+    pub swapchain: Swapchain
 }
 
 impl WindowManager {
@@ -39,13 +41,49 @@ impl WindowManager {
             }
         }
 
+        //Swapchain acquire semaphore
+        let swapchain_semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
+
+        let swapchain = Self::create_swapchain_variables(gpu, vk_surface, render_pass, desired_present_mode, None);
+
+        WindowManager {
+            surface: vk_surface,
+            render_pass,
+            swapchain_semaphore,
+            swapchain
+        }
+    }
+
+    pub fn recreate(&mut self, gpu: &mut VulkanGraphicsDevice, desired_present_mode: vk::PresentModeKHR) {
+        unsafe {
+            //Free the now-invalid swapchain data
+            //gpu.device.destroy_semaphore(self.swapchain_semaphore, vkdevice::MEMORY_ALLOCATOR);
+            for framebuffer in self.swapchain.framebuffers.iter_mut() {
+                gpu.device.destroy_framebuffer(*framebuffer, vkdevice::MEMORY_ALLOCATOR);
+            }
+            for view in self.swapchain.image_views.iter_mut() {
+                gpu.device.destroy_image_view(*view, vkdevice::MEMORY_ALLOCATOR);
+            }
+            //gpu.ext_swapchain.destroy_swapchain(self.swapchain.vk_swapchain, vkdevice::MEMORY_ALLOCATOR);
+
+            //gpu.ext_surface.destroy_surface(self.surface, vkdevice::MEMORY_ALLOCATOR);
+            
+
+            //Recreate swapchain and associated data
+            //renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass, renderer.desired_present_mode);
+
+            self.swapchain = Self::create_swapchain_variables(gpu, self.surface, self.render_pass, desired_present_mode, Some(self.swapchain.vk_swapchain))
+        }
+    }
+
+    fn create_swapchain_variables(gpu: &mut VulkanGraphicsDevice, surface: vk::SurfaceKHR, render_pass: vk::RenderPass, desired_present_mode: vk::PresentModeKHR, old_swapchain: Option<vk::SwapchainKHR>) -> Swapchain {
         //Create the main swapchain for window present
         let vk_swapchain_image_format;
         let vk_swapchain_extent;
         let vk_swapchain = unsafe {
-            let present_modes = gpu.ext_surface.get_physical_device_surface_present_modes(gpu.physical_device, vk_surface).unwrap();
-            let surf_capabilities = gpu.ext_surface.get_physical_device_surface_capabilities(gpu.physical_device, vk_surface).unwrap();
-            let surf_formats = gpu.ext_surface.get_physical_device_surface_formats(gpu.physical_device, vk_surface).unwrap();
+            let present_modes = gpu.ext_surface.get_physical_device_surface_present_modes(gpu.physical_device, surface).unwrap();
+            let surf_capabilities = gpu.ext_surface.get_physical_device_surface_capabilities(gpu.physical_device, surface).unwrap();
+            let surf_formats = gpu.ext_surface.get_physical_device_surface_formats(gpu.physical_device, surface).unwrap();
             
             //Search for an SRGB swapchain format
             let mut surf_format = vk::SurfaceFormatKHR::default();
@@ -76,13 +114,18 @@ impl WindowManager {
                 surf_capabilities.min_image_count
             };
 
+            let old_sc = match old_swapchain {
+                Some(sc) => { sc }
+                None => { vk::SwapchainKHR::default() }
+            };
+
             vk_swapchain_image_format = surf_format.format;
             vk_swapchain_extent = vk::Extent2D {
                 width: surf_capabilities.current_extent.width,
                 height: surf_capabilities.current_extent.height
             };
             let create_info = vk::SwapchainCreateInfoKHR {
-                surface: vk_surface,
+                surface,
                 min_image_count,
                 image_format: vk_swapchain_image_format,
                 image_color_space: surf_format.color_space,
@@ -95,6 +138,7 @@ impl WindowManager {
                 pre_transform: surf_capabilities.current_transform,
                 composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
                 present_mode,
+                old_swapchain: old_sc,
                 ..Default::default()
             };
 
@@ -150,40 +194,14 @@ impl WindowManager {
     
             fbs
         };
+        
 
-        //Swapchain acquire semaphore
-        let swapchain_semaphore = unsafe { gpu.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), vkdevice::MEMORY_ALLOCATOR).unwrap() };
-
-        WindowManager {
-            surface: vk_surface,
-            swapchain: vk_swapchain,
+        Swapchain {
+            vk_swapchain,
             extent: vk_swapchain_extent,
-            color_format: vk_swapchain_image_format,
-            swapchain_image_views: vk_swapchain_image_views,
-            swapchain_framebuffers,
-            swapchain_semaphore
-        }
-    }
-
-    pub fn recreate(&mut self, gpu: &mut VulkanGraphicsDevice) {
-        unsafe {
-            //Free the now-invalid swapchain data
-            gpu.device.destroy_semaphore(self.swapchain_semaphore, vkdevice::MEMORY_ALLOCATOR);
-            for framebuffer in self.swapchain_framebuffers.iter_mut() {
-                gpu.device.destroy_framebuffer(*framebuffer, vkdevice::MEMORY_ALLOCATOR);
-            }
-            for view in self.swapchain_image_views.iter_mut() {
-                gpu.device.destroy_image_view(*view, vkdevice::MEMORY_ALLOCATOR);
-            }
-
-            //gpu.ext_swapchain.destroy_swapchain(self.swapchain, vkdevice::MEMORY_ALLOCATOR);
-            //gpu.ext_surface.destroy_surface(self.surface, vkdevice::MEMORY_ALLOCATOR);
-            
-
-            //Recreate swapchain and associated data
-            //renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass, renderer.desired_present_mode);
-
-
+            format: vk_swapchain_image_format,
+            image_views: vk_swapchain_image_views,
+            framebuffers: swapchain_framebuffers
         }
     }
 }
@@ -330,9 +348,6 @@ impl Renderer {
     pub const FRAMES_IN_FLIGHT: usize = 2;
     pub const GLOBAL_IMAGE_SLOTS: usize = 1024;
     pub const MAX_STORAGE_MIP_COUNT: usize = 14;
-    pub const MAX_BLOOM_MIPS: u32 = 12;
-
-    pub fn current_in_flight_frame(&self) -> usize { self.in_flight_frame }
 
     pub fn in_flight_fences(&self) -> [vk::Fence; Self::FRAMES_IN_FLIGHT] {
         let mut fences = [vk::Fence::default(); Self::FRAMES_IN_FLIGHT];
@@ -517,7 +532,7 @@ impl Renderer {
         let mut framebuffers = Self::create_hdr_framebuffers(gpu, primary_framebuffer_extent, hdr_render_pass, postfx_sampler, &mut global_images, sample_count);
         
         //Initialize per-frame rendering state
-        let bloom_mip_levels = u32::min(calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height), Self::MAX_BLOOM_MIPS);
+        let bloom_mip_levels = calculate_mipcount(primary_framebuffer_extent.width, primary_framebuffer_extent.height);
         let in_flight_frame_data = {
             //Data for each in-flight frame
             let command_buffers = {
@@ -861,7 +876,7 @@ impl Renderer {
     fn create_bloom_mip_chain(gpu: &mut VulkanGraphicsDevice, global_images: &mut FreeList<GPUImage>, sampler_key: SamplerKey, extent: &vk::Extent3D) -> u32 {
         unsafe {
             let bloom_format = vk::Format::R16G16B16A16_SFLOAT;
-            let mip_levels = u32::min(calculate_mipcount(extent.width, extent.height), Self::MAX_BLOOM_MIPS);
+            let mip_levels = calculate_mipcount(extent.width, extent.height);
             let create_info = vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,
                 format: bloom_format,

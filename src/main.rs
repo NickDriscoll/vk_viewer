@@ -654,29 +654,31 @@ fn main() {
                 gpu.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
                 //Free the now-invalid swapchain data
-                for framebuffer in renderer.window_manager.swapchain_framebuffers {
-                    gpu.device.destroy_framebuffer(framebuffer, vkdevice::MEMORY_ALLOCATOR);
-                }
-                for view in renderer.window_manager.swapchain_image_views {
-                    gpu.device.destroy_image_view(view, vkdevice::MEMORY_ALLOCATOR);
-                }
-                gpu.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain, vkdevice::MEMORY_ALLOCATOR);
+                // for framebuffer in renderer.window_manager.swapchain.framebuffers {
+                //     gpu.device.destroy_framebuffer(framebuffer, vkdevice::MEMORY_ALLOCATOR);
+                // }
+                // for view in renderer.window_manager.swapchain.image_views {
+                //     gpu.device.destroy_image_view(view, vkdevice::MEMORY_ALLOCATOR);
+                // }
+                // gpu.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain.vk_swapchain, vkdevice::MEMORY_ALLOCATOR);
 
-                gpu.ext_surface.destroy_surface(renderer.window_manager.surface, vkdevice::MEMORY_ALLOCATOR);
-                gpu.device.destroy_semaphore(renderer.window_manager.swapchain_semaphore, vkdevice::MEMORY_ALLOCATOR);
+                // gpu.ext_surface.destroy_surface(renderer.window_manager.surface, vkdevice::MEMORY_ALLOCATOR);
+                // gpu.device.destroy_semaphore(renderer.window_manager.swapchain_semaphore, vkdevice::MEMORY_ALLOCATOR);
 
-                //Recreate swapchain and associated data
-                renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass, renderer.desired_present_mode);
+                // //Recreate swapchain and associated data
+                // renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass, renderer.desired_present_mode);
+
+                renderer.window_manager.recreate(&mut gpu, renderer.desired_present_mode);
 
                 //Recreate internal rendering buffers
                 let extent = vk::Extent3D {
-                    width: renderer.window_manager.extent.width,
-                    height: renderer.window_manager.extent.height,
+                    width: renderer.window_manager.swapchain.extent.width,
+                    height: renderer.window_manager.swapchain.extent.height,
                     depth: 1
                 };
                 renderer.resize_hdr_framebuffers(&mut gpu, extent, hdr_forward_pass);
 
-                window_size = glm::vec2(renderer.window_manager.extent.width, renderer.window_manager.extent.height);
+                window_size = glm::vec2(renderer.window_manager.swapchain.extent.width, renderer.window_manager.swapchain.extent.height);
                 imgui_io.display_size[0] = window_size.x as f32;
                 imgui_io.display_size[1] = window_size.y as f32;
                 renderer.wants_window_resize = false;
@@ -929,7 +931,7 @@ fn main() {
         //Draw
         unsafe {
             //Begin acquiring swapchain. This is called as early as possible in order to minimize time waiting
-            let current_swapchain_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain, vk::DeviceSize::MAX, renderer.window_manager.swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
+            let current_swapchain_index = gpu.ext_swapchain.acquire_next_image(renderer.window_manager.swapchain.vk_swapchain, vk::DeviceSize::MAX, renderer.window_manager.swapchain_semaphore, vk::Fence::null()).unwrap().0 as usize;
                     
             //Does all work that needs to happen before the render passes
             let frame_info = renderer.prepare_frame(&mut gpu, window_size, &camera, timer.elapsed_time);
@@ -1010,8 +1012,8 @@ fn main() {
             let viewport = vk::Viewport {
                 x: 0.0,
                 y: 0.0,
-                width: (renderer.window_manager.extent.width) as f32,
-                height: (renderer.window_manager.extent.height) as f32,
+                width: (renderer.window_manager.swapchain.extent.width) as f32,
+                height: (renderer.window_manager.swapchain.extent.height) as f32,
                 min_depth: 0.0,
                 max_depth: 1.0
             };
@@ -1021,7 +1023,7 @@ fn main() {
             let vk_render_area = {
                 vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: renderer.window_manager.extent
+                    extent: renderer.window_manager.swapchain.extent
                 }
             };
             let scissor_area = vk::Rect2D {
@@ -1313,7 +1315,7 @@ fn main() {
 
             let rp_begin_info = vk::RenderPassBeginInfo {
                 render_pass: swapchain_pass,
-                framebuffer: renderer.window_manager.swapchain_framebuffers[current_swapchain_index],
+                framebuffer: renderer.window_manager.swapchain.framebuffers[current_swapchain_index],
                 render_area: vk_render_area,
                 clear_value_count: vk_clear_values.len() as u32,
                 p_clear_values: vk_clear_values.as_ptr(),
@@ -1355,7 +1357,7 @@ fn main() {
             let present_semaphores = [frame_info.semaphore, renderer.window_manager.swapchain_semaphore];
             let present_info = vk::PresentInfoKHR {
                 swapchain_count: 1,
-                p_swapchains: &renderer.window_manager.swapchain,
+                p_swapchains: &renderer.window_manager.swapchain.vk_swapchain,
                 p_image_indices: &(current_swapchain_index as u32),
                 wait_semaphore_count: present_semaphores.len() as u32,
                 p_wait_semaphores: present_semaphores.as_ptr(),

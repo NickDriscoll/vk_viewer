@@ -303,6 +303,7 @@ pub struct CascadedShadowMap {
     pub projection_depth: f32
 }
 
+#[allow(unused)]
 impl CascadedShadowMap {
     pub const CASCADE_COUNT: usize = 6;
     pub const SHADOW_DISTANCE_COUNT: usize = (CascadedShadowMap::CASCADE_COUNT + 1) + (4 - ((CascadedShadowMap::CASCADE_COUNT + 1) % 4));
@@ -559,6 +560,7 @@ pub struct GraphicsPipelineBuilder {
     render_pass: vk::RenderPass
 }
 
+#[allow(unused)]
 impl GraphicsPipelineBuilder {
     fn new() -> Self {
         let dynamic_state_enables = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
@@ -752,6 +754,7 @@ pub struct FreeList<T> {
     updated: bool
 }
 
+#[allow(unused)]
 impl<T> FreeList<T> {
     pub fn new() -> Self {
         FreeList {

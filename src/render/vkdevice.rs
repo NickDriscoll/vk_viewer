@@ -271,7 +271,7 @@ impl VulkanGraphicsDevice {
 
     pub fn free_buffers(&mut self, buffers: Vec<GPUBuffer>) {
         for buffer in buffers {
-            self.allocator.free(buffer.allocation);
+            self.allocator.free(buffer.allocation).unwrap();
             unsafe { self.device.destroy_buffer(buffer.buffer, MEMORY_ALLOCATOR); }
         }
     }
