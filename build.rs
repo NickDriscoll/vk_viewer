@@ -1,3 +1,4 @@
+use std::thread;
 use std::{process::Command, fs::OpenOptions};
 use std::io::{Write, BufWriter};
 
@@ -46,9 +47,19 @@ fn main() {
         ["compute", "bloom.slang", "bloom.spv"],
         ["compute", "lum_binning.slang", "lum_binning.spv"],
     ];
-    for shader in slang_shaders {
-        let out = compile_slang_shader(shader[0], shader[1], shader[2]);
-        write!(build_log, "{}\n", out).unwrap();
+    let mut slang_handles = Vec::with_capacity(slang_shaders.len());
+    for i in 0..slang_shaders.len() {
+        let shader = slang_shaders[i];
+        let handle = thread::spawn(move || {
+            let mut shader_log = BufWriter::new(OpenOptions::new().write(true).truncate(true).create(true).open("./build.log").unwrap());
+            write!(shader_log, "Starting compilation...\n").unwrap();
+            let out = compile_slang_shader(shader[0], shader[1], shader[2]);
+            write!(&mut shader_log, "{}\n", out).unwrap();
+        });
+        slang_handles.push(handle);
+    }
+    for handle in slang_handles {
+        handle.join().unwrap();
     }
 
     //Copy SDL2 dlls to target directory

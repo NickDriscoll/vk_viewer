@@ -64,13 +64,6 @@ impl WindowManager {
             for view in self.swapchain.image_views.iter_mut() {
                 gpu.device.destroy_image_view(*view, vkdevice::MEMORY_ALLOCATOR);
             }
-            //gpu.ext_swapchain.destroy_swapchain(self.swapchain.vk_swapchain, vkdevice::MEMORY_ALLOCATOR);
-
-            //gpu.ext_surface.destroy_surface(self.surface, vkdevice::MEMORY_ALLOCATOR);
-            
-
-            //Recreate swapchain and associated data
-            //renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass, renderer.desired_present_mode);
 
             self.swapchain = Self::create_swapchain_variables(gpu, self.surface, self.render_pass, desired_present_mode, Some(self.swapchain.vk_swapchain))
         }
@@ -794,16 +787,18 @@ impl Renderer {
             }
         }
 
+        let irradiance_width = 512;
+        let irradiance_height = 512;
         let irradiance_map_info = vk::ImageCreateInfo {
             flags: vk::ImageCreateFlags::CUBE_COMPATIBLE,
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R16G16B16A16_SFLOAT,
             extent: vk::Extent3D {
-                width: 512,
-                height: 512,
+                width: irradiance_width,
+                height: irradiance_height,
                 depth: 1
             },
-            mip_levels: ozy::routines::calculate_mipcount(512, 512),
+            mip_levels: ozy::routines::calculate_mipcount(irradiance_width, irradiance_height),
             array_layers: 6,
             samples: vk::SampleCountFlags::TYPE_1,
             tiling: vk::ImageTiling::OPTIMAL,

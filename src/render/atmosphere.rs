@@ -7,14 +7,7 @@ struct Ray {
 
 struct Sphere {
     origin: glm::TVec3<f32>,
-    radius: f32,
-    material: u32
-}
-
-struct Plane {
-    direction: glm::TVec3<f32>,
-    distance: f32,
-    material: u32
+    radius: f32
 }
 
 
@@ -46,7 +39,9 @@ fn henyey_greenstein_phase_func(mu: f32) -> f32
 
 // Schlick Phase Function factor
 // Pharr and  Humphreys [2004] equivalence to g above
+#[allow(unused)]
 const k: f32 = 1.55 * g - 0.55 * (g * g * g);
+#[allow(unused)]
 fn schlick_phase_func(mu: f32) -> f32
 {
     return
@@ -61,7 +56,7 @@ fn isect_sphere(ray: &Ray, sphere: &Sphere, t0: &mut f32, t1: &mut f32) -> bool
     let radius2 = sphere.radius * sphere.radius;
     let tca = glm::dot(&rc, &ray.direction);
     let d2 = glm::dot(&rc, &rc) - tca * tca;
-    if (d2 > radius2) { return false; }
+    if d2 > radius2 { return false; }
     let thc = f32::sqrt(radius2 - d2);
     *t0 = tca - thc;
     *t1 = tca + thc;
@@ -72,6 +67,7 @@ fn isect_sphere(ray: &Ray, sphere: &Sphere, t0: &mut f32, t1: &mut f32) -> bool
 pub const EARTH_RADIUS: f32 = 6360e3;      // (m)
 const ATMOSPHERE_RADIUS: f32 = 6420e3; // (m)
 
+#[allow(unused)]
 fn get_primary_ray(
     cam_local_point: &glm::TVec3<f32>,
     cam_origin: &mut glm::TVec3<f32>,
@@ -99,8 +95,7 @@ fn get_sun_light(
     
     let atmosphere = Sphere {
         origin: glm::zero(),
-        radius: ATMOSPHERE_RADIUS,
-        material: 0
+        radius: ATMOSPHERE_RADIUS
     };
 
     let mut t0 = 0.0;
@@ -110,10 +105,10 @@ fn get_sun_light(
     let mut march_pos = 0.0;
     let march_step = t1 / (NUM_SAMPLES as f32);
 
-    for i in 0..NUM_SAMPLES {
+    for _ in 0..NUM_SAMPLES {
         let s = ray.origin + ray.direction * (march_pos + 0.5 * march_step);
         let height = glm::length(&s) - EARTH_RADIUS;
-        if (height < 0.0) { return false; }
+        if height < 0.0 { return false; }
 
         *optical_depthR += f32::exp(-height / hR) * march_step;
         *optical_depthM += f32::exp(-height / hM) * march_step;
@@ -128,8 +123,7 @@ pub fn gather_atmosphere_irradiance(origin: &glm::TVec3<f32>, direction: &glm::T
     const NUM_SAMPLES: u32 = 16;
     let atmosphere = Sphere {
         origin: glm::zero(),
-        radius: ATMOSPHERE_RADIUS,
-        material: 0
+        radius: ATMOSPHERE_RADIUS
     };
 
     let ray = Ray {
@@ -145,7 +139,7 @@ pub fn gather_atmosphere_irradiance(origin: &glm::TVec3<f32>, direction: &glm::T
     let mut t0 = 0.0;
     let mut t1 = 0.0;
     let did_isect = isect_sphere(&ray, &atmosphere, &mut t0, &mut t1);
-    if (!did_isect) {
+    if !did_isect {
         return glm::vec3(0.6, 0.6, 0.6);
     }
 
@@ -172,7 +166,7 @@ pub fn gather_atmosphere_irradiance(origin: &glm::TVec3<f32>, direction: &glm::T
     let mut march_pos = 0.0;
     let march_step = t1 / (NUM_SAMPLES as f32);
 
-    for i in 0..NUM_SAMPLES {
+    for _ in 0..NUM_SAMPLES {
         let s = ray.origin + ray.direction * (march_pos + 0.5 * march_step);
         let height = glm::length(&s) - EARTH_RADIUS;
 
@@ -191,7 +185,7 @@ pub fn gather_atmosphere_irradiance(origin: &glm::TVec3<f32>, direction: &glm::T
         let mut optical_depth_lightM = 0.0;
         let overground = get_sun_light(&light_ray, &mut optical_depth_lightR, &mut optical_depth_lightM);
 
-        if (overground) {
+        if overground {
             let tau =
                 betaR * (optical_depthR + optical_depth_lightR) +
                 betaM * 1.1 * (optical_depthM + optical_depth_lightM);

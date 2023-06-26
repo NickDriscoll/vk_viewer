@@ -653,21 +653,6 @@ fn main() {
                 //Window resizing requires us to "flush the pipeline"
                 gpu.device.wait_for_fences(&renderer.in_flight_fences(), true, vk::DeviceSize::MAX).unwrap();
 
-                //Free the now-invalid swapchain data
-                // for framebuffer in renderer.window_manager.swapchain.framebuffers {
-                //     gpu.device.destroy_framebuffer(framebuffer, vkdevice::MEMORY_ALLOCATOR);
-                // }
-                // for view in renderer.window_manager.swapchain.image_views {
-                //     gpu.device.destroy_image_view(view, vkdevice::MEMORY_ALLOCATOR);
-                // }
-                // gpu.ext_swapchain.destroy_swapchain(renderer.window_manager.swapchain.vk_swapchain, vkdevice::MEMORY_ALLOCATOR);
-
-                // gpu.ext_surface.destroy_surface(renderer.window_manager.surface, vkdevice::MEMORY_ALLOCATOR);
-                // gpu.device.destroy_semaphore(renderer.window_manager.swapchain_semaphore, vkdevice::MEMORY_ALLOCATOR);
-
-                // //Recreate swapchain and associated data
-                // renderer.window_manager = render::WindowManager::init(&mut gpu, &window, swapchain_pass, renderer.desired_present_mode);
-
                 renderer.window_manager.recreate(&mut gpu, renderer.desired_present_mode);
 
                 //Recreate internal rendering buffers
