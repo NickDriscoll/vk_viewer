@@ -778,7 +778,7 @@ impl Renderer {
                 let def_image = gpu.upload_image(&info, material_sampler, false, &mut raw_bytes);
                 def_images.push(def_image);
             }
-            let mut def_images = DeferredImage::synchronize(gpu, def_images);
+            let def_images = DeferredImage::synchronize(gpu, def_images);
             let indices = [&mut uniforms.sunzenith_idx, &mut uniforms.viewzenith_idx, &mut uniforms.sunview_idx];
             let mut i = 0;
             for image in def_images {

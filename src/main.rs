@@ -70,6 +70,7 @@ fn main() {
     let mut imgui_context = imgui::Context::create();
     {
         imgui_context.style_mut().use_dark_colors();
+
         let io = imgui_context.io_mut();
         io.display_size[0] = window_size.x as f32;
         io.display_size[1] = window_size.y as f32;
@@ -536,7 +537,7 @@ fn main() {
 
     //Register each primitive with the renderer
     let totoro_model = renderer.upload_gltf_model(&mut gpu, &totoro_data, pbr_pipeline);
-    //let totoro_model = renderer.upload_ozymesh(&mut gpu, &totoro_data, vk_3D_graphics_pipeline);
+    //let totoro_model = renderer.upload_ozymesh(&mut gpu, &totoro_data, pbr_pipeline);
 
     //Make totoro collider
     let main_totoro_key = {
@@ -1056,21 +1057,21 @@ fn main() {
                     gpu.device.cmd_bind_pipeline(frame_info.main_command_buffer, vk::PipelineBindPoint::GRAPHICS, drawcall.pipeline);
                     last_bound_pipeline = drawcall.pipeline;
                 }
-                if let Some(model) = renderer.get_primitive(drawcall.primitive_key) {
-                    let position_offset: u32 = model.position_block.start_offset as u32 / 4;
-                    let tangent_offset: u32 = model.tangent_block.start_offset as u32 / 4;
-                    let normal_offset: u32 = model.normal_block.start_offset as u32 / 4;
-                    let uv_offset: u32 = model.uv_block.start_offset as u32 / 2;
+                if let Some(prim) = renderer.get_primitive(drawcall.primitive_key) {
+                    let position_offset: u32 = prim.position_block.start_offset as u32 / 4;
+                    let tangent_offset: u32 = prim.tangent_block.start_offset as u32 / 4;
+                    let normal_offset: u32 = prim.normal_block.start_offset as u32 / 4;
+                    let uv_offset: u32 = prim.uv_block.start_offset as u32 / 2;
                     let pcs = [
-                        model.material_idx.to_le_bytes(),
+                        prim.material_idx.to_le_bytes(),
                         position_offset.to_le_bytes(),
                         tangent_offset.to_le_bytes(),
                         normal_offset.to_le_bytes(),
                         uv_offset.to_le_bytes(),
                     ].concat();
                     gpu.device.cmd_push_constants(frame_info.main_command_buffer, graphics_pipeline_layout, push_constant_stage_flags, 0, &pcs);
-                    gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, model.index_buffer.buffer(), 0, vk::IndexType::UINT32);
-                    gpu.device.cmd_draw_indexed(frame_info.main_command_buffer, model.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
+                    gpu.device.cmd_bind_index_buffer(frame_info.main_command_buffer, prim.index_buffer.buffer(), 0, vk::IndexType::UINT32);
+                    gpu.device.cmd_draw_indexed(frame_info.main_command_buffer, prim.index_count, drawcall.instance_count, 0, 0, drawcall.first_instance);
                 }
             }
 

@@ -56,11 +56,6 @@ float4 fragment_main(MeshVertexOutput input) : SV_Target0
         DirectionalLight light = uniforms.directional_lights[i];
         float nighttime_factor = smoothstep(-0.1, 0.1, light.direction.z);
 
-        // ray_t ray = {
-        //     float3(0.0, 0.0, earth_radius) + input.position,
-        //     light.direction
-        // };
-        // float3 sky_sample = normalize(gather_atmosphere_irradiance(ray, light.direction.xyz, light.irradiance.rgb));
         float3 sky_sample = normalize(uniforms.sky_sample);
 
         // Compute sun color

@@ -2,7 +2,6 @@ Todo:
     Compute pipeline creation API in VulkanGraphicsDevice
     Add CPU-side atmosphere raymarching code
     Make generic error macro
-    Add orbit cam tweaking controls
     Parallax mapping family of techniques
     Deferred/Batched GPU uploading
         Sort of have deferred uploading for PNGs

@@ -124,7 +124,6 @@ pub unsafe fn upload_raw_image(gpu: &mut VulkanGraphicsDevice, sampler_key: Samp
         ..Default::default()
     };
 
-    let sampler = gpu.get_sampler(sampler_key).unwrap();
     let def_image = asset::upload_image_deferred(gpu, &image_create_info, sampler_key, layout, true, rgba);
     let mut vim = DeferredImage::synchronize(gpu, vec![def_image]).drain(..).next().unwrap().gpu_image;
 
@@ -276,7 +275,7 @@ impl VulkanGraphicsDevice {
         }
     }
 
-    pub fn upload_image_batch(&mut self) {
+    pub fn upload_images(&mut self, infos: &[vk::ImageCreateInfo], data: &[u8]) {
 
     }
 
